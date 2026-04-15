@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ position.ticker }} — Stock Sentinel{% endblock %}
+{% block content %}
+
+<h2>Edit Position — {{ position.ticker }}</h2>
+
+<form method="post" action="/edit/{{ position.id }}" class="position-form">
+    <div class="form-group">
+        <label for="ticker">Ticker</label>
+        <input type="text" id="ticker" name="ticker" required maxlength="10" value="{{ position.ticker }}">
+    </div>
+
+    <div class="form-group">
+        <label for="company_name">Company Name</label>
+        <input type="text" id="company_name" name="company_name" required value="{{ position.company_name }}">
+    </div>
+
+    <div class="form-group">
+        <label for="cost_basis">Cost Basis ($)</label>
+        <input type="number" id="cost_basis" name="cost_basis" required min="0.01" step="0.01" value="{{ position.cost_basis }}">
+    </div>
+
+    <div class="form-group">
+        <label for="current_price">Current Price ($)</label>
+        <input type="number" id="current_price" name="current_price" required min="0.01" step="0.01" value="{{ position.current_price }}">
+    </div>
+
+    <div class="form-group">
+        <label for="initial_purchase_date">Purchase Date</label>
+        <input type="date" id="initial_purchase_date" name="initial_purchase_date" required value="{{ position.initial_purchase_date }}">
+    </div>
+
+    <div class="form-group">
+        <label for="investment_type">Investment Type</label>
+        <select id="investment_type" name="investment_type" required>
+            {% for t in investment_types %}
+            <option value="{{ t.value }}" {% if t.value == position.investment_type %}selected{% endif %}>
+                {{ t.value }}
+            </option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="notes">Notes (optional)</label>
+        <textarea id="notes" name="notes" rows="3">{{ position.notes or '' }}</textarea>
+    </div>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">Save Changes</button>
+        <a href="/" class="btn">Cancel</a>
+    </div>
+</form>
+
+{% endblock %}

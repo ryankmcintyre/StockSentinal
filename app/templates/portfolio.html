@@ -1,0 +1,81 @@
+{% extends "base.html" %}
+{% block title %}Portfolio — Stock Sentinel{% endblock %}
+{% block content %}
+
+<!-- Summary cards -->
+<section class="summary">
+    <div class="summary-card summary-total">
+        <span class="summary-count">{{ summary.total }}</span>
+        <span class="summary-label">Total</span>
+    </div>
+    <div class="summary-card summary-sell">
+        <span class="summary-count">{{ summary.sell }}</span>
+        <span class="summary-label">Sell</span>
+    </div>
+    <div class="summary-card summary-trim">
+        <span class="summary-count">{{ summary.trim }}</span>
+        <span class="summary-label">Trim</span>
+    </div>
+    <div class="summary-card summary-hold">
+        <span class="summary-count">{{ summary.hold }}</span>
+        <span class="summary-label">Hold</span>
+    </div>
+</section>
+
+{% if positions %}
+<table class="positions-table">
+    <thead>
+        <tr>
+            <th>Verdict</th>
+            <th>Ticker</th>
+            <th>Company</th>
+            <th>Type</th>
+            <th>Cost Basis</th>
+            <th>Current Price</th>
+            <th>Gain / Loss</th>
+            <th>Held (days)</th>
+            <th>Reason</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for pos in positions %}
+        <tr>
+            <td>
+                <span class="verdict verdict-{{ pos.verdict.value | lower }}">
+                    {{ pos.verdict.value }}
+                </span>
+            </td>
+            <td class="ticker">{{ pos.ticker }}</td>
+            <td>{{ pos.company_name }}</td>
+            <td>{{ pos.investment_type }}</td>
+            <td>${{ "%.2f" | format(pos.cost_basis) }}</td>
+            <td>${{ "%.2f" | format(pos.current_price) }}</td>
+            <td class="{% if pos.percent_gain >= 0 %}gain-positive{% else %}gain-negative{% endif %}">
+                {{ "%.1f" | format(pos.percent_gain) }}%
+            </td>
+            <td>{{ pos.hold_duration_days }}</td>
+            <td class="reason">
+                {% for rule in pos.triggered_rules %}
+                    <span class="rule-tag">{{ rule.description }}</span>
+                {% endfor %}
+            </td>
+            <td class="actions">
+                <a href="/edit/{{ pos.id }}" class="btn btn-small">Edit</a>
+                <form method="post" action="/delete/{{ pos.id }}" class="inline-form"
+                      onsubmit="return confirm('Delete {{ pos.ticker }}?')">
+                    <button type="submit" class="btn btn-small btn-danger">Delete</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<div class="empty-state">
+    <p>No positions yet.</p>
+    <a href="/add" class="btn btn-primary">Add your first position</a>
+</div>
+{% endif %}
+
+{% endblock %}
