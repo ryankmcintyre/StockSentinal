@@ -22,6 +22,18 @@
     </div>
 </section>
 
+{% if api_configured and positions %}
+<section class="refresh-controls">
+    <form method="post" action="/refresh" class="inline-form">
+        <button type="submit" class="btn btn-small">Refresh All Market Data</button>
+    </form>
+</section>
+{% elif not api_configured %}
+<section class="refresh-controls">
+    <p class="text-muted">Set <code>ALPHA_VANTAGE_API_KEY</code> to enable automated market data.</p>
+</section>
+{% endif %}
+
 {% if positions %}
 <table class="positions-table">
     <thead>
@@ -31,7 +43,7 @@
             <th>Company</th>
             <th>Type</th>
             <th>Cost Basis</th>
-            <th>Current Price</th>
+            <th>Price</th>
             <th>Gain / Loss</th>
             <th>Held (days)</th>
             <th>Reason</th>
@@ -50,7 +62,12 @@
             <td>{{ pos.company_name }}</td>
             <td>{{ pos.investment_type }}</td>
             <td>${{ "%.2f" | format(pos.cost_basis) }}</td>
-            <td>${{ "%.2f" | format(pos.current_price) }}</td>
+            <td>
+                ${{ "%.2f" | format(pos.effective_price) }}
+                {% if pos.has_market_data %}
+                    <span class="market-source" title="From Alpha Vantage{% if pos.daily_market_date %} ({{ pos.daily_market_date }}){% endif %}">&#9679;</span>
+                {% endif %}
+            </td>
             <td class="{% if pos.percent_gain >= 0 %}gain-positive{% else %}gain-negative{% endif %}">
                 {{ "%.1f" | format(pos.percent_gain) }}%
             </td>
@@ -59,9 +76,17 @@
                 {% for rule in pos.triggered_rules %}
                     <span class="rule-tag">{{ rule.description }}</span>
                 {% endfor %}
+                {% if pos.refresh_error %}
+                    <span class="rule-tag rule-tag-error" title="{{ pos.refresh_error }}">Refresh error</span>
+                {% endif %}
             </td>
             <td class="actions">
                 <a href="/edit/{{ pos.id }}" class="btn btn-small">Edit</a>
+                {% if api_configured %}
+                <form method="post" action="/refresh/{{ pos.id }}" class="inline-form">
+                    <button type="submit" class="btn btn-small" title="Refresh market data">&#8635;</button>
+                </form>
+                {% endif %}
                 <form method="post" action="/delete/{{ pos.id }}" class="inline-form"
                       onsubmit="return confirm('Delete {{ pos.ticker }}?')">
                     <button type="submit" class="btn btn-small btn-danger">Delete</button>

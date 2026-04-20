@@ -2,15 +2,21 @@ from contextlib import asynccontextmanager
 from datetime import date
 from pathlib import Path
 
+from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, Form, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
+load_dotenv()
+
+from app.config import get_alpha_vantage_api_key
 from app.database import get_db, init_db
+from app.market_data import refresh_all_positions, refresh_position
 from app.models import Position
 from app.rule_engine import (
+    MarketSignals,
     compute_hold_duration_days,
     compute_percent_gain,
     evaluate_position,
@@ -41,7 +47,18 @@ VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 
 def _enrich_position(pos: Position) -> dict:
     """Run rule engine on a Position and return a dict with all display fields."""
-    triggered = evaluate_position(pos)
+    # Build market signals from cached Alpha Vantage data
+    signals = MarketSignals(
+        daily_close=pos.daily_close,
+        daily_sma_21=pos.daily_sma_21,
+        weekly_close=pos.weekly_close,
+        weekly_sma_20=pos.weekly_sma_20,
+    )
+
+    # Use cached daily close as effective price when available, otherwise manual
+    effective_price = pos.daily_close if pos.daily_close is not None else pos.current_price
+
+    triggered = evaluate_position(pos, signals=signals)
     verdict = get_verdict(triggered)
     return {
         "id": pos.id,
@@ -49,13 +66,25 @@ def _enrich_position(pos: Position) -> dict:
         "company_name": pos.company_name,
         "cost_basis": pos.cost_basis,
         "current_price": pos.current_price,
+        "effective_price": effective_price,
         "investment_type": pos.investment_type,
         "initial_purchase_date": pos.initial_purchase_date,
         "notes": pos.notes,
-        "percent_gain": compute_percent_gain(pos.cost_basis, pos.current_price),
+        "percent_gain": compute_percent_gain(pos.cost_basis, effective_price),
         "hold_duration_days": compute_hold_duration_days(pos.initial_purchase_date),
         "verdict": verdict,
         "triggered_rules": triggered,
+        # Market data status
+        "daily_close": pos.daily_close,
+        "daily_sma_21": pos.daily_sma_21,
+        "daily_market_date": pos.daily_market_date,
+        "daily_retrieved_at": pos.daily_retrieved_at,
+        "weekly_close": pos.weekly_close,
+        "weekly_sma_20": pos.weekly_sma_20,
+        "weekly_market_date": pos.weekly_market_date,
+        "weekly_retrieved_at": pos.weekly_retrieved_at,
+        "refresh_error": pos.refresh_error,
+        "has_market_data": pos.daily_close is not None or pos.weekly_close is not None,
     }
 
 
@@ -81,7 +110,11 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
     return templates.TemplateResponse(
         request,
         "portfolio.html",
-        {"positions": enriched, "summary": summary},
+        {
+            "positions": enriched,
+            "summary": summary,
+            "api_configured": get_alpha_vantage_api_key() is not None,
+        },
     )
 
 
@@ -168,4 +201,25 @@ def delete_position(position_id: int, db: Session = Depends(get_db)):
     if pos:
         db.delete(pos)
         db.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Market data refresh routes
+# ---------------------------------------------------------------------------
+
+
+@app.post("/refresh")
+def refresh_all(db: Session = Depends(get_db)):
+    """Refresh cached market data for all positions (respects staleness checks)."""
+    refresh_all_positions(db)
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/refresh/{position_id}")
+def refresh_single(position_id: int, db: Session = Depends(get_db)):
+    """Refresh cached market data for a single position."""
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if pos:
+        refresh_position(pos, db)
     return RedirectResponse(url="/", status_code=303)
