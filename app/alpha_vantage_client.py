@@ -64,9 +64,10 @@ def _get(params: dict, api_key: str) -> dict:
     if "Error Message" in data:
         raise AlphaVantageSymbolNotFound(data["Error Message"])
 
-    # Some error states use "Information"
-    if "Information" in data and "apikey" in data.get("Information", "").lower():
-        raise AlphaVantageError(data["Information"])
+    # Some error states use "Information" — treat any such response as
+    # a throttle / error since valid responses never contain this key.
+    if "Information" in data:
+        raise AlphaVantageThrottled(data["Information"])
 
     return data
 

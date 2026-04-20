@@ -6,6 +6,7 @@ data at most once per completed trading week, and persists the cached
 snapshot back to SQLite.
 """
 
+import time
 from datetime import date, datetime, timedelta
 from typing import Optional
 
@@ -94,6 +95,9 @@ def _refresh_daily(position: Position, api_key: str) -> None:
     position.daily_close = latest_bar.close
     position.daily_market_date = latest_bar.date
 
+    # Rate-limit: Alpha Vantage free tier allows 5 calls/minute
+    time.sleep(12)
+
     # Fetch SMA-21 daily
     sma_points = fetch_sma(symbol, interval="daily", time_period=21, api_key=api_key)
     if sma_points:
@@ -120,6 +124,9 @@ def _refresh_weekly(position: Position, api_key: str) -> None:
 
     position.weekly_close = latest_bar.close
     position.weekly_market_date = latest_bar.date
+
+    # Rate-limit: Alpha Vantage free tier allows 5 calls/minute
+    time.sleep(12)
 
     # Fetch SMA-20 weekly
     sma_points = fetch_sma(symbol, interval="weekly", time_period=20, api_key=api_key)
@@ -150,6 +157,10 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
             _refresh_daily(position, api_key)
         except Exception as exc:
             errors.append(f"Daily refresh failed: {exc}")
+
+    # Rate-limit between daily and weekly refreshes
+    if force or weekly_data_is_stale(position):
+        time.sleep(12)
 
     # Weekly refresh (needed only by long-term positions, but fetch for all
     # so we have the data if the user changes investment_type later)
