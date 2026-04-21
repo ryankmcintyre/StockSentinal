@@ -58,7 +58,19 @@ def _enrich_position(pos: Position) -> dict:
     # Use cached daily close as effective price when available, otherwise manual
     effective_price = pos.daily_close if pos.daily_close is not None else pos.current_price
 
-    triggered = evaluate_position(pos, signals=signals)
+    class _PositionPriceProxy:
+        """Delegate to a Position but override current_price for rule evaluation."""
+
+        def __init__(self, original_pos: Position, current_price: float):
+            self._original_pos = original_pos
+            self.current_price = current_price
+
+        def __getattr__(self, name):
+            return getattr(self._original_pos, name)
+
+    eval_pos = _PositionPriceProxy(pos, effective_price)
+
+    triggered = evaluate_position(eval_pos, signals=signals)
     verdict = get_verdict(triggered)
     return {
         "id": pos.id,
