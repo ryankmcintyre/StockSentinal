@@ -29,10 +29,12 @@ from app.rule_engine import (
 )
 from app.schemas import InvestmentType, Verdict
 
+log_level = get_log_level()
 logging.basicConfig(
-    level=get_log_level(),
+    level=log_level,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
+logging.getLogger().setLevel(log_level)
 
 BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
