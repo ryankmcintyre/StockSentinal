@@ -23,14 +23,28 @@ class FakePosition:
     def __init__(
         self,
         ticker="AAPL",
+        investment_type="long-term",
         daily_market_date=None,
         weekly_market_date=None,
         refresh_error=None,
+        daily_close=None,
+        daily_sma_21=None,
+        daily_retrieved_at=None,
+        weekly_close=None,
+        weekly_sma_20=None,
+        weekly_retrieved_at=None,
     ):
         self.ticker = ticker
+        self.investment_type = investment_type
         self.daily_market_date = daily_market_date
         self.weekly_market_date = weekly_market_date
         self.refresh_error = refresh_error
+        self.daily_close = daily_close
+        self.daily_sma_21 = daily_sma_21
+        self.daily_retrieved_at = daily_retrieved_at
+        self.weekly_close = weekly_close
+        self.weekly_sma_20 = weekly_sma_20
+        self.weekly_retrieved_at = weekly_retrieved_at
 
 
 # ---------------------------------------------------------------------------
@@ -136,13 +150,12 @@ class TestWeeklyDataIsStale:
 
 class TestRefreshPosition:
     def test_refreshes_daily_when_daily_is_stale(self, mocker):
-        position = FakePosition()
+        position = FakePosition(investment_type="long-term")
         db = mocker.Mock()
 
         mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
         daily_refresh = mocker.patch("app.market_data._refresh_daily")
         weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
-        sleep = mocker.patch("app.market_data.time.sleep")
         mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
         mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
 
@@ -150,18 +163,16 @@ class TestRefreshPosition:
 
         daily_refresh.assert_called_once_with(position, "key")
         weekly_refresh.assert_not_called()
-        sleep.assert_not_called()
         assert position.refresh_error is None
         db.commit.assert_called_once()
 
-    def test_refreshes_weekly_when_weekly_is_stale(self, mocker):
-        position = FakePosition()
+    def test_refreshes_weekly_when_weekly_is_stale_long_term(self, mocker):
+        position = FakePosition(investment_type="long-term")
         db = mocker.Mock()
 
         mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
         daily_refresh = mocker.patch("app.market_data._refresh_daily")
         weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
-        sleep = mocker.patch("app.market_data.time.sleep")
         mocker.patch("app.market_data.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
 
@@ -169,18 +180,32 @@ class TestRefreshPosition:
 
         daily_refresh.assert_not_called()
         weekly_refresh.assert_called_once_with(position, "key")
-        sleep.assert_called_once_with(12)
         assert position.refresh_error is None
         db.commit.assert_called_once()
 
+    def test_skips_weekly_for_short_term_positions(self, mocker):
+        position = FakePosition(investment_type="short-term")
+        db = mocker.Mock()
+
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        daily_refresh = mocker.patch("app.market_data._refresh_daily")
+        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
+        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
+
+        refresh_position(position, db, force=False)
+
+        daily_refresh.assert_called_once_with(position, "key")
+        weekly_refresh.assert_not_called()
+        assert position.refresh_error is None
+
     def test_persists_combined_daily_and_weekly_errors(self, mocker):
-        position = FakePosition()
+        position = FakePosition(investment_type="long-term")
         db = mocker.Mock()
 
         mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
         mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
         mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.time.sleep")
         mocker.patch("app.market_data._refresh_daily", side_effect=RuntimeError("daily boom"))
         mocker.patch("app.market_data._refresh_weekly", side_effect=RuntimeError("weekly boom"))
 
@@ -197,44 +222,147 @@ class TestRefreshPosition:
 
 
 class TestRefreshAllPositions:
-    def test_refreshes_positions_with_stale_data(self, mocker):
-        pos1 = FakePosition()
-        pos2 = FakePosition()
-        pos3 = FakePosition()
+    def test_refreshes_only_stale_positions(self, mocker):
+        pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
+        pos2 = FakePosition(ticker="MSFT", investment_type="long-term")
+        pos3 = FakePosition(ticker="GOOG", investment_type="long-term")
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos1, pos2, pos3]
 
-        daily_stale = mocker.patch(
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch(
             "app.market_data.daily_data_is_stale", side_effect=[True, False, False]
         )
-        weekly_stale = mocker.patch(
+        mocker.patch(
             "app.market_data.weekly_data_is_stale", side_effect=[False, True, False]
         )
-        refresh = mocker.patch("app.market_data.refresh_position")
+        daily_refresh = mocker.patch("app.market_data._refresh_daily")
+        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
 
         refreshed = refresh_all_positions(db, force=False)
 
         assert refreshed == 2
-        assert refresh.call_count == 2
-        refresh.assert_any_call(pos1, db, force=False)
-        refresh.assert_any_call(pos2, db, force=False)
-        daily_stale.assert_called()
-        weekly_stale.assert_called()
+        # pos1 needs daily, pos2 needs weekly
+        daily_refresh.assert_called_once()
+        weekly_refresh.assert_called_once()
 
     def test_force_refreshes_every_position(self, mocker):
-        positions = [FakePosition(), FakePosition()]
+        positions = [
+            FakePosition(ticker="AAPL", investment_type="long-term"),
+            FakePosition(ticker="MSFT", investment_type="short-term"),
+        ]
         db = mocker.Mock()
         db.query.return_value.all.return_value = positions
 
-        daily_stale = mocker.patch("app.market_data.daily_data_is_stale")
-        weekly_stale = mocker.patch("app.market_data.weekly_data_is_stale")
-        refresh = mocker.patch("app.market_data.refresh_position")
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        daily_refresh = mocker.patch("app.market_data._refresh_daily")
+        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
 
         refreshed = refresh_all_positions(db, force=True)
 
         assert refreshed == 2
-        assert refresh.call_count == 2
-        refresh.assert_any_call(positions[0], db, force=True)
-        refresh.assert_any_call(positions[1], db, force=True)
-        daily_stale.assert_not_called()
-        weekly_stale.assert_not_called()
+        # Each unique ticker gets daily refresh; only long-term gets weekly
+        assert daily_refresh.call_count == 2
+        assert weekly_refresh.call_count == 1
+
+    def test_deduplicates_api_calls_for_same_ticker(self, mocker):
+        """Two positions with the same ticker should trigger only one set of API calls."""
+        pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
+        pos2 = FakePosition(ticker="AAPL", investment_type="long-term")
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos1, pos2]
+
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
+        daily_refresh = mocker.patch("app.market_data._refresh_daily")
+        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
+
+        refreshed = refresh_all_positions(db, force=False)
+
+        assert refreshed == 2
+        # Only 1 API call each despite 2 positions
+        daily_refresh.assert_called_once()
+        weekly_refresh.assert_called_once()
+
+    def test_copies_daily_cache_to_duplicate_tickers(self, mocker):
+        """Cached daily data should be copied from representative to duplicates."""
+        pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
+        pos2 = FakePosition(ticker="AAPL", investment_type="long-term")
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos1, pos2]
+
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
+
+        def set_daily(position, api_key):
+            position.daily_close = 150.0
+            position.daily_sma_21 = 148.0
+            position.daily_market_date = date(2026, 4, 20)
+            position.daily_retrieved_at = datetime(2026, 4, 21, 10, 0)
+
+        mocker.patch("app.market_data._refresh_daily", side_effect=set_daily)
+
+        refresh_all_positions(db, force=False)
+
+        # Both positions should have the same cached daily data
+        assert pos2.daily_close == 150.0
+        assert pos2.daily_sma_21 == 148.0
+
+    def test_mixed_types_same_ticker_fetches_weekly_for_long_term(self, mocker):
+        """When same ticker has both short-term and long-term positions,
+        weekly data should be fetched once (for the long-term one) and
+        not copied to the short-term position."""
+        pos_short = FakePosition(ticker="AAPL", investment_type="short-term")
+        pos_long = FakePosition(ticker="AAPL", investment_type="long-term")
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos_short, pos_long]
+
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
+        daily_refresh = mocker.patch("app.market_data._refresh_daily")
+        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
+
+        refreshed = refresh_all_positions(db, force=False)
+
+        assert refreshed == 2
+        daily_refresh.assert_called_once()
+        weekly_refresh.assert_called_once()
+        # Weekly refresh should use the long-term position as representative
+        weekly_refresh.assert_called_with(pos_long, "key")
+
+    def test_short_term_positions_not_counted_for_weekly(self, mocker):
+        """Short-term positions with missing weekly data should not trigger weekly refresh."""
+        pos = FakePosition(ticker="AAPL", investment_type="short-term", weekly_market_date=None)
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos]
+
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
+        daily_refresh = mocker.patch("app.market_data._refresh_daily")
+        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
+
+        refresh_all_positions(db, force=False)
+
+        daily_refresh.assert_called_once()
+        weekly_refresh.assert_not_called()
+
+    def test_duplicate_error_not_propagated(self, mocker):
+        """refresh_error from the representative should not be copied to duplicates."""
+        pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
+        pos2 = FakePosition(ticker="AAPL", investment_type="long-term")
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos1, pos2]
+
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
+        mocker.patch("app.market_data._refresh_daily", side_effect=RuntimeError("boom"))
+
+        refresh_all_positions(db, force=False)
+
+        assert "boom" in pos1.refresh_error
+        assert pos2.refresh_error is None

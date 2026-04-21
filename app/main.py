@@ -14,11 +14,15 @@ load_dotenv()
 
 from app.alpha_vantage_client import (
     AlphaVantageError,
-    fetch_company_name,
 )
 from app.config import get_alpha_vantage_api_key, get_log_level
 from app.database import get_db, init_db
-from app.market_data import fetch_daily_series, refresh_all_positions, refresh_position
+from app.market_data import (
+    fetch_company_name,
+    fetch_daily_series,
+    refresh_all_positions,
+    refresh_position,
+)
 from app.models import Position
 from app.rule_engine import (
     MarketSignals,
@@ -187,13 +191,14 @@ def add_position(
     initial_purchase_date: str = Form(...),
     investment_type: str = Form(...),
     notes: str = Form(""),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
     db: Session = Depends(get_db),
 ):
     """Create a new position and redirect to portfolio.
 
-    The latest closing price is fetched automatically from Alpha Vantage.
-    If the API key is not configured or the fetch fails, current_price
-    defaults to 0.
+    The latest closing price is fetched synchronously from Alpha Vantage.
+    A background task is then queued to fetch the remaining market data
+    (SMA values and weekly data for long-term positions).
     """
     clean_ticker = ticker.strip().upper()
     current_price = 0.0
@@ -228,6 +233,12 @@ def add_position(
     db.add(pos)
     db.commit()
     logger.info("Created position %s (%s) — cost_basis=%.2f, type=%s", clean_ticker, company_name.strip(), cost_basis, investment_type)
+
+    # Queue a background refresh to fetch SMA and weekly data
+    if api_key:
+        db.refresh(pos)
+        background_tasks.add_task(_refresh_single_position_task, pos.id)
+
     return RedirectResponse(url="/", status_code=303)
 
 
