@@ -1,5 +1,6 @@
+import logging
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -13,7 +14,7 @@ load_dotenv()
 
 from app.config import get_alpha_vantage_api_key
 from app.database import get_db, init_db
-from app.market_data import refresh_all_positions, refresh_position
+from app.market_data import fetch_daily_series, refresh_all_positions, refresh_position
 from app.models import Position
 from app.rule_engine import (
     MarketSignals,
@@ -25,6 +26,7 @@ from app.rule_engine import (
 from app.schemas import InvestmentType, Verdict
 
 BASE_DIR = Path(__file__).resolve().parent
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -147,18 +149,43 @@ def add_position(
     cost_basis: float = Form(...),
     initial_purchase_date: str = Form(...),
     investment_type: str = Form(...),
-    current_price: float = Form(...),
     notes: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    """Create a new position and redirect to portfolio."""
+    """Create a new position and redirect to portfolio.
+
+    The latest closing price is fetched automatically from Alpha Vantage.
+    If the API key is not configured or the fetch fails, current_price
+    defaults to 0.
+    """
+    clean_ticker = ticker.strip().upper()
+    current_price = 0.0
+    daily_close = None
+    daily_market_date = None
+    daily_retrieved_at = None
+
+    api_key = get_alpha_vantage_api_key()
+    if api_key:
+        try:
+            bars = fetch_daily_series(clean_ticker, api_key)
+            if bars:
+                current_price = bars[0].close
+                daily_close = bars[0].close
+                daily_market_date = bars[0].date
+                daily_retrieved_at = datetime.now()
+        except Exception:
+            logger.warning("Failed to fetch price for %s from Alpha Vantage", clean_ticker, exc_info=True)
+
     pos = Position(
-        ticker=ticker.strip().upper(),
+        ticker=clean_ticker,
         company_name=company_name.strip(),
         cost_basis=cost_basis,
         initial_purchase_date=date.fromisoformat(initial_purchase_date),
         investment_type=investment_type,
         current_price=current_price,
+        daily_close=daily_close,
+        daily_market_date=daily_market_date,
+        daily_retrieved_at=daily_retrieved_at,
         notes=notes.strip() or None,
     )
     db.add(pos)
