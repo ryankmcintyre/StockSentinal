@@ -191,7 +191,7 @@ def add_position(
     initial_purchase_date: str = Form(...),
     investment_type: str = Form(...),
     notes: str = Form(""),
-    background_tasks: BackgroundTasks = BackgroundTasks(),
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Create a new position and redirect to portfolio.
