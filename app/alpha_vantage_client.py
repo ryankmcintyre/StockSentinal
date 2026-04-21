@@ -4,6 +4,8 @@ Centralizes HTTP requests, URL building, response parsing, and
 Alpha Vantage-specific error handling (throttling, missing symbols).
 """
 
+import logging
+import time as _time
 from dataclasses import dataclass
 from datetime import date
 
@@ -11,6 +13,8 @@ import requests
 
 BASE_URL = "https://www.alphavantage.co/query"
 REQUEST_TIMEOUT = 30  # seconds
+
+logger = logging.getLogger(__name__)
 
 
 class AlphaVantageError(Exception):
@@ -52,21 +56,32 @@ def _get(params: dict, api_key: str) -> dict:
     Raises on HTTP errors, throttling notes, and error messages.
     """
     params["apikey"] = api_key
+    # Log the request with the API key redacted
+    safe_params = {k: v for k, v in params.items() if k != "apikey"}
+    logger.debug("Alpha Vantage request: %s params=%s", BASE_URL, safe_params)
+
+    start = _time.monotonic()
     resp = requests.get(BASE_URL, params=params, timeout=REQUEST_TIMEOUT)
+    elapsed_ms = (_time.monotonic() - start) * 1000
+    logger.debug("Alpha Vantage response: status=%d elapsed=%.0fms", resp.status_code, elapsed_ms)
+
     resp.raise_for_status()
     data = resp.json()
 
     # Alpha Vantage returns throttle messages as a "Note" key
     if "Note" in data:
+        logger.warning("Alpha Vantage throttled: %s", data["Note"])
         raise AlphaVantageThrottled(data["Note"])
 
     # Error responses use "Error Message"
     if "Error Message" in data:
+        logger.warning("Alpha Vantage error: %s", data["Error Message"])
         raise AlphaVantageSymbolNotFound(data["Error Message"])
 
     # Some error states use "Information" — treat any such response as
     # a throttle / error since valid responses never contain this key.
     if "Information" in data:
+        logger.warning("Alpha Vantage throttled: %s", data["Information"])
         raise AlphaVantageThrottled(data["Information"])
 
     return data
@@ -125,6 +140,7 @@ def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:
         ))
 
     bars.sort(key=lambda b: b.date, reverse=True)
+    logger.debug("Fetched %d daily bars for %s", len(bars), symbol)
     return bars
 
 
@@ -153,6 +169,7 @@ def fetch_weekly_series(symbol: str, api_key: str) -> list[WeeklyBar]:
         ))
 
     bars.sort(key=lambda b: b.date, reverse=True)
+    logger.debug("Fetched %d weekly bars for %s", len(bars), symbol)
     return bars
 
 
@@ -195,4 +212,5 @@ def fetch_sma(
         ))
 
     points.sort(key=lambda p: p.date, reverse=True)
+    logger.debug("Fetched %d SMA-%d (%s) points for %s", len(points), time_period, interval, symbol)
     return points

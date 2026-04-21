@@ -16,7 +16,7 @@ from app.alpha_vantage_client import (
     AlphaVantageError,
     fetch_company_name,
 )
-from app.config import get_alpha_vantage_api_key
+from app.config import get_alpha_vantage_api_key, get_log_level
 from app.database import get_db, init_db
 from app.market_data import fetch_daily_series, refresh_all_positions, refresh_position
 from app.models import Position
@@ -29,13 +29,22 @@ from app.rule_engine import (
 )
 from app.schemas import InvestmentType, Verdict
 
+log_level = get_log_level()
+logging.basicConfig(
+    level=log_level,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+logging.getLogger().setLevel(log_level)
+
 BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info("Starting Stock Sentinel — initializing database")
     init_db()
+    logger.info("Database initialized, application ready")
     yield
 
 
@@ -218,6 +227,7 @@ def add_position(
     )
     db.add(pos)
     db.commit()
+    logger.info("Created position %s (%s) — cost_basis=%.2f, type=%s", clean_ticker, company_name.strip(), cost_basis, investment_type)
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -258,6 +268,7 @@ def edit_position(
     pos.current_price = current_price
     pos.notes = notes.strip() or None
     db.commit()
+    logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, current_price)
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -266,6 +277,7 @@ def delete_position(position_id: int, db: Session = Depends(get_db)):
     """Delete a position and redirect to portfolio."""
     pos = db.query(Position).filter(Position.id == position_id).first()
     if pos:
+        logger.info("Deleted position id=%d %s", position_id, pos.ticker)
         db.delete(pos)
         db.commit()
     return RedirectResponse(url="/", status_code=303)
