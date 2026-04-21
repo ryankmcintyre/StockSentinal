@@ -195,7 +195,7 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
         try:
             _refresh_daily(position, api_key)
         except Exception as exc:
-            logger.exception("Daily refresh failed for %s: %s", position.ticker, exc)
+            logger.exception("Daily refresh failed for %s", position.ticker)
             errors.append(f"Daily refresh failed: {exc}")
     else:
         logger.debug("%s daily data is fresh, skipping", position.ticker)
