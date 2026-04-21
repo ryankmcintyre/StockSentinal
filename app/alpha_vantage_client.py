@@ -72,6 +72,27 @@ def _get(params: dict, api_key: str) -> dict:
     return data
 
 
+def fetch_company_name(symbol: str, api_key: str) -> str:
+    """Look up the company name for a ticker symbol via SYMBOL_SEARCH.
+
+    Returns the best-match company name, or raises
+    AlphaVantageSymbolNotFound if no matches are found.
+    """
+    params = {
+        "function": "SYMBOL_SEARCH",
+        "keywords": symbol,
+    }
+    data = _get(params, api_key)
+
+    matches = data.get("bestMatches", [])
+    if not matches:
+        raise AlphaVantageSymbolNotFound(
+            f"No matching company found for symbol '{symbol}'"
+        )
+
+    return matches[0]["2. name"]
+
+
 def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:
     """Fetch compact daily time series (latest ~100 trading days).
 

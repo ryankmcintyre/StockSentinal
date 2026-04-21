@@ -12,6 +12,7 @@ from app.alpha_vantage_client import (
     SMAPoint,
     WeeklyBar,
     _get,
+    fetch_company_name,
     fetch_daily_series,
     fetch_sma,
     fetch_weekly_series,
@@ -170,3 +171,58 @@ class TestFetchSMA:
 
         with pytest.raises(AlphaVantageError, match="missing"):
             fetch_sma("IBM", "daily", 21, "fake_key")
+
+
+# ---------------------------------------------------------------------------
+# Company name lookup
+# ---------------------------------------------------------------------------
+
+
+class TestFetchCompanyName:
+    def test_returns_best_match_name(self, mocker):
+        fake_data = {
+            "bestMatches": [
+                {
+                    "1. symbol": "AAPL",
+                    "2. name": "Apple Inc",
+                    "3. type": "Equity",
+                    "4. region": "United States",
+                },
+                {
+                    "1. symbol": "AAPL.LON",
+                    "2. name": "Apple Inc (London)",
+                    "3. type": "Equity",
+                    "4. region": "United Kingdom",
+                },
+            ]
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        name = fetch_company_name("AAPL", "fake_key")
+        assert name == "Apple Inc"
+
+    def test_raises_on_empty_matches(self, mocker):
+        fake_data = {"bestMatches": []}
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageSymbolNotFound, match="No matching company"):
+            fetch_company_name("ZZZZZZ", "fake_key")
+
+    def test_raises_on_missing_best_matches_key(self, mocker):
+        fake_data = {}
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageSymbolNotFound, match="No matching company"):
+            fetch_company_name("XYZ", "fake_key")

@@ -305,3 +305,19 @@ h2 {
     color: #d32f2f;
     cursor: help;
 }
+
+/* --- Form hint text --- */
+
+.form-hint {
+    display: block;
+    margin-top: 0.25rem;
+    font-size: 0.8rem;
+    color: #888;
+}
+
+/* --- Read-only inputs --- */
+
+.form-group input[readonly] {
+    background: #f5f6f8;
+    color: #666;
+}
