@@ -24,13 +24,21 @@ def _add_missing_columns() -> None:
                 continue  # table will be created by create_all
             existing = {col["name"] for col in inspector.get_columns(table.name)}
             for column in table.columns:
-                if column.name not in existing:
-                    col_type = column.type.compile(dialect=engine.dialect)
-                    conn.execute(
-                        text(
-                            f"ALTER TABLE {table.name} ADD COLUMN {column.name} {col_type}"
-                        )
+                if column.name in existing:
+                    continue
+
+                # Keep this helper limited to SQLite-safe additions only.
+                # Non-nullable columns or columns with server defaults should
+                # be introduced through a proper migration instead.
+                if not column.nullable or column.server_default is not None:
+                    continue
+
+                col_type = column.type.compile(dialect=engine.dialect)
+                conn.execute(
+                    text(
+                        f"ALTER TABLE {table.name} ADD COLUMN {column.name} {col_type}"
                     )
+                )
 
 
 def init_db() -> None:
