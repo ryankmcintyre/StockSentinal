@@ -105,12 +105,12 @@ def daily_data_is_stale(position: Position, today: Optional[date] = None) -> boo
 
 
 def weekly_data_is_stale(position: Position, today: Optional[date] = None) -> bool:
-    """Return True if the cached weekly snapshot is missing or older than the
-    most recently completed trading week."""
+    """Return True if the cached weekly snapshot is missing or does not match
+    the most recently completed trading week end."""
     if position.weekly_market_date is None:
         return True
     target = _last_completed_trading_week_end(today)
-    return position.weekly_market_date < target
+    return position.weekly_market_date != target
 
 
 # ---------------------------------------------------------------------------
