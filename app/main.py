@@ -5,13 +5,17 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 
 load_dotenv()
 
+from app.alpha_vantage_client import (
+    AlphaVantageError,
+    fetch_company_name,
+)
 from app.config import get_alpha_vantage_api_key
 from app.database import get_db, init_db
 from app.market_data import fetch_daily_series, refresh_all_positions, refresh_position
@@ -140,6 +144,30 @@ def add_position_form(request: Request):
         "add_position.html",
         {"investment_types": InvestmentType},
     )
+
+
+@app.get("/api/lookup/{ticker}")
+def lookup_ticker(ticker: str):
+    """Look up the company name for a ticker symbol via Alpha Vantage."""
+    api_key = get_alpha_vantage_api_key()
+    if not api_key:
+        return JSONResponse(
+            status_code=503,
+            content={"error": "Alpha Vantage API key is not configured"},
+        )
+    try:
+        company_name = fetch_company_name(ticker.strip().upper(), api_key)
+        return {"company_name": company_name}
+    except AlphaVantageError as exc:
+        return JSONResponse(
+            status_code=502,
+            content={"error": "Company name lookup failed"},
+        )
+    except Exception:
+        return JSONResponse(
+            status_code=502,
+            content={"error": "Company name lookup failed"},
+        )
 
 
 @app.post("/add")
