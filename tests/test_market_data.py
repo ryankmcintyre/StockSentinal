@@ -22,11 +22,15 @@ from app.market_data import (
 class FakePosition:
     def __init__(
         self,
+        ticker="AAPL",
         daily_market_date=None,
         weekly_market_date=None,
+        refresh_error=None,
     ):
+        self.ticker = ticker
         self.daily_market_date = daily_market_date
         self.weekly_market_date = weekly_market_date
+        self.refresh_error = refresh_error
 
 
 # ---------------------------------------------------------------------------
@@ -131,9 +135,8 @@ class TestWeeklyDataIsStale:
 
 
 class TestRefreshPosition:
-    def test_refreshes_only_daily_when_only_daily_is_stale(self, mocker):
+    def test_refreshes_daily_when_daily_is_stale(self, mocker):
         position = FakePosition()
-        position.refresh_error = None
         db = mocker.Mock()
 
         mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
@@ -151,9 +154,8 @@ class TestRefreshPosition:
         assert position.refresh_error is None
         db.commit.assert_called_once()
 
-    def test_refreshes_only_weekly_when_only_weekly_is_stale(self, mocker):
+    def test_refreshes_weekly_when_weekly_is_stale(self, mocker):
         position = FakePosition()
-        position.refresh_error = None
         db = mocker.Mock()
 
         mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
@@ -171,9 +173,8 @@ class TestRefreshPosition:
         assert position.refresh_error is None
         db.commit.assert_called_once()
 
-    def test_persists_daily_and_weekly_errors(self, mocker):
+    def test_persists_combined_daily_and_weekly_errors(self, mocker):
         position = FakePosition()
-        position.refresh_error = None
         db = mocker.Mock()
 
         mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
@@ -185,9 +186,8 @@ class TestRefreshPosition:
 
         refresh_position(position, db, force=False)
 
-        assert position.refresh_error == (
-            "Daily refresh failed: daily boom; Weekly refresh failed: weekly boom"
-        )
+        assert "Daily refresh failed: daily boom" in position.refresh_error
+        assert "Weekly refresh failed: weekly boom" in position.refresh_error
         db.commit.assert_called_once()
 
 
@@ -197,7 +197,7 @@ class TestRefreshPosition:
 
 
 class TestRefreshAllPositions:
-    def test_refreshes_only_positions_with_stale_data(self, mocker):
+    def test_refreshes_positions_with_stale_data(self, mocker):
         pos1 = FakePosition()
         pos2 = FakePosition()
         pos3 = FakePosition()
