@@ -3,7 +3,7 @@ from datetime import date
 from pathlib import Path
 
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, Form, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, Request
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -221,17 +221,43 @@ def delete_position(position_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 
+def _refresh_all_positions_task():
+    """Run a full market data refresh in the background with its own DB session."""
+    db_generator = get_db()
+    db = next(db_generator)
+    try:
+        refresh_all_positions(db)
+    finally:
+        db_generator.close()
+
+
+def _refresh_single_position_task(position_id: int):
+    """Run a single-position market data refresh in the background with its own DB session."""
+    db_generator = get_db()
+    db = next(db_generator)
+    try:
+        pos = db.query(Position).filter(Position.id == position_id).first()
+        if pos:
+            refresh_position(pos, db)
+    finally:
+        db_generator.close()
+
+
 @app.post("/refresh")
-def refresh_all(db: Session = Depends(get_db)):
+def refresh_all(background_tasks: BackgroundTasks):
     """Refresh cached market data for all positions (respects staleness checks)."""
-    refresh_all_positions(db)
+    background_tasks.add_task(_refresh_all_positions_task)
     return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/refresh/{position_id}")
-def refresh_single(position_id: int, db: Session = Depends(get_db)):
+def refresh_single(
+    position_id: int,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
     """Refresh cached market data for a single position."""
     pos = db.query(Position).filter(Position.id == position_id).first()
     if pos:
-        refresh_position(pos, db)
+        background_tasks.add_task(_refresh_single_position_task, position_id)
     return RedirectResponse(url="/", status_code=303)
