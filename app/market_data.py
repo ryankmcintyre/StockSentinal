@@ -14,13 +14,49 @@ from sqlalchemy.orm import Session
 
 from app.alpha_vantage_client import (
     AlphaVantageError,
-    fetch_daily_series,
-    fetch_sma,
-    fetch_weekly_series,
+    fetch_daily_series as _fetch_daily_series,
+    fetch_sma as _fetch_sma,
+    fetch_weekly_series as _fetch_weekly_series,
 )
 from app.config import require_alpha_vantage_api_key
 from app.models import Position
 from app.schemas import InvestmentType
+
+
+_ALPHA_VANTAGE_MIN_INTERVAL_SECONDS = 12.0
+_last_alpha_vantage_call_at: Optional[float] = None
+
+
+def _wait_for_alpha_vantage_slot() -> None:
+    """Enforce the Alpha Vantage free-tier rate limit across all calls."""
+    global _last_alpha_vantage_call_at
+
+    now = time.monotonic()
+    if _last_alpha_vantage_call_at is not None:
+        elapsed = now - _last_alpha_vantage_call_at
+        remaining = _ALPHA_VANTAGE_MIN_INTERVAL_SECONDS - elapsed
+        if remaining > 0:
+            time.sleep(remaining)
+
+    _last_alpha_vantage_call_at = time.monotonic()
+
+
+def fetch_daily_series(symbol: str, api_key: str):
+    """Rate-limited wrapper for Alpha Vantage daily series requests."""
+    _wait_for_alpha_vantage_slot()
+    return _fetch_daily_series(symbol, api_key)
+
+
+def fetch_weekly_series(symbol: str, api_key: str):
+    """Rate-limited wrapper for Alpha Vantage weekly series requests."""
+    _wait_for_alpha_vantage_slot()
+    return _fetch_weekly_series(symbol, api_key)
+
+
+def fetch_sma(symbol: str, interval: str, time_period: int, api_key: str):
+    """Rate-limited wrapper for Alpha Vantage SMA requests."""
+    _wait_for_alpha_vantage_slot()
+    return _fetch_sma(symbol, interval=interval, time_period=time_period, api_key=api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -95,9 +131,6 @@ def _refresh_daily(position: Position, api_key: str) -> None:
     position.daily_close = latest_bar.close
     position.daily_market_date = latest_bar.date
 
-    # Rate-limit: Alpha Vantage free tier allows 5 calls/minute
-    time.sleep(12)
-
     # Fetch SMA-21 daily
     sma_points = fetch_sma(symbol, interval="daily", time_period=21, api_key=api_key)
     if sma_points:
@@ -157,10 +190,6 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
             _refresh_daily(position, api_key)
         except Exception as exc:
             errors.append(f"Daily refresh failed: {exc}")
-
-    # Rate-limit between daily and weekly refreshes
-    if force or weekly_data_is_stale(position):
-        time.sleep(12)
 
     # Weekly refresh (needed only by long-term positions, but fetch for all
     # so we have the data if the user changes investment_type later)
