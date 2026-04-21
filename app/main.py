@@ -1,3 +1,4 @@
+import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
@@ -25,6 +26,7 @@ from app.rule_engine import (
 from app.schemas import InvestmentType, Verdict
 
 BASE_DIR = Path(__file__).resolve().parent
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -172,7 +174,7 @@ def add_position(
                 daily_market_date = bars[0].date
                 daily_retrieved_at = datetime.now()
         except Exception:
-            pass  # Fall back to current_price = 0
+            logger.warning("Failed to fetch price for %s from Alpha Vantage", clean_ticker, exc_info=True)
 
     pos = Position(
         ticker=clean_ticker,
