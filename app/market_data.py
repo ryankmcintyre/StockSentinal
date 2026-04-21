@@ -20,7 +20,6 @@ from app.alpha_vantage_client import (
 )
 from app.config import require_alpha_vantage_api_key
 from app.models import Position
-from app.schemas import InvestmentType
 
 
 _ALPHA_VANTAGE_MIN_INTERVAL_SECONDS = 12.0
