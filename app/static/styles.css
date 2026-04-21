@@ -267,3 +267,41 @@ h2 {
     margin-bottom: 1rem;
     font-size: 1.1rem;
 }
+
+/* --- Refresh controls --- */
+
+.refresh-controls {
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.text-muted {
+    color: #888;
+    font-size: 0.85rem;
+}
+
+.text-muted code {
+    background: #f0f0f0;
+    padding: 0.1rem 0.35rem;
+    border-radius: 3px;
+    font-size: 0.82rem;
+}
+
+/* --- Market data indicator --- */
+
+.market-source {
+    color: #388e3c;
+    font-size: 0.6rem;
+    vertical-align: super;
+    cursor: help;
+}
+
+/* --- Error rule tag --- */
+
+.rule-tag-error {
+    background: #fde8e8;
+    color: #d32f2f;
+    cursor: help;
+}

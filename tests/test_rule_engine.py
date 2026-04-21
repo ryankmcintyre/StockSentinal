@@ -10,6 +10,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.rule_engine import (
+    MarketSignals,
     compute_hold_duration_days,
     compute_percent_gain,
     evaluate_position,
@@ -44,19 +45,34 @@ class FakePosition:
 class TestLongTermSellBelow20wMA:
     def test_triggers_when_below_ma(self):
         pos = FakePosition(investment_type=InvestmentType.long_term)
-        result = rule_long_term_sell_below_20w_ma(pos, weekly_close_below_20w_ma=True)
+        signals = MarketSignals(weekly_close=140.0, weekly_sma_20=150.0)
+        result = rule_long_term_sell_below_20w_ma(pos, signals)
         assert result is not None
         assert result.verdict == Verdict.sell
         assert result.rule_label == "LT-SELL-20W-MA"
 
     def test_does_not_trigger_when_above_ma(self):
         pos = FakePosition(investment_type=InvestmentType.long_term)
-        result = rule_long_term_sell_below_20w_ma(pos, weekly_close_below_20w_ma=False)
+        signals = MarketSignals(weekly_close=160.0, weekly_sma_20=150.0)
+        result = rule_long_term_sell_below_20w_ma(pos, signals)
+        assert result is None
+
+    def test_does_not_trigger_when_equal_to_ma(self):
+        pos = FakePosition(investment_type=InvestmentType.long_term)
+        signals = MarketSignals(weekly_close=150.0, weekly_sma_20=150.0)
+        result = rule_long_term_sell_below_20w_ma(pos, signals)
         assert result is None
 
     def test_does_not_trigger_for_short_term(self):
         pos = FakePosition(investment_type=InvestmentType.short_term)
-        result = rule_long_term_sell_below_20w_ma(pos, weekly_close_below_20w_ma=True)
+        signals = MarketSignals(weekly_close=140.0, weekly_sma_20=150.0)
+        result = rule_long_term_sell_below_20w_ma(pos, signals)
+        assert result is None
+
+    def test_does_not_trigger_when_data_missing(self):
+        pos = FakePosition(investment_type=InvestmentType.long_term)
+        signals = MarketSignals()  # no weekly data
+        result = rule_long_term_sell_below_20w_ma(pos, signals)
         assert result is None
 
 
@@ -68,19 +84,34 @@ class TestLongTermSellBelow20wMA:
 class TestShortTermSellBelow21dMA:
     def test_triggers_when_below_ma(self):
         pos = FakePosition(investment_type=InvestmentType.short_term)
-        result = rule_short_term_sell_below_21d_ma(pos, daily_close_below_21d_ma=True)
+        signals = MarketSignals(daily_close=95.0, daily_sma_21=100.0)
+        result = rule_short_term_sell_below_21d_ma(pos, signals)
         assert result is not None
         assert result.verdict == Verdict.sell
         assert result.rule_label == "ST-SELL-21D-MA"
 
     def test_does_not_trigger_when_above_ma(self):
         pos = FakePosition(investment_type=InvestmentType.short_term)
-        result = rule_short_term_sell_below_21d_ma(pos, daily_close_below_21d_ma=False)
+        signals = MarketSignals(daily_close=105.0, daily_sma_21=100.0)
+        result = rule_short_term_sell_below_21d_ma(pos, signals)
+        assert result is None
+
+    def test_does_not_trigger_when_equal_to_ma(self):
+        pos = FakePosition(investment_type=InvestmentType.short_term)
+        signals = MarketSignals(daily_close=100.0, daily_sma_21=100.0)
+        result = rule_short_term_sell_below_21d_ma(pos, signals)
         assert result is None
 
     def test_does_not_trigger_for_long_term(self):
         pos = FakePosition(investment_type=InvestmentType.long_term)
-        result = rule_short_term_sell_below_21d_ma(pos, daily_close_below_21d_ma=True)
+        signals = MarketSignals(daily_close=95.0, daily_sma_21=100.0)
+        result = rule_short_term_sell_below_21d_ma(pos, signals)
+        assert result is None
+
+    def test_does_not_trigger_when_data_missing(self):
+        pos = FakePosition(investment_type=InvestmentType.short_term)
+        signals = MarketSignals()  # no daily data
+        result = rule_short_term_sell_below_21d_ma(pos, signals)
         assert result is None
 
 
@@ -198,7 +229,8 @@ class TestEvaluatePosition:
             cost_basis=100.0,
             current_price=115.0,  # also triggers trim
         )
-        results = evaluate_position(pos, weekly_close_below_20w_ma=True)
+        signals = MarketSignals(weekly_close=140.0, weekly_sma_20=150.0)
+        results = evaluate_position(pos, signals=signals)
         assert len(results) >= 1
         assert results[0].verdict == Verdict.sell
 
@@ -208,7 +240,8 @@ class TestEvaluatePosition:
             cost_basis=100.0,
             current_price=115.0,
         )
-        results = evaluate_position(pos, weekly_close_below_20w_ma=False)
+        signals = MarketSignals(weekly_close=160.0, weekly_sma_20=150.0)
+        results = evaluate_position(pos, signals=signals)
         assert results[0].verdict == Verdict.trim
 
     def test_long_term_hold(self):
@@ -217,7 +250,8 @@ class TestEvaluatePosition:
             cost_basis=100.0,
             current_price=105.0,
         )
-        results = evaluate_position(pos, weekly_close_below_20w_ma=False)
+        signals = MarketSignals(weekly_close=160.0, weekly_sma_20=150.0)
+        results = evaluate_position(pos, signals=signals)
         assert results[0].verdict == Verdict.hold
 
     def test_short_term_sell_takes_priority(self):
@@ -226,7 +260,8 @@ class TestEvaluatePosition:
             cost_basis=100.0,
             current_price=115.0,
         )
-        results = evaluate_position(pos, daily_close_below_21d_ma=True)
+        signals = MarketSignals(daily_close=95.0, daily_sma_21=100.0)
+        results = evaluate_position(pos, signals=signals)
         assert results[0].verdict == Verdict.sell
 
     def test_short_term_trim_when_no_sell(self):
@@ -235,7 +270,8 @@ class TestEvaluatePosition:
             cost_basis=100.0,
             current_price=115.0,
         )
-        results = evaluate_position(pos, daily_close_below_21d_ma=False)
+        signals = MarketSignals(daily_close=105.0, daily_sma_21=100.0)
+        results = evaluate_position(pos, signals=signals)
         assert results[0].verdict == Verdict.trim
 
     def test_short_term_hold(self):
@@ -244,18 +280,29 @@ class TestEvaluatePosition:
             cost_basis=100.0,
             current_price=105.0,
         )
-        results = evaluate_position(pos, daily_close_below_21d_ma=False)
+        signals = MarketSignals(daily_close=105.0, daily_sma_21=100.0)
+        results = evaluate_position(pos, signals=signals)
         assert results[0].verdict == Verdict.hold
 
-    def test_no_rules_triggered_below_cost_no_ma_signal(self):
-        """Position below cost basis with no MA sell signal → empty list."""
+    def test_no_rules_triggered_below_cost_no_market_data(self):
+        """Position below cost basis with no market data → empty list."""
         pos = FakePosition(
             investment_type=InvestmentType.long_term,
             cost_basis=100.0,
             current_price=90.0,
         )
-        results = evaluate_position(pos, weekly_close_below_20w_ma=False)
+        results = evaluate_position(pos)
         assert len(results) == 0
+
+    def test_no_signals_suppresses_sell_rule(self):
+        """Without market signals the MA sell rules cannot fire."""
+        pos = FakePosition(
+            investment_type=InvestmentType.long_term,
+            cost_basis=100.0,
+            current_price=115.0,
+        )
+        results = evaluate_position(pos)  # no signals
+        assert all(r.verdict != Verdict.sell for r in results)
 
 
 # ---------------------------------------------------------------------------

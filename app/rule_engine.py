@@ -22,6 +22,19 @@ class PositionLike(Protocol):
     initial_purchase_date: date
 
 
+@dataclass
+class MarketSignals:
+    """Structured market data consumed by the rule engine.
+
+    All fields are optional so the engine can degrade gracefully when
+    Alpha Vantage data is unavailable.
+    """
+    daily_close: Optional[float] = None
+    daily_sma_21: Optional[float] = None
+    weekly_close: Optional[float] = None
+    weekly_sma_20: Optional[float] = None
+
+
 # ---------------------------------------------------------------------------
 # Individual rule functions
 # Each rule returns a RuleResult if it triggers, or None if it doesn't apply.
@@ -30,16 +43,18 @@ class PositionLike(Protocol):
 
 def rule_long_term_sell_below_20w_ma(
     position: PositionLike,
-    weekly_close_below_20w_ma: bool,
+    signals: MarketSignals,
 ) -> Optional[RuleResult]:
     """SELL if a long-term position's weekly close is below the 20-week moving average.
 
-    Because the MVP has no live market data, the caller must supply whether the
-    weekly close is below the 20-week MA as a boolean flag.
+    When market signals are available the comparison is made automatically.
+    If weekly close or SMA-20 data is missing the rule cannot fire.
     """
     if position.investment_type != InvestmentType.long_term:
         return None
-    if weekly_close_below_20w_ma:
+    if signals.weekly_close is None or signals.weekly_sma_20 is None:
+        return None
+    if signals.weekly_close < signals.weekly_sma_20:
         return RuleResult(
             rule_label="LT-SELL-20W-MA",
             verdict=Verdict.sell,
@@ -50,16 +65,18 @@ def rule_long_term_sell_below_20w_ma(
 
 def rule_short_term_sell_below_21d_ma(
     position: PositionLike,
-    daily_close_below_21d_ma: bool,
+    signals: MarketSignals,
 ) -> Optional[RuleResult]:
     """SELL if a short-term position's daily close is below the 21-day moving average.
 
-    Because the MVP has no live market data, the caller must supply whether the
-    daily close is below the 21-day MA as a boolean flag.
+    When market signals are available the comparison is made automatically.
+    If daily close or SMA-21 data is missing the rule cannot fire.
     """
     if position.investment_type != InvestmentType.short_term:
         return None
-    if daily_close_below_21d_ma:
+    if signals.daily_close is None or signals.daily_sma_21 is None:
+        return None
+    if signals.daily_close < signals.daily_sma_21:
         return RuleResult(
             rule_label="ST-SELL-21D-MA",
             verdict=Verdict.sell,
@@ -123,8 +140,7 @@ def compute_hold_duration_days(initial_purchase_date: date) -> int:
 
 def evaluate_position(
     position: PositionLike,
-    weekly_close_below_20w_ma: bool = False,
-    daily_close_below_21d_ma: bool = False,
+    signals: Optional[MarketSignals] = None,
 ) -> list[RuleResult]:
     """Evaluate a position against all applicable rules.
 
@@ -134,24 +150,26 @@ def evaluate_position(
 
     Args:
         position: The position to evaluate.
-        weekly_close_below_20w_ma: For long-term positions, whether the
-            weekly close is below the 20-week moving average.
-        daily_close_below_21d_ma: For short-term positions, whether the
-            daily close is below the 21-day moving average.
+        signals: Cached market data (daily/weekly close and SMA values).
+            When None, MA-based sell rules are suppressed and only
+            trim/hold rules can fire.
     """
+    if signals is None:
+        signals = MarketSignals()
+
     triggered: list[RuleResult] = []
 
     if position.investment_type == InvestmentType.long_term:
         # Long-term rule set, priority order
         rules = [
-            lambda p: rule_long_term_sell_below_20w_ma(p, weekly_close_below_20w_ma),
+            lambda p: rule_long_term_sell_below_20w_ma(p, signals),
             rule_trim_above_10_percent,
             rule_hold_above_cost_basis,
         ]
     elif position.investment_type == InvestmentType.short_term:
         # Short-term rule set, priority order
         rules = [
-            lambda p: rule_short_term_sell_below_21d_ma(p, daily_close_below_21d_ma),
+            lambda p: rule_short_term_sell_below_21d_ma(p, signals),
             rule_trim_above_10_percent,
             rule_hold_above_cost_basis,
         ]
