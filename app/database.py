@@ -1,7 +1,11 @@
+import logging
+
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from app.models import Base
+
+logger = logging.getLogger(__name__)
 
 DATABASE_URL = "sqlite:///./stocksentinal.db"
 
@@ -39,6 +43,7 @@ def _add_missing_columns() -> None:
                         f"ALTER TABLE {table.name} ADD COLUMN {column.name} {col_type}"
                     )
                 )
+                logger.info("Added column %s to %s table", column.name, table.name)
 
 
 def init_db() -> None:

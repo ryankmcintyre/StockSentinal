@@ -4,7 +4,25 @@ import os
 
 import pytest
 
-from app.config import get_alpha_vantage_api_key, require_alpha_vantage_api_key
+from app.config import get_alpha_vantage_api_key, get_log_level, require_alpha_vantage_api_key
+
+
+class TestGetLogLevel:
+    def test_defaults_to_info(self, monkeypatch):
+        monkeypatch.delenv("LOG_LEVEL", raising=False)
+        assert get_log_level() == "INFO"
+
+    def test_returns_configured_level(self, monkeypatch):
+        monkeypatch.setenv("LOG_LEVEL", "DEBUG")
+        assert get_log_level() == "DEBUG"
+
+    def test_normalizes_to_uppercase(self, monkeypatch):
+        monkeypatch.setenv("LOG_LEVEL", "warning")
+        assert get_log_level() == "WARNING"
+
+    def test_invalid_level_falls_back_to_info(self, monkeypatch):
+        monkeypatch.setenv("LOG_LEVEL", "VERBOSE")
+        assert get_log_level() == "INFO"
 
 
 class TestGetAlphaVantageApiKey:

@@ -6,6 +6,7 @@ data at most once per completed trading week, and persists the cached
 snapshot back to SQLite.
 """
 
+import logging
 import time
 from datetime import date, datetime, timedelta
 from typing import Optional
@@ -21,6 +22,8 @@ from app.alpha_vantage_client import (
 from app.config import require_alpha_vantage_api_key
 from app.models import Position
 
+logger = logging.getLogger(__name__)
+
 
 _ALPHA_VANTAGE_MIN_INTERVAL_SECONDS = 12.0
 _last_alpha_vantage_call_at: Optional[float] = None
@@ -35,6 +38,7 @@ def _wait_for_alpha_vantage_slot() -> None:
         elapsed = now - _last_alpha_vantage_call_at
         remaining = _ALPHA_VANTAGE_MIN_INTERVAL_SECONDS - elapsed
         if remaining > 0:
+            logger.debug("Rate-limit: sleeping %.1fs before next API call", remaining)
             time.sleep(remaining)
 
     _last_alpha_vantage_call_at = time.monotonic()
@@ -120,6 +124,7 @@ def weekly_data_is_stale(position: Position, today: Optional[date] = None) -> bo
 def _refresh_daily(position: Position, api_key: str) -> None:
     """Fetch and cache daily close + SMA-21 for a position."""
     symbol = position.ticker
+    logger.info("Refreshing daily data for %s", symbol)
 
     # Fetch daily price series — we only need the most recent bar
     bars = fetch_daily_series(symbol, api_key)
@@ -141,6 +146,7 @@ def _refresh_daily(position: Position, api_key: str) -> None:
 def _refresh_weekly(position: Position, api_key: str) -> None:
     """Fetch and cache weekly close + SMA-20 for a position."""
     symbol = position.ticker
+    logger.info("Refreshing weekly data for %s", symbol)
 
     # Fetch weekly price series
     bars = fetch_weekly_series(symbol, api_key)
@@ -185,18 +191,26 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
 
     # Daily refresh (needed by both short-term and long-term positions)
     if force or daily_data_is_stale(position):
+        logger.debug("%s daily data is stale, refreshing", position.ticker)
         try:
             _refresh_daily(position, api_key)
         except Exception as exc:
+            logger.warning("Daily refresh failed for %s: %s", position.ticker, exc)
             errors.append(f"Daily refresh failed: {exc}")
+    else:
+        logger.debug("%s daily data is fresh, skipping", position.ticker)
 
     # Weekly refresh (needed only by long-term positions, but fetch for all
     # so we have the data if the user changes investment_type later)
     if force or weekly_data_is_stale(position):
+        logger.debug("%s weekly data is stale, refreshing", position.ticker)
         try:
             _refresh_weekly(position, api_key)
         except Exception as exc:
+            logger.warning("Weekly refresh failed for %s: %s", position.ticker, exc)
             errors.append(f"Weekly refresh failed: {exc}")
+    else:
+        logger.debug("%s weekly data is fresh, skipping", position.ticker)
 
     position.refresh_error = "; ".join(errors) if errors else None
     db.commit()
@@ -210,10 +224,12 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
     """
     positions = db.query(Position).all()
     refreshed = 0
+    logger.info("Starting refresh for %d positions (force=%s)", len(positions), force)
     for pos in positions:
         needs_daily = force or daily_data_is_stale(pos)
         needs_weekly = force or weekly_data_is_stale(pos)
         if needs_daily or needs_weekly:
             refresh_position(pos, db, force=force)
             refreshed += 1
+    logger.info("Refresh complete: %d/%d positions refreshed", refreshed, len(positions))
     return refreshed
