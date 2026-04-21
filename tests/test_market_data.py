@@ -366,3 +366,52 @@ class TestRefreshAllPositions:
 
         assert "boom" in pos1.refresh_error
         assert pos2.refresh_error is None
+
+    def test_duplicate_preserves_existing_error_when_daily_refresh_fails(self, mocker):
+        pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
+        pos2 = FakePosition(
+            ticker="AAPL",
+            investment_type="long-term",
+            refresh_error="previous error",
+            daily_close=99.0,
+        )
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos1, pos2]
+
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
+        mocker.patch("app.market_data._refresh_daily", side_effect=RuntimeError("boom"))
+
+        refresh_all_positions(db, force=False)
+
+        assert "boom" in pos1.refresh_error
+        assert pos2.refresh_error == "previous error"
+        assert pos2.daily_close == 99.0
+
+    def test_duplicate_clears_existing_error_after_successful_copy(self, mocker):
+        pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
+        pos2 = FakePosition(
+            ticker="AAPL",
+            investment_type="long-term",
+            refresh_error="previous error",
+        )
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos1, pos2]
+
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
+
+        def set_daily(position, api_key):
+            position.daily_close = 150.0
+            position.daily_sma_21 = 148.0
+            position.daily_market_date = date(2026, 4, 20)
+            position.daily_retrieved_at = datetime(2026, 4, 21, 10, 0)
+
+        mocker.patch("app.market_data._refresh_daily", side_effect=set_daily)
+
+        refresh_all_positions(db, force=False)
+
+        assert pos2.daily_close == 150.0
+        assert pos2.refresh_error is None

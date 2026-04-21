@@ -185,13 +185,13 @@ def lookup_ticker(ticker: str):
 
 @app.post("/add")
 def add_position(
+    background_tasks: BackgroundTasks,
     ticker: str = Form(...),
     company_name: str = Form(...),
     cost_basis: float = Form(...),
     initial_purchase_date: str = Form(...),
     investment_type: str = Form(...),
     notes: str = Form(""),
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Create a new position and redirect to portfolio.
@@ -314,9 +314,14 @@ def _refresh_single_position_task(position_id: int):
     db_generator = get_db()
     db = next(db_generator)
     try:
-        pos = db.query(Position).filter(Position.id == position_id).first()
-        if pos:
-            refresh_position(pos, db)
+        try:
+            pos = db.query(Position).filter(Position.id == position_id).first()
+            if pos:
+                refresh_position(pos, db)
+        except Exception:
+            logger.warning(
+                "Background refresh failed for position id=%d", position_id, exc_info=True
+            )
     finally:
         db_generator.close()
 

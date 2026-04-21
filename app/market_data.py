@@ -272,11 +272,13 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
     refreshed = 0
     for ticker, group in ticker_groups.items():
         # Determine what data this ticker group needs
-        group_needs_daily = any(force or daily_data_is_stale(p) for p in group)
-        group_needs_weekly = any(
-            (force or weekly_data_is_stale(p)) and _needs_weekly(p)
+        daily_needs = {id(p): force or daily_data_is_stale(p) for p in group}
+        weekly_needs = {
+            id(p): (force or weekly_data_is_stale(p)) and _needs_weekly(p)
             for p in group
-        )
+        }
+        group_needs_daily = any(daily_needs.values())
+        group_needs_weekly = any(weekly_needs.values())
 
         if not group_needs_daily and not group_needs_weekly:
             continue
@@ -294,16 +296,20 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
         api_key = require_alpha_vantage_api_key()
         errors: list[str] = []
 
+        daily_ok = False
         if group_needs_daily:
             try:
                 _refresh_daily(representative, api_key)
+                daily_ok = True
             except Exception as exc:
                 logger.exception("Daily refresh failed for %s", ticker)
                 errors.append(f"Daily refresh failed: {exc}")
 
+        weekly_ok = False
         if group_needs_weekly:
             try:
                 _refresh_weekly(representative, api_key)
+                weekly_ok = True
             except Exception as exc:
                 logger.exception("Weekly refresh failed for %s", ticker)
                 errors.append(f"Weekly refresh failed: {exc}")
@@ -315,12 +321,22 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
             if pos is representative:
                 refreshed += 1
                 continue
-            if group_needs_daily:
+            copied_daily = group_needs_daily and daily_ok
+            copied_weekly = group_needs_weekly and _needs_weekly(pos) and weekly_ok
+
+            if copied_daily:
                 _copy_daily_cache(representative, pos)
-            if group_needs_weekly and _needs_weekly(pos):
+            if copied_weekly:
                 _copy_weekly_cache(representative, pos)
-            # Each position tracks its own errors independently
-            pos.refresh_error = None
+
+            required_refresh_succeeded = False
+            if daily_needs[id(pos)] or weekly_needs[id(pos)]:
+                required_refresh_succeeded = (
+                    (not daily_needs[id(pos)] or daily_ok)
+                    and (not weekly_needs[id(pos)] or weekly_ok)
+                )
+            if required_refresh_succeeded:
+                pos.refresh_error = None
             refreshed += 1
 
         db.commit()
