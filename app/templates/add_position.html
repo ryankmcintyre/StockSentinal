@@ -67,7 +67,6 @@
 
         companyInput.value = "";
         statusHint.textContent = "Looking up company name…";
-        companyInput.setAttribute("readonly", "");
 
         fetch("/api/lookup/" + encodeURIComponent(ticker))
             .then(function (resp) {
