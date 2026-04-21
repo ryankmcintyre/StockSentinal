@@ -207,7 +207,7 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
         try:
             _refresh_weekly(position, api_key)
         except Exception as exc:
-            logger.warning("Weekly refresh failed for %s: %s", position.ticker, exc)
+            logger.exception("Weekly refresh failed for %s: %s", position.ticker, exc)
             errors.append(f"Weekly refresh failed: {exc}")
     else:
         logger.debug("%s weekly data is fresh, skipping", position.ticker)
