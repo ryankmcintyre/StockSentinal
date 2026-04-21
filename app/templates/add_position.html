@@ -71,14 +71,19 @@
 
         fetch("/api/lookup/" + encodeURIComponent(ticker))
             .then(function (resp) {
-                if (!resp.ok) return resp.json().then(function (d) { throw new Error(d.error || "Lookup failed"); });
+                if (!resp.ok) {
+                    return resp.json().then(function (d) {
+                        throw new Error(d.error || "Lookup failed");
+                    });
+                }
                 return resp.json();
             })
             .then(function (data) {
                 companyInput.value = data.company_name;
                 statusHint.textContent = "";
             })
-            .catch(function () {
+            .catch(function (err) {
+                console.warn("Company lookup failed:", err);
                 companyInput.removeAttribute("readonly");
                 statusHint.textContent = "Could not auto-detect company name. Please enter it manually.";
             });

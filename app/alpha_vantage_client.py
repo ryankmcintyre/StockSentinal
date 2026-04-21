@@ -90,7 +90,13 @@ def fetch_company_name(symbol: str, api_key: str) -> str:
             f"No matching company found for symbol '{symbol}'"
         )
 
-    return matches[0]["2. name"]
+    best = matches[0]
+    if "2. name" not in best:
+        raise AlphaVantageError(
+            "API response missing company name field"
+        )
+
+    return best["2. name"]
 
 
 def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:

@@ -159,12 +159,12 @@ def lookup_ticker(ticker: str):
     except AlphaVantageError as exc:
         return JSONResponse(
             status_code=502,
-            content={"error": str(exc)},
+            content={"error": "Company name lookup failed"},
         )
-    except Exception as exc:
+    except Exception:
         return JSONResponse(
             status_code=502,
-            content={"error": f"Lookup failed: {exc}"},
+            content={"error": "Company name lookup failed"},
         )
 
 
