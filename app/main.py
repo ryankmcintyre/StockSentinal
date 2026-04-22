@@ -264,8 +264,6 @@ def edit_position_form(position_id: int, request: Request, db: Session = Depends
 @app.post("/edit/{position_id}")
 def edit_position(
     position_id: int,
-    ticker: str = Form(...),
-    company_name: str = Form(...),
     cost_basis: float = Form(...),
     initial_purchase_date: str = Form(...),
     investment_type: str = Form(...),
@@ -273,12 +271,14 @@ def edit_position(
     notes: str = Form(""),
     db: Session = Depends(get_db),
 ):
-    """Update an existing position and redirect to portfolio."""
+    """Update an existing position and redirect to portfolio.
+
+    Ticker and company name are immutable after creation and are not
+    accepted from the form.
+    """
     pos = db.query(Position).filter(Position.id == position_id).first()
     if not pos:
         return RedirectResponse(url="/", status_code=303)
-    pos.ticker = ticker.strip().upper()
-    pos.company_name = company_name.strip()
     pos.cost_basis = cost_basis
     pos.initial_purchase_date = date.fromisoformat(initial_purchase_date)
     pos.investment_type = investment_type
