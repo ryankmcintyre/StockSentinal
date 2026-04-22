@@ -2,17 +2,12 @@
 {% block title %}Edit {{ position.ticker }} — Stock Sentinel{% endblock %}
 {% block content %}
 
-<h2>Edit Position — {{ position.ticker }}</h2>
+<h2>Edit {{ position.ticker }} — {{ position.company_name }}</h2>
 
 <form method="post" action="/edit/{{ position.id }}" class="position-form">
-    <div class="form-group">
-        <label for="ticker">Ticker</label>
-        <input type="text" id="ticker" name="ticker" required maxlength="10" value="{{ position.ticker }}">
-    </div>
-
-    <div class="form-group">
-        <label for="company_name">Company Name</label>
-        <input type="text" id="company_name" name="company_name" required value="{{ position.company_name }}">
+    <div class="position-identity">
+        <span class="ticker">{{ position.ticker }}</span>
+        <span class="company-name">{{ position.company_name }}</span>
     </div>
 
     <div class="form-group">
