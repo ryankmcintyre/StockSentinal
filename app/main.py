@@ -40,6 +40,12 @@ logging.basicConfig(
 )
 logging.getLogger().setLevel(log_level)
 
+# Suppress third-party HTTP loggers that leak sensitive query parameters
+# (e.g. urllib3 logs full request URLs including the Alpha Vantage API key)
+_HTTP_LOGGERS = ("urllib3", "requests", "httpcore", "httpx", "http.client")
+for _name in _HTTP_LOGGERS:
+    logging.getLogger(_name).setLevel(logging.WARNING)
+
 BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
 
