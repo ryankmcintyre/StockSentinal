@@ -189,6 +189,16 @@ def update_strategy_rule_config(
         )
         db.add(row)
 
+    # SELL_MA_ALL requires at least one condition to be enabled.
+    if enabled and rule_key == RULE_KEY_SELL_MA_ALL:
+        params = parse_params_json(row.params_json)
+        conditions = params.get("conditions", []) if params else []
+        if not conditions:
+            raise ValueError(
+                f"Cannot enable '{rule_key}' for {investment_type.value}: "
+                "at least one MA condition is required"
+            )
+
     row.enabled = enabled
     row.updated_at = datetime.now()
     db.commit()

@@ -123,6 +123,44 @@ class TestRulesPage:
         page = client.get("/rules")
         assert "SMA-20" in page.text
 
+    def test_cannot_enable_sell_ma_all_with_no_conditions(self, client, _setup_db):
+        """Enabling SELL_MA_ALL when conditions list is empty is rejected."""
+        db = _setup_db()
+        try:
+            from app.rule_config import ensure_strategy_rule_defaults
+            ensure_strategy_rule_defaults(db)
+            # Clear conditions so the rule has an empty params_json
+            row = (
+                db.query(StrategyRuleConfig)
+                .filter(StrategyRuleConfig.investment_type == "long-term")
+                .filter(StrategyRuleConfig.rule_key == "SELL_MA_ALL")
+                .first()
+            )
+            assert row is not None
+            row.enabled = False
+            row.params_json = '{"conditions": []}'
+            db.commit()
+        finally:
+            db.close()
+
+        # Attempt to enable the rule; should redirect (route catches ValueError)
+        resp = client.post("/rules/long-term/SELL_MA_ALL", follow_redirects=False)
+        assert resp.status_code == 303
+
+        # The rule must still be disabled after the rejected enable attempt
+        db2 = _setup_db()
+        try:
+            row = (
+                db2.query(StrategyRuleConfig)
+                .filter(StrategyRuleConfig.investment_type == "long-term")
+                .filter(StrategyRuleConfig.rule_key == "SELL_MA_ALL")
+                .first()
+            )
+            assert row is not None
+            assert row.enabled is False
+        finally:
+            db2.close()
+
     def test_portfolio_uses_configured_rules(self, client, _setup_db):
         db = _setup_db()
         try:
