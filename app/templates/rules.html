@@ -199,6 +199,32 @@
                 </td>
             </tr>
             {% endif %}
+            {% if rule.failed_breakout_params is defined %}
+            <tr>
+                <td colspan="4" class="ma-conditions-cell">
+                    <div class="ma-conditions">
+                        <p class="text-muted ma-help">
+                            <strong>Failed breakout / reclaim failure:</strong>
+                            sells when a manually-flagged key level is broken
+                            above for ≥ <strong>{{ rule.failed_breakout_params.breakout_confirm_weeks }}</strong>
+                            weekly close(s), then lost (close ≤
+                            <strong>{{ rule.failed_breakout_params.failure_buffer_pct }}%</strong>
+                            below the level), then fails to reclaim within
+                            <strong>{{ rule.failed_breakout_params.reclaim_window_weeks }}</strong>
+                            weeks (close stays ≥
+                            <strong>{{ rule.failed_breakout_params.reclaim_fail_buffer_pct }}%</strong>
+                            below the level).
+                        </p>
+                        <p class="text-muted">
+                            Lookback:
+                            <strong>{{ rule.failed_breakout_params.lookback_weeks }}</strong>
+                            weeks. Each position needs key levels configured
+                            (Edit position → Key levels) for this rule to apply.
+                        </p>
+                    </div>
+                </td>
+            </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>

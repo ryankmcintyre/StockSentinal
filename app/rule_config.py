@@ -10,6 +10,7 @@ from app.rule_engine import (
     RULE_CATALOG,
     RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
     RULE_KEY_SELL_EXTENSION_ATR,
+    RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
     RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
     RULE_KEY_SELL_MA_ALL,
     RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
@@ -20,12 +21,14 @@ from app.rule_engine import (
     StrategyRuleSelection,
     default_distribution_cluster_params,
     default_extension_atr_params,
+    default_failed_breakout_params,
     default_lh_ll_params,
     default_relative_weakness_params,
     default_rule_selections_for_investment_type,
     default_upper_wick_params,
     get_distribution_cluster_lookback_weeks,
     get_extension_indicator_requirements,
+    get_failed_breakout_lookback_weeks,
     get_lh_ll_lookback_weeks,
     get_relative_weakness_lookback_days,
     get_upper_wick_lookback_weeks,
@@ -128,6 +131,11 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
                 # UI and daily-bar lookback calculation know its parameters
                 # immediately on first run.
                 params_json = json.dumps(default_relative_weakness_params())
+            elif spec.key == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM:
+                # Seed defaults for the failed-breakout rule so the rules
+                # UI and weekly-bar lookback know its parameters
+                # immediately on first run.
+                params_json = json.dumps(default_failed_breakout_params())
 
             db.add(
                 StrategyRuleConfig(
@@ -291,6 +299,26 @@ def get_rule_management_sections(db: Session) -> list[dict]:
                     "underperformance_gap": params.get(
                         "underperformance_gap", defaults["underperformance_gap"]
                     ),
+                }
+
+            # Include configured thresholds for the failed-breakout rule
+            if spec.key == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM and config is not None:
+                defaults = default_failed_breakout_params()
+                params = parse_params_json(config.params_json) or defaults
+                rule_data["failed_breakout_params"] = {
+                    "breakout_confirm_weeks": params.get(
+                        "breakout_confirm_weeks", defaults["breakout_confirm_weeks"]
+                    ),
+                    "failure_buffer_pct": params.get(
+                        "failure_buffer_pct", defaults["failure_buffer_pct"]
+                    ),
+                    "reclaim_window_weeks": params.get(
+                        "reclaim_window_weeks", defaults["reclaim_window_weeks"]
+                    ),
+                    "reclaim_fail_buffer_pct": params.get(
+                        "reclaim_fail_buffer_pct", defaults["reclaim_fail_buffer_pct"]
+                    ),
+                    "lookback_weeks": get_failed_breakout_lookback_weeks(params),
                 }
 
             rules.append(rule_data)
@@ -534,6 +562,7 @@ def get_required_weekly_bar_lookback(db: Session) -> int:
                         RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
                         RULE_KEY_TRIM_FIRST_LOWER_HIGH,
                         RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
+                        RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
                     )
                 )
             )
@@ -548,6 +577,8 @@ def get_required_weekly_bar_lookback(db: Session) -> int:
                 RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
             ):
                 max_lookback = max(max_lookback, get_distribution_cluster_lookback_weeks(params))
+            elif row.rule_key == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM:
+                max_lookback = max(max_lookback, get_failed_breakout_lookback_weeks(params))
             else:
                 max_lookback = max(max_lookback, get_lh_ll_lookback_weeks(params))
     return max_lookback

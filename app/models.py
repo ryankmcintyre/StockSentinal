@@ -1,7 +1,7 @@
 from datetime import date, datetime
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, String, UniqueConstraint
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy.orm import DeclarativeBase, relationship
 
 
 class Base(DeclarativeBase):
@@ -39,6 +39,35 @@ class Position(Base):
     # Per-position sector benchmark ticker (issue #22). Optional;
     # the relative-weakness rule is skipped when missing.
     sector_benchmark_ticker = Column(String, nullable=True)
+
+    # Manually identified historical key levels (issue #23 — failed
+    # breakout / reclaim failure rule).  Cascade on delete so removing
+    # a position cleans up its key levels.
+    key_levels = relationship(
+        "PositionKeyLevel",
+        back_populates="position",
+        cascade="all, delete-orphan",
+        order_by="PositionKeyLevel.level_price",
+    )
+
+
+class PositionKeyLevel(Base):
+    """A manually identified key resistance/support level for a position.
+
+    Used by the SELL_FAILED_BREAKOUT_RECLAIM rule (issue #23).
+    """
+    __tablename__ = "position_key_levels"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    position_id = Column(Integer, ForeignKey("positions.id", ondelete="CASCADE"), nullable=False)
+    level_price = Column(Float, nullable=False)
+    label = Column(String, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    notes = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+
+    position = relationship("Position", back_populates="key_levels")
 
 
 class MarketIndicatorCache(Base):
