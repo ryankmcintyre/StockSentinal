@@ -20,13 +20,16 @@ from app.database import get_db, init_db
 from app.market_data import (
     fetch_company_name,
     fetch_daily_series,
+    load_indicator_cache_for_tickers,
     refresh_all_positions,
     refresh_position,
 )
 from app.models import Position
 from app.rule_config import (
+    add_ma_condition,
     get_enabled_rule_selections_by_investment_type,
     get_rule_management_sections,
+    remove_ma_condition,
     update_strategy_rule_config,
 )
 from app.rule_engine import (
@@ -79,6 +82,7 @@ VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 def _enrich_position(
     pos: Position,
     enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
+    indicator_cache: dict[tuple[str, int], tuple[float | None, float | None]] | None = None,
 ) -> dict:
     """Run rule engine on a Position and return a dict with all display fields."""
     # Build market signals from cached Alpha Vantage data
@@ -88,6 +92,10 @@ def _enrich_position(
         weekly_close=pos.weekly_close,
         weekly_sma_20=pos.weekly_sma_20,
     )
+
+    # Populate flexible ma_signals from indicator cache
+    if indicator_cache:
+        signals.ma_signals = dict(indicator_cache)
 
     # Use cached daily close as effective price when available, otherwise manual
     effective_price = pos.daily_close if pos.daily_close is not None else pos.current_price
@@ -148,7 +156,15 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
     """Dashboard: list all positions with verdicts, sorted by urgency."""
     positions = db.query(Position).all()
     enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(db)
-    enriched = [_enrich_position(p, enabled_rules_by_type) for p in positions]
+
+    # Preload indicator cache for all tickers to avoid N+1 queries
+    all_tickers = {p.ticker for p in positions}
+    all_indicator_cache = load_indicator_cache_for_tickers(db, all_tickers)
+
+    enriched = [
+        _enrich_position(p, enabled_rules_by_type, all_indicator_cache.get(p.ticker))
+        for p in positions
+    ]
     enriched.sort(key=lambda p: VERDICT_PRIORITY.get(p["verdict"], 99))
 
     summary = {
@@ -210,6 +226,38 @@ def update_rule(
             "Invalid rule config update attempted for investment_type=%s rule_key=%s",
             investment_type,
             rule_key,
+        )
+    return RedirectResponse(url="/rules", status_code=303)
+
+
+@app.post("/rules/{investment_type}/SELL_MA_ALL/conditions/add")
+def add_sell_ma_condition(
+    investment_type: str,
+    interval: str = Form(...),
+    time_period: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Add an MA condition to the SELL_MA_ALL rule for a strategy."""
+    errors = add_ma_condition(db, investment_type, interval, time_period)
+    if errors:
+        logger.warning(
+            "Failed to add MA condition for %s: %s", investment_type, errors,
+        )
+    return RedirectResponse(url="/rules", status_code=303)
+
+
+@app.post("/rules/{investment_type}/SELL_MA_ALL/conditions/delete")
+def delete_sell_ma_condition(
+    investment_type: str,
+    interval: str = Form(...),
+    time_period: int = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Remove an MA condition from the SELL_MA_ALL rule for a strategy."""
+    errors = remove_ma_condition(db, investment_type, interval, time_period)
+    if errors:
+        logger.warning(
+            "Failed to remove MA condition for %s: %s", investment_type, errors,
         )
     return RedirectResponse(url="/rules", status_code=303)
 

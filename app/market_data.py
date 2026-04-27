@@ -22,7 +22,7 @@ from app.alpha_vantage_client import (
     fetch_weekly_series as _fetch_weekly_series,
 )
 from app.config import require_alpha_vantage_api_key
-from app.models import Position
+from app.models import MarketIndicatorCache, Position
 from app.schemas import InvestmentType
 
 logger = logging.getLogger(__name__)
@@ -131,6 +131,28 @@ def weekly_data_is_stale(position: Position, today: Optional[date] = None) -> bo
     return position.weekly_market_date != target
 
 
+def _indicator_cache_is_stale(
+    cache_row: Optional[MarketIndicatorCache],
+    interval: str,
+    today: Optional[date] = None,
+) -> bool:
+    """Return True if an indicator cache entry is stale, incomplete, or missing."""
+    if (
+        cache_row is None
+        or cache_row.sma_date is None
+        or cache_row.close_date is None
+        or cache_row.close_value is None
+    ):
+        return True
+    if interval == "daily":
+        target = _last_completed_trading_day(today)
+        return cache_row.sma_date < target or cache_row.close_date != target
+    elif interval == "weekly":
+        target = _last_completed_trading_week_end(today)
+        return cache_row.sma_date != target or cache_row.close_date != target
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Refresh logic
 # ---------------------------------------------------------------------------
@@ -213,12 +235,172 @@ def _copy_weekly_cache(source: Position, target: Position) -> None:
     target.weekly_retrieved_at = source.weekly_retrieved_at
 
 
+# ---------------------------------------------------------------------------
+# Indicator cache refresh (for arbitrary MA periods)
+# ---------------------------------------------------------------------------
+
+
+def _refresh_indicator_cache_entry(
+    db: Session,
+    ticker: str,
+    interval: str,
+    time_period: int,
+    api_key: str,
+    close_cache: dict[tuple[str, str], tuple[float, date]],
+) -> None:
+    """Fetch and upsert one indicator cache entry.
+
+    Uses close_cache to avoid re-fetching the close price for the same
+    (ticker, interval) pair.
+    """
+    # Get or fetch close for this (ticker, interval)
+    close_key = (ticker, interval)
+    if close_key not in close_cache:
+        if interval == "daily":
+            bars = fetch_daily_series(ticker, api_key)
+            if bars:
+                close_cache[close_key] = (bars[0].close, bars[0].date)
+        elif interval == "weekly":
+            bars = fetch_weekly_series(ticker, api_key)
+            if bars:
+                target_friday = _last_completed_trading_week_end()
+                bar = bars[0]
+                if bar.date > target_friday and len(bars) > 1:
+                    bar = bars[1]
+                close_cache[close_key] = (bar.close, bar.date)
+
+    close_val, close_date = close_cache.get(close_key, (None, None))
+
+    # Fetch SMA
+    sma_val = None
+    sma_date = None
+    sma_points = fetch_sma(ticker, interval=interval, time_period=time_period, api_key=api_key)
+    if sma_points:
+        if interval == "weekly":
+            target_friday = _last_completed_trading_week_end()
+            for pt in sma_points:
+                if pt.date <= target_friday:
+                    sma_val = pt.sma
+                    sma_date = pt.date
+                    break
+            else:
+                sma_val = sma_points[0].sma
+                sma_date = sma_points[0].date
+        else:
+            sma_val = sma_points[0].sma
+            sma_date = sma_points[0].date
+
+    # Upsert cache row
+    row = (
+        db.query(MarketIndicatorCache)
+        .filter(MarketIndicatorCache.ticker == ticker)
+        .filter(MarketIndicatorCache.interval == interval)
+        .filter(MarketIndicatorCache.time_period == time_period)
+        .first()
+    )
+    if row is None:
+        row = MarketIndicatorCache(
+            ticker=ticker,
+            interval=interval,
+            time_period=time_period,
+        )
+        db.add(row)
+
+    row.sma_value = sma_val
+    row.sma_date = sma_date
+    row.close_value = close_val
+    row.close_date = close_date
+    row.retrieved_at = datetime.now()
+
+
+def refresh_indicator_cache(
+    db: Session,
+    tickers: set[str],
+    required_indicators: set[tuple[str, int]],
+    force: bool = False,
+) -> list[str]:
+    """Refresh the indicator cache for the given tickers and indicators.
+
+    Args:
+        tickers: Set of ticker symbols to refresh.
+        required_indicators: Set of (interval, time_period) needed by rules.
+        force: If True, refresh even if cache is fresh.
+
+    Returns list of error messages (empty on full success).
+    """
+    if not tickers or not required_indicators:
+        return []
+
+    api_key = require_alpha_vantage_api_key()
+    errors: list[str] = []
+    # Deduplication: one close fetch per (ticker, interval)
+    close_cache: dict[tuple[str, str], tuple[float, date]] = {}
+
+    for ticker in sorted(tickers):
+        for interval, time_period in sorted(required_indicators):
+            # Check staleness
+            if not force:
+                existing = (
+                    db.query(MarketIndicatorCache)
+                    .filter(MarketIndicatorCache.ticker == ticker)
+                    .filter(MarketIndicatorCache.interval == interval)
+                    .filter(MarketIndicatorCache.time_period == time_period)
+                    .first()
+                )
+                if not _indicator_cache_is_stale(existing, interval):
+                    continue
+
+            try:
+                _refresh_indicator_cache_entry(
+                    db, ticker, interval, time_period, api_key, close_cache,
+                )
+            except Exception as exc:
+                msg = f"Indicator cache refresh failed for {ticker} {interval} SMA-{time_period}: {exc}"
+                logger.exception(msg)
+                errors.append(msg)
+
+    db.commit()
+    return errors
+
+
+def load_indicator_cache_for_tickers(
+    db: Session,
+    tickers: set[str],
+) -> dict[str, dict[tuple[str, int], tuple[Optional[float], Optional[float]]]]:
+    """Load the indicator cache for a set of tickers.
+
+    Returns: {ticker: {(interval, time_period): (close_value, sma_value)}}
+    """
+    if not tickers:
+        return {}
+
+    rows = (
+        db.query(MarketIndicatorCache)
+        .filter(MarketIndicatorCache.ticker.in_(tickers))
+        .all()
+    )
+
+    result: dict[str, dict[tuple[str, int], tuple[Optional[float], Optional[float]]]] = {}
+    for row in rows:
+        ticker_signals = result.setdefault(row.ticker, {})
+        ticker_signals[(row.interval, row.time_period)] = (row.close_value, row.sma_value)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Position refresh
+# ---------------------------------------------------------------------------
+
+
 def refresh_position(position: Position, db: Session, force: bool = False) -> None:
     """Refresh cached market data for a single position.
 
     Respects staleness checks unless *force* is True. Weekly data is only
     fetched for long-term positions. Errors are stored in
     position.refresh_error so the UI can report them without crashing.
+
+    Also refreshes the indicator cache for any configured MA conditions.
     """
     api_key = require_alpha_vantage_api_key()
     errors: list[str] = []
@@ -248,6 +430,15 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
     else:
         logger.debug("%s is short-term, skipping weekly refresh", position.ticker)
 
+    # Refresh indicator cache for configured rules
+    from app.rule_config import get_required_indicators
+    required = get_required_indicators(db)
+    if required:
+        cache_errors = refresh_indicator_cache(
+            db, {position.ticker}, required, force=force,
+        )
+        errors.extend(cache_errors)
+
     position.refresh_error = "; ".join(errors) if errors else None
     db.commit()
 
@@ -258,6 +449,8 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
     Deduplicates API calls: positions sharing the same ticker are grouped
     so that each unique ticker is fetched at most once. The cached data is
     then copied to all positions in the group.
+
+    Also refreshes the indicator cache for configured MA conditions.
 
     Returns the number of positions that were actually refreshed.
     """
@@ -340,6 +533,15 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
             refreshed += 1
 
         db.commit()
+
+    # Refresh indicator cache for all tickers and configured conditions
+    from app.rule_config import get_required_indicators
+    required = get_required_indicators(db)
+    if required and ticker_groups:
+        all_tickers = set(ticker_groups.keys())
+        cache_errors = refresh_indicator_cache(db, all_tickers, required, force=force)
+        if cache_errors:
+            logger.warning("Indicator cache refresh errors: %s", cache_errors)
 
     logger.info("Refresh complete: %d/%d positions refreshed", refreshed, len(positions))
     return refreshed
