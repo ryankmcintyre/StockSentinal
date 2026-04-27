@@ -170,7 +170,7 @@ class TestRefreshPosition:
         daily_refresh.assert_called_once_with(position, "key")
         weekly_refresh.assert_not_called()
         assert position.refresh_error is None
-        db.commit.assert_called()
+        db.commit.assert_called_once()
 
     def test_refreshes_weekly_when_weekly_is_stale_long_term(self, mocker):
         position = FakePosition(investment_type="long-term")
