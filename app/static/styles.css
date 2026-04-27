@@ -430,12 +430,12 @@ h2 {
     width: 5rem;
 }
 
-.btn-danger {
+.ma-conditions-table .btn-danger {
     background: #dc3545;
     color: #fff;
     border: none;
 }
 
-.btn-danger:hover {
+.ma-conditions-table .btn-danger:hover {
     background: #c82333;
 }
