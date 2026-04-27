@@ -606,3 +606,51 @@ class TestDistributionClusterRules:
         assert resp.status_code == 200
         assert "Sell" in resp.text
         assert "high-volume red week" in resp.text.lower()
+
+
+class TestLowerHighLowerLowRules:
+    """Issue #21: weekly lower-high / lower-low pattern rules."""
+
+    def test_rules_page_lists_lh_ll_rules(self, client):
+        resp = client.get("/rules")
+        assert resp.status_code == 200
+        assert "TRIM_WEEKLY_FIRST_LOWER_HIGH" in resp.text
+        assert "SELL_WEEKLY_LOWER_HIGH_LOWER_LOW" in resp.text
+        # Default pivot/lookback should render
+        assert "30" in resp.text
+
+    def test_lh_ll_rules_default_disabled_with_seeded_params(self, _setup_db):
+        from app.rule_config import ensure_strategy_rule_defaults
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            rows = (
+                db.query(StrategyRuleConfig)
+                .filter(StrategyRuleConfig.rule_key.in_(
+                    ["TRIM_WEEKLY_FIRST_LOWER_HIGH", "SELL_WEEKLY_LOWER_HIGH_LOWER_LOW"]
+                ))
+                .all()
+            )
+            assert len(rows) == 4  # 2 rules × 2 strategies
+            assert all(row.enabled is False for row in rows)
+            assert all(row.params_json is not None for row in rows)
+        finally:
+            db.close()
+
+    def test_required_weekly_bar_lookback_uses_lh_ll_lookback(self, _setup_db):
+        from app.rule_config import (
+            ensure_strategy_rule_defaults,
+            get_required_weekly_bar_lookback,
+            update_strategy_rule_config,
+        )
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            update_strategy_rule_config(
+                db, "long-term", "TRIM_WEEKLY_FIRST_LOWER_HIGH", enabled=True
+            )
+            assert get_required_weekly_bar_lookback(db) == 30
+        finally:
+            db.close()
