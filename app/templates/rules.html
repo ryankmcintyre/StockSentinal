@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Rules — Stock Sentinel{% endblock %}
+{% block content %}
+
+<h2>Rule Configuration</h2>
+<p class="text-muted">
+    Enable or disable rules per strategy.
+</p>
+
+{% for section in sections %}
+<section class="rules-section">
+    <h3>{{ section.title }}</h3>
+    <table class="positions-table rules-table">
+        <thead>
+            <tr>
+                <th>Verdict</th>
+                <th>Rule Key</th>
+                <th>Rule</th>
+                <th>Settings</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for rule in section.rules %}
+            <tr>
+                <td>
+                    <span class="verdict verdict-{{ rule.verdict | lower }}">
+                        {{ rule.verdict }}
+                    </span>
+                </td>
+                <td class="ticker">{{ rule.rule_key }}</td>
+                <td>
+                    <div>{{ rule.name }}</div>
+                    <small class="text-muted">{{ rule.description }}</small>
+                </td>
+                <td>
+                    <form method="post" action="/rules/{{ section.investment_type }}/{{ rule.rule_key }}" class="rules-form">
+                        <label class="checkbox-inline">
+                            <input type="checkbox" name="enabled" value="1" {% if rule.enabled %}checked{% endif %}>
+                            Enabled
+                        </label>
+                        <button type="submit" class="btn btn-small">Save</button>
+                    </form>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</section>
+{% endfor %}
+
+{% endblock %}

@@ -24,8 +24,14 @@ from app.market_data import (
     refresh_position,
 )
 from app.models import Position
+from app.rule_config import (
+    get_enabled_rule_selections_by_investment_type,
+    get_rule_management_sections,
+    update_strategy_rule_config,
+)
 from app.rule_engine import (
     MarketSignals,
+    StrategyRuleSelection,
     compute_hold_duration_days,
     compute_percent_gain,
     evaluate_position,
@@ -70,7 +76,10 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 
 
-def _enrich_position(pos: Position) -> dict:
+def _enrich_position(
+    pos: Position,
+    enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
+) -> dict:
     """Run rule engine on a Position and return a dict with all display fields."""
     # Build market signals from cached Alpha Vantage data
     signals = MarketSignals(
@@ -95,7 +104,11 @@ def _enrich_position(pos: Position) -> dict:
 
     eval_pos = _PositionPriceProxy(pos, effective_price)
 
-    triggered = evaluate_position(eval_pos, signals=signals)
+    configured_rules = None
+    if enabled_rules_by_type is not None:
+        configured_rules = enabled_rules_by_type.get(pos.investment_type)
+
+    triggered = evaluate_position(eval_pos, signals=signals, configured_rules=configured_rules)
     verdict = get_verdict(triggered)
     return {
         "id": pos.id,
@@ -134,7 +147,8 @@ def _enrich_position(pos: Position) -> dict:
 def portfolio(request: Request, db: Session = Depends(get_db)):
     """Dashboard: list all positions with verdicts, sorted by urgency."""
     positions = db.query(Position).all()
-    enriched = [_enrich_position(p) for p in positions]
+    enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(db)
+    enriched = [_enrich_position(p, enabled_rules_by_type) for p in positions]
     enriched.sort(key=lambda p: VERDICT_PRIORITY.get(p["verdict"], 99))
 
     summary = {
@@ -163,6 +177,41 @@ def add_position_form(request: Request):
         "add_position.html",
         {"investment_types": InvestmentType},
     )
+
+
+@app.get("/rules")
+def rules_page(request: Request, db: Session = Depends(get_db)):
+    """Show rule configuration for long-term and short-term strategies."""
+    sections = get_rule_management_sections(db)
+    return templates.TemplateResponse(
+        request,
+        "rules.html",
+        {"sections": sections},
+    )
+
+
+@app.post("/rules/{investment_type}/{rule_key}")
+def update_rule(
+    investment_type: str,
+    rule_key: str,
+    enabled: str | None = Form(None),
+    db: Session = Depends(get_db),
+):
+    """Update enablement for a strategy rule."""
+    try:
+        update_strategy_rule_config(
+            db=db,
+            investment_type_value=investment_type,
+            rule_key=rule_key,
+            enabled=enabled is not None,
+        )
+    except ValueError:
+        logger.warning(
+            "Invalid rule config update attempted for investment_type=%s rule_key=%s",
+            investment_type,
+            rule_key,
+        )
+    return RedirectResponse(url="/rules", status_code=303)
 
 
 @app.get("/api/lookup/{ticker}")
