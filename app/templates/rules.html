@@ -130,6 +130,29 @@
                 </td>
             </tr>
             {% endif %}
+            {% if rule.distribution_cluster_params is defined %}
+            <tr>
+                <td colspan="4" class="ma-conditions-cell">
+                    <div class="ma-conditions">
+                        <p class="text-muted ma-help">
+                            <strong>High-volume red weeks cluster:</strong>
+                            counts red weekly bars whose volume exceeds
+                            <strong>{{ rule.distribution_cluster_params.volume_multiplier }}x</strong>
+                            the median red-week volume over the prior
+                            <strong>{{ rule.distribution_cluster_params.baseline_lookback_weeks }}</strong> weeks.
+                        </p>
+                        <p class="text-muted">
+                            {% if rule.distribution_cluster_params.hits_kind == 'sell' %}Sell{% else %}Trim{% endif %}
+                            when at least
+                            <strong>{{ rule.distribution_cluster_params.hits_required }}</strong>
+                            such weeks appear in the last
+                            <strong>{{ rule.distribution_cluster_params.cluster_window_weeks }}</strong>
+                            weeks.
+                        </p>
+                    </div>
+                </td>
+            </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>

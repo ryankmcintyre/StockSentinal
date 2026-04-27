@@ -8,14 +8,18 @@ from sqlalchemy.orm import Session
 from app.models import StrategyRuleConfig
 from app.rule_engine import (
     RULE_CATALOG,
+    RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
     RULE_KEY_SELL_EXTENSION_ATR,
     RULE_KEY_SELL_MA_ALL,
+    RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
     RULE_KEY_TRIM_EXTENSION_ATR,
     RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
     StrategyRuleSelection,
+    default_distribution_cluster_params,
     default_extension_atr_params,
     default_rule_selections_for_investment_type,
     default_upper_wick_params,
+    get_distribution_cluster_lookback_weeks,
     get_extension_indicator_requirements,
     get_upper_wick_lookback_weeks,
     list_rule_specs_for_investment_type,
@@ -96,6 +100,14 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
                 # and weekly-bar lookback calculation know its parameters
                 # immediately on first run.
                 params_json = json.dumps(default_upper_wick_params())
+            elif spec.key in (
+                RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+                RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+            ):
+                # Seed defaults for the distribution-cluster rules so the
+                # rules UI and weekly-bar lookback calculation know their
+                # baseline + cluster window parameters immediately.
+                params_json = json.dumps(default_distribution_cluster_params())
 
             db.add(
                 StrategyRuleConfig(
@@ -198,6 +210,34 @@ def get_rule_management_sections(db: Session) -> list[dict]:
                         "near_high_pct", default_upper_wick_params()["near_high_pct"]
                     ),
                     "lookback_high_weeks": get_upper_wick_lookback_weeks(params),
+                }
+
+            # Include configured thresholds for the distribution-cluster rules
+            if spec.key in (
+                RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+                RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+            ) and config is not None:
+                defaults = default_distribution_cluster_params()
+                params = parse_params_json(config.params_json) or defaults
+                hits_key = (
+                    "trim_hits"
+                    if spec.key == RULE_KEY_TRIM_DISTRIBUTION_CLUSTER
+                    else "sell_hits"
+                )
+                rule_data["distribution_cluster_params"] = {
+                    "baseline_lookback_weeks": params.get(
+                        "baseline_lookback_weeks", defaults["baseline_lookback_weeks"]
+                    ),
+                    "cluster_window_weeks": params.get(
+                        "cluster_window_weeks", defaults["cluster_window_weeks"]
+                    ),
+                    "volume_multiplier": params.get(
+                        "volume_multiplier", defaults["volume_multiplier"]
+                    ),
+                    "hits_required": params.get(hits_key, defaults[hits_key]),
+                    "hits_kind": (
+                        "trim" if spec.key == RULE_KEY_TRIM_DISTRIBUTION_CLUSTER else "sell"
+                    ),
                 }
 
             rules.append(rule_data)
@@ -433,10 +473,21 @@ def get_required_weekly_bar_lookback(db: Session) -> int:
             db.query(StrategyRuleConfig)
             .filter(StrategyRuleConfig.investment_type == investment_type.value)
             .filter(StrategyRuleConfig.enabled.is_(True))
-            .filter(StrategyRuleConfig.rule_key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK)
+            .filter(
+                StrategyRuleConfig.rule_key.in_(
+                    (
+                        RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
+                        RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+                        RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+                    )
+                )
+            )
             .all()
         )
         for row in rows:
             params = parse_params_json(row.params_json)
-            max_lookback = max(max_lookback, get_upper_wick_lookback_weeks(params))
+            if row.rule_key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK:
+                max_lookback = max(max_lookback, get_upper_wick_lookback_weeks(params))
+            else:
+                max_lookback = max(max_lookback, get_distribution_cluster_lookback_weeks(params))
     return max_lookback

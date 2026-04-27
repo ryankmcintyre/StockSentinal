@@ -510,3 +510,99 @@ class TestWeeklyUpperWickRule:
         assert resp.status_code == 200
         assert "Trim" in resp.text
         assert "upper-wick" in resp.text.lower()
+
+
+class TestDistributionClusterRules:
+    """Issue #20: clustered high-volume red-week rules."""
+
+    def test_rules_page_lists_distribution_rules(self, client):
+        resp = client.get("/rules")
+        assert resp.status_code == 200
+        assert "TRIM_WEEKLY_DISTRIBUTION_CLUSTER" in resp.text
+        assert "SELL_WEEKLY_DISTRIBUTION_CLUSTER" in resp.text
+        # Default volume multiplier and cluster window should render
+        assert "1.5" in resp.text
+        assert "20" in resp.text
+
+    def test_distribution_rules_default_disabled_with_seeded_params(self, _setup_db):
+        from app.rule_config import ensure_strategy_rule_defaults
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            rows = (
+                db.query(StrategyRuleConfig)
+                .filter(StrategyRuleConfig.rule_key.in_(
+                    ["TRIM_WEEKLY_DISTRIBUTION_CLUSTER", "SELL_WEEKLY_DISTRIBUTION_CLUSTER"]
+                ))
+                .all()
+            )
+            assert len(rows) == 4  # 2 rules × 2 strategies
+            assert all(row.enabled is False for row in rows)
+            assert all(row.params_json is not None for row in rows)
+        finally:
+            db.close()
+
+    def test_required_weekly_bar_lookback_uses_distribution_baseline(self, _setup_db):
+        from app.rule_config import (
+            ensure_strategy_rule_defaults,
+            get_required_weekly_bar_lookback,
+            update_strategy_rule_config,
+        )
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            update_strategy_rule_config(
+                db, "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
+            )
+            # max(baseline=20, cluster_window=8) = 20
+            assert get_required_weekly_bar_lookback(db) == 20
+        finally:
+            db.close()
+
+    def test_distribution_sell_triggers_in_portfolio_view(self, client, _setup_db):
+        """End-to-end: enable SELL distribution rule, seed weekly bars, expect Sell."""
+        from datetime import date as _date, datetime as _dt, timedelta as _td
+        from app.models import MarketWeeklyBarCache
+        from app.rule_config import update_strategy_rule_config
+
+        db = _setup_db()
+        try:
+            db.add(
+                Position(
+                    ticker="DST",
+                    company_name="Dist Co.",
+                    cost_basis=80.0,
+                    initial_purchase_date=_date(2025, 1, 1),
+                    investment_type="long-term",
+                    current_price=85.0,
+                    notes=None,
+                )
+            )
+            # 3 high-vol red weeks recent + 12 normal red weeks for baseline.
+            d = _date(2025, 6, 13)
+            for _ in range(3):
+                db.add(MarketWeeklyBarCache(
+                    ticker="DST", bar_date=d, open=100, high=100, low=85, close=90,
+                    volume=300.0, retrieved_at=_dt.now(),
+                ))
+                d -= _td(weeks=1)
+            for _ in range(20):
+                db.add(MarketWeeklyBarCache(
+                    ticker="DST", bar_date=d, open=100, high=100, low=85, close=90,
+                    volume=100.0, retrieved_at=_dt.now(),
+                ))
+                d -= _td(weeks=1)
+            db.commit()
+            update_strategy_rule_config(db, "long-term", "SELL_MA_ALL", enabled=False)
+            update_strategy_rule_config(
+                db, "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
+            )
+        finally:
+            db.close()
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "Sell" in resp.text
+        assert "high-volume red week" in resp.text.lower()
