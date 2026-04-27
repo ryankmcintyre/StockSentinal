@@ -136,15 +136,20 @@ def _indicator_cache_is_stale(
     interval: str,
     today: Optional[date] = None,
 ) -> bool:
-    """Return True if an indicator cache entry is stale or missing."""
-    if cache_row is None or cache_row.sma_date is None:
+    """Return True if an indicator cache entry is stale, incomplete, or missing."""
+    if (
+        cache_row is None
+        or cache_row.sma_date is None
+        or cache_row.close_date is None
+        or cache_row.close_value is None
+    ):
         return True
     if interval == "daily":
         target = _last_completed_trading_day(today)
-        return cache_row.sma_date < target
+        return cache_row.sma_date < target or cache_row.close_date != target
     elif interval == "weekly":
         target = _last_completed_trading_week_end(today)
-        return cache_row.sma_date != target
+        return cache_row.sma_date != target or cache_row.close_date != target
     return True
 
 
