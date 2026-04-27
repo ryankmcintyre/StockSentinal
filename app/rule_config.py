@@ -11,10 +11,13 @@ from app.rule_engine import (
     RULE_KEY_SELL_EXTENSION_ATR,
     RULE_KEY_SELL_MA_ALL,
     RULE_KEY_TRIM_EXTENSION_ATR,
+    RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
     StrategyRuleSelection,
     default_extension_atr_params,
     default_rule_selections_for_investment_type,
+    default_upper_wick_params,
     get_extension_indicator_requirements,
+    get_upper_wick_lookback_weeks,
     list_rule_specs_for_investment_type,
     parse_params_json,
     validate_ma_conditions,
@@ -88,6 +91,11 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
                 # pipeline can reason about their thresholds and indicator
                 # requirements without first requiring user configuration.
                 params_json = json.dumps(default_extension_atr_params())
+            elif spec.key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK:
+                # Seed defaults for the upper-wick rule so the rules UI
+                # and weekly-bar lookback calculation know its parameters
+                # immediately on first run.
+                params_json = json.dumps(default_upper_wick_params())
 
             db.add(
                 StrategyRuleConfig(
@@ -174,6 +182,22 @@ def get_rule_management_sections(db: Session) -> list[dict]:
                     "sma_period": sma_period,
                     "atr_period": atr_period,
                     "interval": interval,
+                }
+
+            # Include configured thresholds for the weekly upper-wick rule
+            if spec.key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK and config is not None:
+                params = parse_params_json(config.params_json) or default_upper_wick_params()
+                rule_data["upper_wick_params"] = {
+                    "upper_wick_ratio_min": params.get(
+                        "upper_wick_ratio_min", default_upper_wick_params()["upper_wick_ratio_min"]
+                    ),
+                    "body_ratio_max": params.get(
+                        "body_ratio_max", default_upper_wick_params()["body_ratio_max"]
+                    ),
+                    "near_high_pct": params.get(
+                        "near_high_pct", default_upper_wick_params()["near_high_pct"]
+                    ),
+                    "lookback_high_weeks": get_upper_wick_lookback_weeks(params),
                 }
 
             rules.append(rule_data)
@@ -395,3 +419,24 @@ def get_required_atr_indicators(db: Session) -> set[tuple[str, int]]:
             indicators.add(atr_req)
 
     return indicators
+
+
+def get_required_weekly_bar_lookback(db: Session) -> int:
+    """Return the largest weekly-OHLC lookback window required by enabled rules.
+
+    Returns 0 when no enabled rule needs weekly OHLC history.
+    """
+    ensure_strategy_rule_defaults(db)
+    max_lookback = 0
+    for investment_type in _supported_investment_types():
+        rows = (
+            db.query(StrategyRuleConfig)
+            .filter(StrategyRuleConfig.investment_type == investment_type.value)
+            .filter(StrategyRuleConfig.enabled.is_(True))
+            .filter(StrategyRuleConfig.rule_key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK)
+            .all()
+        )
+        for row in rows:
+            params = parse_params_json(row.params_json)
+            max_lookback = max(max_lookback, get_upper_wick_lookback_weeks(params))
+    return max_lookback

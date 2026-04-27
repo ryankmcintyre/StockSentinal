@@ -383,3 +383,130 @@ class TestExtensionAtrRules:
         # The verdict should be SELL and the description text should appear.
         assert "Sell" in resp.text
         assert "Price extended" in resp.text
+
+
+class TestWeeklyUpperWickRule:
+    """Issue #19: weekly upper-wick reversal rule in catalog + UI + lookback."""
+
+    def test_rules_page_lists_upper_wick_rule(self, client):
+        resp = client.get("/rules")
+        assert resp.status_code == 200
+        assert "TRIM_WEEKLY_UPPER_WICK" in resp.text
+        # Default thresholds and lookback should render
+        assert "0.6" in resp.text  # upper_wick_ratio_min
+        assert "26" in resp.text   # lookback_high_weeks
+
+    def test_upper_wick_rule_default_disabled_with_seeded_params(self, _setup_db):
+        from app.rule_config import ensure_strategy_rule_defaults
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            rows = (
+                db.query(StrategyRuleConfig)
+                .filter(StrategyRuleConfig.rule_key == "TRIM_WEEKLY_UPPER_WICK")
+                .all()
+            )
+            assert len(rows) == 2  # 1 rule × 2 strategies
+            assert all(row.enabled is False for row in rows)
+            assert all(row.params_json is not None for row in rows)
+        finally:
+            db.close()
+
+    def test_user_can_enable_upper_wick_rule(self, client, _setup_db):
+        resp = client.post(
+            "/rules/long-term/TRIM_WEEKLY_UPPER_WICK",
+            data={"enabled": "1"},
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        db = _setup_db()
+        try:
+            row = (
+                db.query(StrategyRuleConfig)
+                .filter(StrategyRuleConfig.investment_type == "long-term")
+                .filter(StrategyRuleConfig.rule_key == "TRIM_WEEKLY_UPPER_WICK")
+                .first()
+            )
+            assert row is not None
+            assert row.enabled is True
+        finally:
+            db.close()
+
+    def test_required_weekly_bar_lookback_returns_zero_when_disabled(self, _setup_db):
+        from app.rule_config import (
+            ensure_strategy_rule_defaults,
+            get_required_weekly_bar_lookback,
+        )
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            assert get_required_weekly_bar_lookback(db) == 0
+        finally:
+            db.close()
+
+    def test_required_weekly_bar_lookback_returns_max_across_strategies(self, _setup_db):
+        from app.rule_config import (
+            ensure_strategy_rule_defaults,
+            get_required_weekly_bar_lookback,
+            update_strategy_rule_config,
+        )
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            update_strategy_rule_config(
+                db, "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
+            )
+            assert get_required_weekly_bar_lookback(db) == 26
+        finally:
+            db.close()
+
+    def test_upper_wick_triggers_in_portfolio_view(self, client, _setup_db):
+        """End-to-end: enable rule, seed weekly bar cache, expect Trim verdict."""
+        from datetime import date as _date, datetime as _dt
+        from app.models import MarketWeeklyBarCache
+        from app.rule_config import update_strategy_rule_config
+
+        db = _setup_db()
+        try:
+            db.add(
+                Position(
+                    ticker="WIK",
+                    company_name="Wick Co.",
+                    cost_basis=80.0,
+                    initial_purchase_date=_date(2025, 1, 1),
+                    investment_type="long-term",
+                    current_price=95.0,
+                    notes=None,
+                )
+            )
+            # Latest weekly bar shows long upper wick near recent high.
+            # range=8, body=1 (12.5%), upper_wick=5 (62.5%), close 5% below high
+            db.add(
+                MarketWeeklyBarCache(
+                    ticker="WIK",
+                    bar_date=_date(2025, 6, 6),
+                    open=94.0,
+                    high=100.0,
+                    low=92.0,
+                    close=95.0,
+                    volume=1000000.0,
+                    retrieved_at=_dt.now(),
+                )
+            )
+            db.commit()
+            # Disable SELL_MA_ALL to avoid interference; enable upper-wick rule.
+            update_strategy_rule_config(db, "long-term", "SELL_MA_ALL", enabled=False)
+            update_strategy_rule_config(
+                db, "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
+            )
+        finally:
+            db.close()
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "Trim" in resp.text
+        assert "upper-wick" in resp.text.lower()

@@ -23,7 +23,7 @@ from app.alpha_vantage_client import (
     fetch_weekly_series as _fetch_weekly_series,
 )
 from app.config import require_alpha_vantage_api_key
-from app.models import MarketAtrCache, MarketIndicatorCache, Position
+from app.models import MarketAtrCache, MarketIndicatorCache, MarketWeeklyBarCache, Position
 from app.schemas import InvestmentType
 
 logger = logging.getLogger(__name__)
@@ -536,6 +536,133 @@ def load_atr_cache_for_tickers(
 
 
 # ---------------------------------------------------------------------------
+# Weekly OHLC bar cache (used by upper-wick / volume / pivot rules)
+# ---------------------------------------------------------------------------
+
+
+def _weekly_bar_cache_is_stale(
+    latest_row: Optional[MarketWeeklyBarCache],
+    today: Optional[date] = None,
+) -> bool:
+    """Return True if the most recent cached weekly bar is older than the
+    most recently completed trading week."""
+    if latest_row is None or latest_row.bar_date is None:
+        return True
+    target = _last_completed_trading_week_end(today)
+    return latest_row.bar_date < target
+
+
+def _refresh_weekly_bar_cache_for_ticker(
+    db: Session,
+    ticker: str,
+    api_key: str,
+    lookback_weeks: int,
+) -> None:
+    """Fetch the weekly series for *ticker* and upsert the latest *lookback_weeks* bars."""
+    bars = fetch_weekly_series(ticker, api_key)
+    if not bars:
+        return
+
+    target_friday = _last_completed_trading_week_end()
+    completed = [b for b in bars if b.date <= target_friday]
+    completed.sort(key=lambda b: b.date, reverse=True)
+    keep = completed[:lookback_weeks]
+
+    existing_rows = (
+        db.query(MarketWeeklyBarCache)
+        .filter(MarketWeeklyBarCache.ticker == ticker)
+        .all()
+    )
+    rows_by_date = {row.bar_date: row for row in existing_rows}
+
+    keep_dates = {b.date for b in keep}
+    now = datetime.now()
+    for bar in keep:
+        row = rows_by_date.get(bar.date)
+        if row is None:
+            row = MarketWeeklyBarCache(ticker=ticker, bar_date=bar.date)
+            db.add(row)
+        row.open = bar.open
+        row.high = bar.high
+        row.low = bar.low
+        row.close = bar.close
+        row.volume = bar.volume
+        row.retrieved_at = now
+
+    # Trim cached bars older than our lookback window for this ticker.
+    for existing_date, row in rows_by_date.items():
+        if existing_date not in keep_dates:
+            db.delete(row)
+
+
+def refresh_weekly_bar_cache(
+    db: Session,
+    tickers: set[str],
+    lookback_weeks: int,
+    force: bool = False,
+) -> list[str]:
+    """Refresh the weekly OHLC bar cache for a set of tickers.
+
+    Args:
+        tickers: Set of ticker symbols.
+        lookback_weeks: How many recent completed weekly bars to keep per ticker.
+        force: If True, refresh even if the latest cached bar is current.
+
+    Returns list of error messages (empty on full success).
+    """
+    if not tickers or lookback_weeks <= 0:
+        return []
+
+    api_key = require_alpha_vantage_api_key()
+    errors: list[str] = []
+
+    for ticker in sorted(tickers):
+        if not force:
+            latest = (
+                db.query(MarketWeeklyBarCache)
+                .filter(MarketWeeklyBarCache.ticker == ticker)
+                .order_by(MarketWeeklyBarCache.bar_date.desc())
+                .first()
+            )
+            if not _weekly_bar_cache_is_stale(latest):
+                continue
+
+        try:
+            _refresh_weekly_bar_cache_for_ticker(db, ticker, api_key, lookback_weeks)
+        except Exception as exc:
+            msg = f"Weekly bar cache refresh failed for {ticker}: {exc}"
+            logger.exception(msg)
+            errors.append(msg)
+
+    db.commit()
+    return errors
+
+
+def load_weekly_bar_cache_for_tickers(
+    db: Session,
+    tickers: set[str],
+) -> dict[str, list[MarketWeeklyBarCache]]:
+    """Load weekly OHLC bars for a set of tickers, sorted most-recent first.
+
+    Returns: {ticker: [bar, bar, …]}
+    """
+    if not tickers:
+        return {}
+
+    rows = (
+        db.query(MarketWeeklyBarCache)
+        .filter(MarketWeeklyBarCache.ticker.in_(tickers))
+        .order_by(MarketWeeklyBarCache.ticker, MarketWeeklyBarCache.bar_date.desc())
+        .all()
+    )
+
+    result: dict[str, list[MarketWeeklyBarCache]] = {}
+    for row in rows:
+        result.setdefault(row.ticker, []).append(row)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Position refresh
 # ---------------------------------------------------------------------------
 
@@ -578,7 +705,11 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
         logger.debug("%s is short-term, skipping weekly refresh", position.ticker)
 
     # Refresh indicator cache for configured rules
-    from app.rule_config import get_required_atr_indicators, get_required_indicators
+    from app.rule_config import (
+        get_required_atr_indicators,
+        get_required_indicators,
+        get_required_weekly_bar_lookback,
+    )
     required = get_required_indicators(db)
     if required:
         cache_errors = refresh_indicator_cache(
@@ -592,6 +723,13 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
             db, {position.ticker}, required_atr, force=force,
         )
         errors.extend(atr_errors)
+
+    weekly_lookback = get_required_weekly_bar_lookback(db)
+    if weekly_lookback > 0:
+        weekly_bar_errors = refresh_weekly_bar_cache(
+            db, {position.ticker}, weekly_lookback, force=force,
+        )
+        errors.extend(weekly_bar_errors)
 
     position.refresh_error = "; ".join(errors) if errors else None
     db.commit()
@@ -689,7 +827,11 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
         db.commit()
 
     # Refresh indicator cache for all tickers and configured conditions
-    from app.rule_config import get_required_atr_indicators, get_required_indicators
+    from app.rule_config import (
+        get_required_atr_indicators,
+        get_required_indicators,
+        get_required_weekly_bar_lookback,
+    )
     required = get_required_indicators(db)
     if required and ticker_groups:
         all_tickers = set(ticker_groups.keys())
@@ -703,6 +845,15 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
         atr_errors = refresh_atr_cache(db, all_tickers, required_atr, force=force)
         if atr_errors:
             logger.warning("ATR cache refresh errors: %s", atr_errors)
+
+    weekly_lookback = get_required_weekly_bar_lookback(db)
+    if weekly_lookback > 0 and ticker_groups:
+        all_tickers = set(ticker_groups.keys())
+        bar_errors = refresh_weekly_bar_cache(
+            db, all_tickers, weekly_lookback, force=force,
+        )
+        if bar_errors:
+            logger.warning("Weekly bar cache refresh errors: %s", bar_errors)
 
     logger.info("Refresh complete: %d/%d positions refreshed", refreshed, len(positions))
     return refreshed

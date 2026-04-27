@@ -24,6 +24,17 @@ class PositionLike(Protocol):
 
 
 @dataclass
+class WeeklyOhlcBar:
+    """Snapshot of a single weekly OHLC bar consumed by the rule engine."""
+    bar_date: date
+    open: Optional[float]
+    high: Optional[float]
+    low: Optional[float]
+    close: Optional[float]
+    volume: Optional[float] = None
+
+
+@dataclass
 class MarketSignals:
     """Structured market data consumed by the rule engine.
 
@@ -33,6 +44,9 @@ class MarketSignals:
 
     The ``atr_signals`` dict stores ATR indicator data keyed by
     ``(interval, time_period)`` → ``atr_value``.
+
+    ``weekly_ohlc_history`` carries up to N most-recent weekly bars
+    (ordered most-recent first) for rules that need OHLC history.
     """
     daily_close: Optional[float] = None
     daily_sma_21: Optional[float] = None
@@ -48,6 +62,10 @@ class MarketSignals:
     # ATR indicator store populated from the ATR cache.
     # Key: (interval, time_period)  Value: atr_value
     atr_signals: dict[tuple[str, int], Optional[float]] = field(default_factory=dict)
+
+    # Weekly OHLC history, most-recent first.  Empty when the rule set
+    # in use does not require weekly OHLC.
+    weekly_ohlc_history: list[WeeklyOhlcBar] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -72,6 +90,7 @@ class RuleSpec:
 RULE_KEY_SELL_MA_ALL = "SELL_MA_ALL"
 RULE_KEY_TRIM_EXTENSION_ATR = "TRIM_EXTENSION_ATR"
 RULE_KEY_SELL_EXTENSION_ATR = "SELL_EXTENSION_ATR"
+RULE_KEY_TRIM_WEEKLY_UPPER_WICK = "TRIM_WEEKLY_UPPER_WICK"
 RULE_KEY_TRIM_10PCT = "TRIM-10PCT"
 RULE_KEY_HOLD_ABOVE_COST = "HOLD-ABOVE-COST"
 
@@ -81,6 +100,12 @@ DEFAULT_EXTENSION_SELL_THRESHOLD = 10.0
 DEFAULT_EXTENSION_SMA_PERIOD = 50
 DEFAULT_EXTENSION_ATR_PERIOD = 14
 DEFAULT_EXTENSION_INTERVAL = "daily"
+
+# Default parameters for the weekly upper-wick rule (issue #19).
+DEFAULT_UPPER_WICK_RATIO_MIN = 0.60
+DEFAULT_UPPER_WICK_BODY_RATIO_MAX = 0.25
+DEFAULT_UPPER_WICK_NEAR_HIGH_PCT = 5.0
+DEFAULT_UPPER_WICK_LOOKBACK_WEEKS = 26
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 
@@ -288,6 +313,103 @@ def rule_sell_extension_atr(
     )
 
 
+def rule_trim_weekly_upper_wick(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    """TRIM when the most recent weekly candle shows a long upper wick near recent highs.
+
+    Detects buyer exhaustion / distribution — the market rallied during
+    the week but rejected higher prices, leaving a long upper wick and
+    a small real body. Most meaningful when occurring near recent highs
+    after a sustained uptrend.
+
+    Inputs (all from MarketSignals.weekly_ohlc_history, most-recent first):
+      latest_bar.{open, high, low, close} for the most recently completed week.
+
+    Conditions (all must be true):
+      - candle range > 0
+      - upper_wick / range >= upper_wick_ratio_min (default 0.60)
+      - body / range <= body_ratio_max         (default 0.25)
+      - latest_close is within near_high_pct (default 5%) of the highest
+        weekly high over the last lookback_high_weeks (default 26)
+
+    All thresholds and the lookback window are configurable via params.
+    """
+    history = signals.weekly_ohlc_history
+    if not history:
+        return None
+
+    upper_wick_ratio_min = DEFAULT_UPPER_WICK_RATIO_MIN
+    body_ratio_max = DEFAULT_UPPER_WICK_BODY_RATIO_MAX
+    near_high_pct = DEFAULT_UPPER_WICK_NEAR_HIGH_PCT
+    lookback_weeks = DEFAULT_UPPER_WICK_LOOKBACK_WEEKS
+    if params:
+        cand = params.get("upper_wick_ratio_min")
+        if isinstance(cand, (int, float)) and cand > 0:
+            upper_wick_ratio_min = float(cand)
+        cand = params.get("body_ratio_max")
+        if isinstance(cand, (int, float)) and cand >= 0:
+            body_ratio_max = float(cand)
+        cand = params.get("near_high_pct")
+        if isinstance(cand, (int, float)) and cand >= 0:
+            near_high_pct = float(cand)
+        cand = params.get("lookback_high_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            lookback_weeks = cand
+
+    latest = history[0]
+    if (
+        latest.open is None
+        or latest.high is None
+        or latest.low is None
+        or latest.close is None
+    ):
+        return None
+
+    candle_range = latest.high - latest.low
+    if candle_range <= 0:
+        return None
+
+    body = abs(latest.close - latest.open)
+    upper_wick = latest.high - max(latest.open, latest.close)
+    if upper_wick < 0:
+        upper_wick = 0.0
+
+    upper_wick_ratio = upper_wick / candle_range
+    body_ratio = body / candle_range
+    if upper_wick_ratio < upper_wick_ratio_min:
+        return None
+    if body_ratio > body_ratio_max:
+        return None
+
+    # "Near recent highs" check: latest_close must be within near_high_pct
+    # of the maximum high across the last `lookback_weeks` completed weeks
+    # (including the latest bar).
+    lookback_bars = [b for b in history[:lookback_weeks] if b.high is not None]
+    if not lookback_bars:
+        return None
+    recent_high = max(b.high for b in lookback_bars)
+    if recent_high <= 0:
+        return None
+
+    distance_pct = (recent_high - latest.close) / recent_high * 100.0
+    if distance_pct > near_high_pct:
+        return None
+
+    return RuleResult(
+        rule_label=RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
+        verdict=Verdict.trim,
+        description=(
+            f"Weekly upper-wick rejection near {lookback_weeks}wk high: "
+            f"wick {upper_wick_ratio * 100:.0f}% of range, "
+            f"body {body_ratio * 100:.0f}% of range, "
+            f"close {distance_pct:.1f}% below {lookback_weeks}wk high"
+        ),
+    )
+
+
 def rule_hold_above_cost_basis(
     position: PositionLike,
     _signals: Optional[MarketSignals] = None,
@@ -327,6 +449,12 @@ def _eval_trim_extension_atr(
     position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
 ) -> Optional[RuleResult]:
     return rule_trim_extension_atr(position, signals, params)
+
+
+def _eval_trim_weekly_upper_wick(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_trim_weekly_upper_wick(position, signals, params)
 
 
 def _eval_trim(
@@ -376,6 +504,18 @@ RULE_CATALOG: dict[str, RuleSpec] = {
         supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
         default_sort_order=15,
         evaluator=_eval_trim_extension_atr,
+    ),
+    RULE_KEY_TRIM_WEEKLY_UPPER_WICK: RuleSpec(
+        key=RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
+        name="Trim on weekly long upper-wick rejection",
+        description=(
+            "Trim when the latest weekly candle shows a long upper wick and "
+            "small body near recent highs (buyer exhaustion / distribution)."
+        ),
+        verdict=Verdict.trim,
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
+        default_sort_order=17,
+        evaluator=_eval_trim_weekly_upper_wick,
     ),
     RULE_KEY_TRIM_10PCT: RuleSpec(
         key=RULE_KEY_TRIM_10PCT,
@@ -546,6 +686,25 @@ def get_extension_indicator_requirements(
         if isinstance(cand_atr, int) and cand_atr >= 2:
             atr_period = cand_atr
     return (interval, sma_period), (interval, atr_period)
+
+
+def default_upper_wick_params() -> dict:
+    """Return default params for the weekly upper-wick rule (issue #19)."""
+    return {
+        "upper_wick_ratio_min": DEFAULT_UPPER_WICK_RATIO_MIN,
+        "body_ratio_max": DEFAULT_UPPER_WICK_BODY_RATIO_MAX,
+        "near_high_pct": DEFAULT_UPPER_WICK_NEAR_HIGH_PCT,
+        "lookback_high_weeks": DEFAULT_UPPER_WICK_LOOKBACK_WEEKS,
+    }
+
+
+def get_upper_wick_lookback_weeks(params: Optional[dict]) -> int:
+    """Return the configured lookback window for the upper-wick rule."""
+    if params:
+        cand = params.get("lookback_high_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            return cand
+    return DEFAULT_UPPER_WICK_LOOKBACK_WEEKS
 # ---------------------------------------------------------------------------
 # Computed helpers
 # ---------------------------------------------------------------------------
