@@ -34,7 +34,6 @@ from app.rule_config import (
 )
 from app.rule_engine import (
     MarketSignals,
-    RULE_KEY_SELL_MA_ALL,
     StrategyRuleSelection,
     compute_hold_duration_days,
     compute_percent_gain,
