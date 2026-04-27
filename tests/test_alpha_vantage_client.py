@@ -8,10 +8,12 @@ from app.alpha_vantage_client import (
     AlphaVantageError,
     AlphaVantageSymbolNotFound,
     AlphaVantageThrottled,
+    ATRPoint,
     DailyBar,
     SMAPoint,
     WeeklyBar,
     _get,
+    fetch_atr,
     fetch_company_name,
     fetch_daily_series,
     fetch_sma,
@@ -171,6 +173,54 @@ class TestFetchSMA:
 
         with pytest.raises(AlphaVantageError, match="missing"):
             fetch_sma("IBM", "daily", 21, "fake_key")
+
+
+# ---------------------------------------------------------------------------
+# fetch_atr
+# ---------------------------------------------------------------------------
+
+
+class TestFetchATR:
+    def test_parses_atr_points_sorted_most_recent_first(self, mocker):
+        fake_data = {
+            "Meta Data": {},
+            "Technical Analysis: ATR": {
+                "2026-04-15": {"ATR": "2.10"},
+                "2026-04-17": {"ATR": "2.50"},
+                "2026-04-16": {"ATR": "2.30"},
+            },
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        points = fetch_atr("IBM", "daily", 14, "fake_key")
+        assert len(points) == 3
+        assert points[0].date == date(2026, 4, 17)
+        assert points[0].atr == 2.50
+        assert isinstance(points[0], ATRPoint)
+
+    def test_raises_on_missing_key(self, mocker):
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"Meta Data": {}}
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageError, match="missing"):
+            fetch_atr("IBM", "daily", 14, "fake_key")
+
+    def test_throttle_note_raises_throttled(self, mocker):
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"Note": "rate limit"}
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageThrottled):
+            fetch_atr("IBM", "daily", 14, "fake_key")
 
 
 # ---------------------------------------------------------------------------

@@ -64,6 +64,31 @@ class MarketIndicatorCache(Base):
     retrieved_at = Column(DateTime, nullable=True)
 
 
+class MarketAtrCache(Base):
+    """Cache for ATR (Average True Range) indicator values fetched from Alpha Vantage.
+
+    Each row stores the latest ATR value for a specific
+    (ticker, interval, time_period) combination.  Used by the extension
+    rules (TRIM_EXTENSION_ATR / SELL_EXTENSION_ATR) which compute how many
+    multiples of ATR a price sits above its moving average.
+    """
+    __tablename__ = "market_atr_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker", "interval", "time_period",
+            name="uq_atr_ticker_interval_period",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False)
+    interval = Column(String, nullable=False)  # "daily" or "weekly"
+    time_period = Column(Integer, nullable=False)
+    atr_value = Column(Float, nullable=True)
+    atr_date = Column(Date, nullable=True)
+    retrieved_at = Column(DateTime, nullable=True)
+
+
 class StrategyRuleConfig(Base):
     __tablename__ = "strategy_rule_configs"
     __table_args__ = (

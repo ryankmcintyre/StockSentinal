@@ -20,6 +20,7 @@ from app.database import get_db, init_db
 from app.market_data import (
     fetch_company_name,
     fetch_daily_series,
+    load_atr_cache_for_tickers,
     load_indicator_cache_for_tickers,
     refresh_all_positions,
     refresh_position,
@@ -83,6 +84,7 @@ def _enrich_position(
     pos: Position,
     enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
     indicator_cache: dict[tuple[str, int], tuple[float | None, float | None]] | None = None,
+    atr_cache: dict[tuple[str, int], float | None] | None = None,
 ) -> dict:
     """Run rule engine on a Position and return a dict with all display fields."""
     # Build market signals from cached Alpha Vantage data
@@ -96,6 +98,10 @@ def _enrich_position(
     # Populate flexible ma_signals from indicator cache
     if indicator_cache:
         signals.ma_signals = dict(indicator_cache)
+
+    # Populate atr_signals from ATR cache
+    if atr_cache:
+        signals.atr_signals = dict(atr_cache)
 
     # Use cached daily close as effective price when available, otherwise manual
     effective_price = pos.daily_close if pos.daily_close is not None else pos.current_price
@@ -160,9 +166,15 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
     # Preload indicator cache for all tickers to avoid N+1 queries
     all_tickers = {p.ticker for p in positions}
     all_indicator_cache = load_indicator_cache_for_tickers(db, all_tickers)
+    all_atr_cache = load_atr_cache_for_tickers(db, all_tickers)
 
     enriched = [
-        _enrich_position(p, enabled_rules_by_type, all_indicator_cache.get(p.ticker))
+        _enrich_position(
+            p,
+            enabled_rules_by_type,
+            all_indicator_cache.get(p.ticker),
+            all_atr_cache.get(p.ticker),
+        )
         for p in positions
     ]
     enriched.sort(key=lambda p: VERDICT_PRIORITY.get(p["verdict"], 99))

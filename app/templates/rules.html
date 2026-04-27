@@ -96,6 +96,22 @@
                 </td>
             </tr>
             {% endif %}
+            {% if rule.extension_params is defined %}
+            <tr>
+                <td colspan="4" class="ma-conditions-cell">
+                    <div class="ma-conditions">
+                        <p class="text-muted ma-help">
+                            <strong>Extension formula:</strong>
+                            <code>(price − {{ rule.extension_params.interval | capitalize }} SMA-{{ rule.extension_params.sma_period }}) / ATR-{{ rule.extension_params.atr_period }}</code>
+                        </p>
+                        <p class="text-muted">
+                            Threshold:
+                            <strong>{{ rule.extension_params.threshold }}x</strong>
+                        </p>
+                    </div>
+                </td>
+            </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>

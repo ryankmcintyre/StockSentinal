@@ -16,13 +16,14 @@ from sqlalchemy.orm import Session
 
 from app.alpha_vantage_client import (
     AlphaVantageError,
+    fetch_atr as _fetch_atr,
     fetch_company_name as _fetch_company_name,
     fetch_daily_series as _fetch_daily_series,
     fetch_sma as _fetch_sma,
     fetch_weekly_series as _fetch_weekly_series,
 )
 from app.config import require_alpha_vantage_api_key
-from app.models import MarketIndicatorCache, Position
+from app.models import MarketAtrCache, MarketIndicatorCache, Position
 from app.schemas import InvestmentType
 
 logger = logging.getLogger(__name__)
@@ -75,6 +76,12 @@ def fetch_sma(symbol: str, interval: str, time_period: int, api_key: str):
     """Rate-limited wrapper for Alpha Vantage SMA requests."""
     _wait_for_alpha_vantage_slot()
     return _fetch_sma(symbol, interval=interval, time_period=time_period, api_key=api_key)
+
+
+def fetch_atr(symbol: str, interval: str, time_period: int, api_key: str):
+    """Rate-limited wrapper for Alpha Vantage ATR requests."""
+    _wait_for_alpha_vantage_slot()
+    return _fetch_atr(symbol, interval=interval, time_period=time_period, api_key=api_key)
 
 
 # ---------------------------------------------------------------------------
@@ -150,6 +157,23 @@ def _indicator_cache_is_stale(
     elif interval == "weekly":
         target = _last_completed_trading_week_end(today)
         return cache_row.sma_date != target or cache_row.close_date != target
+    return True
+
+
+def _atr_cache_is_stale(
+    cache_row: Optional[MarketAtrCache],
+    interval: str,
+    today: Optional[date] = None,
+) -> bool:
+    """Return True if an ATR cache entry is stale, incomplete, or missing."""
+    if cache_row is None or cache_row.atr_date is None or cache_row.atr_value is None:
+        return True
+    if interval == "daily":
+        target = _last_completed_trading_day(today)
+        return cache_row.atr_date < target
+    elif interval == "weekly":
+        target = _last_completed_trading_week_end(today)
+        return cache_row.atr_date < target
     return True
 
 
@@ -389,6 +413,129 @@ def load_indicator_cache_for_tickers(
 
 
 # ---------------------------------------------------------------------------
+# ATR cache refresh + loading
+# ---------------------------------------------------------------------------
+
+
+def _refresh_atr_cache_entry(
+    db: Session,
+    ticker: str,
+    interval: str,
+    time_period: int,
+    api_key: str,
+) -> None:
+    """Fetch and upsert one ATR cache entry."""
+    points = fetch_atr(ticker, interval=interval, time_period=time_period, api_key=api_key)
+    atr_val: Optional[float] = None
+    atr_date: Optional[date] = None
+    if points:
+        if interval == "weekly":
+            target_friday = _last_completed_trading_week_end()
+            for pt in points:
+                if pt.date <= target_friday:
+                    atr_val = pt.atr
+                    atr_date = pt.date
+                    break
+            else:
+                atr_val = points[0].atr
+                atr_date = points[0].date
+        else:
+            atr_val = points[0].atr
+            atr_date = points[0].date
+
+    row = (
+        db.query(MarketAtrCache)
+        .filter(MarketAtrCache.ticker == ticker)
+        .filter(MarketAtrCache.interval == interval)
+        .filter(MarketAtrCache.time_period == time_period)
+        .first()
+    )
+    if row is None:
+        row = MarketAtrCache(
+            ticker=ticker,
+            interval=interval,
+            time_period=time_period,
+        )
+        db.add(row)
+
+    row.atr_value = atr_val
+    row.atr_date = atr_date
+    row.retrieved_at = datetime.now()
+
+
+def refresh_atr_cache(
+    db: Session,
+    tickers: set[str],
+    required_atr_indicators: set[tuple[str, int]],
+    force: bool = False,
+) -> list[str]:
+    """Refresh the ATR cache for the given tickers and indicators.
+
+    Args:
+        tickers: Set of ticker symbols to refresh.
+        required_atr_indicators: Set of (interval, time_period) needed by ATR-based rules.
+        force: If True, refresh even if cache is fresh.
+
+    Returns list of error messages (empty on full success).
+    """
+    if not tickers or not required_atr_indicators:
+        return []
+
+    api_key = require_alpha_vantage_api_key()
+    errors: list[str] = []
+
+    for ticker in sorted(tickers):
+        for interval, time_period in sorted(required_atr_indicators):
+            if not force:
+                existing = (
+                    db.query(MarketAtrCache)
+                    .filter(MarketAtrCache.ticker == ticker)
+                    .filter(MarketAtrCache.interval == interval)
+                    .filter(MarketAtrCache.time_period == time_period)
+                    .first()
+                )
+                if not _atr_cache_is_stale(existing, interval):
+                    continue
+
+            try:
+                _refresh_atr_cache_entry(
+                    db, ticker, interval, time_period, api_key,
+                )
+            except Exception as exc:
+                msg = f"ATR cache refresh failed for {ticker} {interval} ATR-{time_period}: {exc}"
+                logger.exception(msg)
+                errors.append(msg)
+
+    db.commit()
+    return errors
+
+
+def load_atr_cache_for_tickers(
+    db: Session,
+    tickers: set[str],
+) -> dict[str, dict[tuple[str, int], Optional[float]]]:
+    """Load the ATR cache for a set of tickers.
+
+    Returns: {ticker: {(interval, time_period): atr_value}}
+    """
+    if not tickers:
+        return {}
+
+    rows = (
+        db.query(MarketAtrCache)
+        .filter(MarketAtrCache.ticker.in_(tickers))
+        .all()
+    )
+
+    result: dict[str, dict[tuple[str, int], Optional[float]]] = {}
+    for row in rows:
+        ticker_signals = result.setdefault(row.ticker, {})
+        ticker_signals[(row.interval, row.time_period)] = row.atr_value
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Position refresh
 # ---------------------------------------------------------------------------
 
@@ -431,13 +578,20 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
         logger.debug("%s is short-term, skipping weekly refresh", position.ticker)
 
     # Refresh indicator cache for configured rules
-    from app.rule_config import get_required_indicators
+    from app.rule_config import get_required_atr_indicators, get_required_indicators
     required = get_required_indicators(db)
     if required:
         cache_errors = refresh_indicator_cache(
             db, {position.ticker}, required, force=force,
         )
         errors.extend(cache_errors)
+
+    required_atr = get_required_atr_indicators(db)
+    if required_atr:
+        atr_errors = refresh_atr_cache(
+            db, {position.ticker}, required_atr, force=force,
+        )
+        errors.extend(atr_errors)
 
     position.refresh_error = "; ".join(errors) if errors else None
     db.commit()
@@ -535,13 +689,20 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
         db.commit()
 
     # Refresh indicator cache for all tickers and configured conditions
-    from app.rule_config import get_required_indicators
+    from app.rule_config import get_required_atr_indicators, get_required_indicators
     required = get_required_indicators(db)
     if required and ticker_groups:
         all_tickers = set(ticker_groups.keys())
         cache_errors = refresh_indicator_cache(db, all_tickers, required, force=force)
         if cache_errors:
             logger.warning("Indicator cache refresh errors: %s", cache_errors)
+
+    required_atr = get_required_atr_indicators(db)
+    if required_atr and ticker_groups:
+        all_tickers = set(ticker_groups.keys())
+        atr_errors = refresh_atr_cache(db, all_tickers, required_atr, force=force)
+        if atr_errors:
+            logger.warning("ATR cache refresh errors: %s", atr_errors)
 
     logger.info("Refresh complete: %d/%d positions refreshed", refreshed, len(positions))
     return refreshed
