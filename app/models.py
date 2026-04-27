@@ -37,6 +37,33 @@ class Position(Base):
     refresh_error = Column(String, nullable=True)
 
 
+class MarketIndicatorCache(Base):
+    """Cache for arbitrary SMA indicators fetched from Alpha Vantage.
+
+    Each row stores a close price and SMA value for a specific
+    (ticker, interval, time_period) combination.  The close and SMA
+    dates should align to the same completed bar so comparisons are
+    valid.
+    """
+    __tablename__ = "market_indicator_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker", "interval", "time_period",
+            name="uq_mic_ticker_interval_period",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False)
+    interval = Column(String, nullable=False)  # "daily" or "weekly"
+    time_period = Column(Integer, nullable=False)
+    sma_value = Column(Float, nullable=True)
+    sma_date = Column(Date, nullable=True)
+    close_value = Column(Float, nullable=True)
+    close_date = Column(Date, nullable=True)
+    retrieved_at = Column(DateTime, nullable=True)
+
+
 class StrategyRuleConfig(Base):
     __tablename__ = "strategy_rule_configs"
     __table_args__ = (

@@ -373,3 +373,69 @@ h2 {
     gap: 0.3rem;
     font-size: 0.85rem;
 }
+
+/* --- MA Conditions --- */
+
+.ma-conditions-cell {
+    padding: 0.5rem 1rem 1rem 1rem;
+    background: #f9fafb;
+    border-top: none;
+}
+
+.ma-conditions {
+    max-width: 600px;
+}
+
+.ma-help {
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+}
+
+.ma-conditions-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.75rem;
+    font-size: 0.85rem;
+}
+
+.ma-conditions-table th,
+.ma-conditions-table td {
+    padding: 0.35rem 0.6rem;
+    text-align: left;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.ma-conditions-table th {
+    font-weight: 600;
+    color: #555;
+    font-size: 0.8rem;
+}
+
+.ma-add-form {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+}
+
+.ma-add-form select,
+.ma-add-form input[type="number"] {
+    padding: 0.25rem 0.4rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font-size: 0.85rem;
+}
+
+.ma-add-form input[type="number"] {
+    width: 5rem;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: #fff;
+    border: none;
+}
+
+.btn-danger:hover {
+    background: #c82333;
+}

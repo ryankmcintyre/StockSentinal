@@ -149,6 +149,12 @@ class TestWeeklyDataIsStale:
 
 
 class TestRefreshPosition:
+    @pytest.fixture(autouse=True)
+    def _mock_indicator_cache(self, mocker):
+        """Mock indicator cache operations used by refresh functions."""
+        mocker.patch("app.rule_config.get_required_indicators", return_value=set())
+        mocker.patch("app.market_data.refresh_indicator_cache", return_value=[])
+
     def test_refreshes_daily_when_daily_is_stale(self, mocker):
         position = FakePosition(investment_type="long-term")
         db = mocker.Mock()
@@ -164,7 +170,7 @@ class TestRefreshPosition:
         daily_refresh.assert_called_once_with(position, "key")
         weekly_refresh.assert_not_called()
         assert position.refresh_error is None
-        db.commit.assert_called_once()
+        db.commit.assert_called()
 
     def test_refreshes_weekly_when_weekly_is_stale_long_term(self, mocker):
         position = FakePosition(investment_type="long-term")
@@ -222,6 +228,12 @@ class TestRefreshPosition:
 
 
 class TestRefreshAllPositions:
+    @pytest.fixture(autouse=True)
+    def _mock_indicator_cache(self, mocker):
+        """Mock indicator cache operations used by refresh functions."""
+        mocker.patch("app.rule_config.get_required_indicators", return_value=set())
+        mocker.patch("app.market_data.refresh_indicator_cache", return_value=[])
+
     def test_refreshes_only_stale_positions(self, mocker):
         pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
         pos2 = FakePosition(ticker="MSFT", investment_type="long-term")

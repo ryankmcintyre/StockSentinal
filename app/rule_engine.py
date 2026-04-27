@@ -6,7 +6,8 @@ Rules are pure functions that take a Position-like object and return a RuleResul
 Rules are evaluated in priority order; the highest-priority triggered rule wins.
 """
 
-from dataclasses import dataclass
+import json
+from dataclasses import dataclass, field
 from datetime import date
 from typing import Callable, Optional, Protocol
 
@@ -26,19 +27,27 @@ class PositionLike(Protocol):
 class MarketSignals:
     """Structured market data consumed by the rule engine.
 
-    All fields are optional so the engine can degrade gracefully when
-    Alpha Vantage data is unavailable.
+    Fixed fields are kept for backward compatibility.  The flexible
+    ``ma_signals`` dict stores arbitrary MA indicator data keyed by
+    ``(interval, time_period)`` → ``(close_value, sma_value)``.
     """
     daily_close: Optional[float] = None
     daily_sma_21: Optional[float] = None
     weekly_close: Optional[float] = None
     weekly_sma_20: Optional[float] = None
 
+    # Flexible MA signal store populated from the indicator cache.
+    # Key: (interval, time_period)  Value: (close_value, sma_value)
+    ma_signals: dict[tuple[str, int], tuple[Optional[float], Optional[float]]] = field(
+        default_factory=dict
+    )
+
 
 @dataclass(frozen=True)
 class StrategyRuleSelection:
     """Persisted user selection for a rule within a strategy."""
     rule_key: str
+    params: Optional[dict] = None  # parsed params_json
 
 
 @dataclass(frozen=True)
@@ -50,15 +59,17 @@ class RuleSpec:
     verdict: Verdict
     supported_investment_types: tuple[InvestmentType, ...]
     default_sort_order: int
-    evaluator: Callable[[PositionLike, MarketSignals], Optional[RuleResult]]
+    evaluator: Callable[[PositionLike, MarketSignals, Optional[dict]], Optional[RuleResult]]
 
 
-RULE_KEY_LT_SELL_20W_MA = "LT-SELL-20W-MA"
-RULE_KEY_ST_SELL_21D_MA = "ST-SELL-21D-MA"
+RULE_KEY_SELL_MA_ALL = "SELL_MA_ALL"
 RULE_KEY_TRIM_10PCT = "TRIM-10PCT"
 RULE_KEY_HOLD_ABOVE_COST = "HOLD-ABOVE-COST"
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
+
+# Maximum number of MA conditions per investment type
+MAX_MA_CONDITIONS = 10
 
 
 # ---------------------------------------------------------------------------
@@ -67,51 +78,61 @@ VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 # ---------------------------------------------------------------------------
 
 
-def rule_long_term_sell_below_20w_ma(
+def rule_sell_ma_all(
     position: PositionLike,
     signals: MarketSignals,
+    params: Optional[dict] = None,
 ) -> Optional[RuleResult]:
-    """SELL if a long-term position's weekly close is below the 20-week moving average.
+    """SELL if ALL configured MA conditions are met.
 
-    When market signals are available the comparison is made automatically.
-    If weekly close or SMA-20 data is missing the rule cannot fire.
+    Each condition specifies an interval ('daily'/'weekly') and a
+    time_period (2..200).  For Sell to trigger, every condition must
+    have data available and the close must be below the SMA.  If any
+    condition is missing data, that condition is treated as not met
+    (Sell does not trigger).
+
+    params shape:
+        {"conditions": [{"interval": "weekly", "time_period": 20}, ...]}
     """
-    if position.investment_type != InvestmentType.long_term:
+    if params is None:
         return None
-    if signals.weekly_close is None or signals.weekly_sma_20 is None:
+    conditions = params.get("conditions", [])
+    if not conditions:
         return None
-    if signals.weekly_close < signals.weekly_sma_20:
-        return RuleResult(
-            rule_label=RULE_KEY_LT_SELL_20W_MA,
-            verdict=Verdict.sell,
-            description="Weekly close is below the 20-week moving average",
+
+    descriptions: list[str] = []
+    for cond in conditions:
+        interval = cond.get("interval")
+        time_period = cond.get("time_period")
+        if interval is None or time_period is None:
+            return None  # malformed condition → not met
+
+        signal = signals.ma_signals.get((interval, time_period))
+        if signal is None:
+            return None  # missing data → not met
+        close_val, sma_val = signal
+        if close_val is None or sma_val is None:
+            return None  # missing data → not met
+        if close_val >= sma_val:
+            return None  # condition not met → Sell does not trigger
+
+        descriptions.append(
+            f"{interval.capitalize()} close ({close_val:.2f}) < "
+            f"SMA-{time_period} ({sma_val:.2f})"
         )
-    return None
+
+    return RuleResult(
+        rule_label=RULE_KEY_SELL_MA_ALL,
+        verdict=Verdict.sell,
+        description="; ".join(descriptions),
+    )
 
 
-def rule_short_term_sell_below_21d_ma(
+def rule_trim_above_10_percent(
     position: PositionLike,
-    signals: MarketSignals,
+    _signals: Optional[MarketSignals] = None,
+    _params: Optional[dict] = None,
 ) -> Optional[RuleResult]:
-    """SELL if a short-term position's daily close is below the 21-day moving average.
-
-    When market signals are available the comparison is made automatically.
-    If daily close or SMA-21 data is missing the rule cannot fire.
-    """
-    if position.investment_type != InvestmentType.short_term:
-        return None
-    if signals.daily_close is None or signals.daily_sma_21 is None:
-        return None
-    if signals.daily_close < signals.daily_sma_21:
-        return RuleResult(
-            rule_label=RULE_KEY_ST_SELL_21D_MA,
-            verdict=Verdict.sell,
-            description="Daily close is below the 21-day moving average",
-        )
-    return None
-
-
-def rule_trim_above_10_percent(position: PositionLike) -> Optional[RuleResult]:
     """TRIM if the current price is more than 10% above cost basis.
 
     Applies to both long-term and short-term positions.
@@ -128,7 +149,11 @@ def rule_trim_above_10_percent(position: PositionLike) -> Optional[RuleResult]:
     return None
 
 
-def rule_hold_above_cost_basis(position: PositionLike) -> Optional[RuleResult]:
+def rule_hold_above_cost_basis(
+    position: PositionLike,
+    _signals: Optional[MarketSignals] = None,
+    _params: Optional[dict] = None,
+) -> Optional[RuleResult]:
     """HOLD if the current price is at or above the cost basis.
 
     This is the default hold rule — lowest priority.
@@ -147,40 +172,33 @@ def rule_hold_above_cost_basis(position: PositionLike) -> Optional[RuleResult]:
 # ---------------------------------------------------------------------------
 
 
-def _eval_lt_sell(position: PositionLike, signals: MarketSignals) -> Optional[RuleResult]:
-    return rule_long_term_sell_below_20w_ma(position, signals)
+def _eval_sell_ma(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_sell_ma_all(position, signals, params)
 
 
-def _eval_st_sell(position: PositionLike, signals: MarketSignals) -> Optional[RuleResult]:
-    return rule_short_term_sell_below_21d_ma(position, signals)
+def _eval_trim(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_trim_above_10_percent(position, signals, params)
 
 
-def _eval_trim(position: PositionLike, _: MarketSignals) -> Optional[RuleResult]:
-    return rule_trim_above_10_percent(position)
-
-
-def _eval_hold(position: PositionLike, _: MarketSignals) -> Optional[RuleResult]:
-    return rule_hold_above_cost_basis(position)
+def _eval_hold(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_hold_above_cost_basis(position, signals, params)
 
 
 RULE_CATALOG: dict[str, RuleSpec] = {
-    RULE_KEY_LT_SELL_20W_MA: RuleSpec(
-        key=RULE_KEY_LT_SELL_20W_MA,
-        name="Long-term sell below 20-week MA",
-        description="Weekly close is below the 20-week moving average",
+    RULE_KEY_SELL_MA_ALL: RuleSpec(
+        key=RULE_KEY_SELL_MA_ALL,
+        name="Sell on moving average conditions",
+        description="Sell when ALL configured MA conditions are below their averages",
         verdict=Verdict.sell,
-        supported_investment_types=(InvestmentType.long_term,),
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
         default_sort_order=10,
-        evaluator=_eval_lt_sell,
-    ),
-    RULE_KEY_ST_SELL_21D_MA: RuleSpec(
-        key=RULE_KEY_ST_SELL_21D_MA,
-        name="Short-term sell below 21-day MA",
-        description="Daily close is below the 21-day moving average",
-        verdict=Verdict.sell,
-        supported_investment_types=(InvestmentType.short_term,),
-        default_sort_order=10,
-        evaluator=_eval_st_sell,
+        evaluator=_eval_sell_ma,
     ),
     RULE_KEY_TRIM_10PCT: RuleSpec(
         key=RULE_KEY_TRIM_10PCT,
@@ -202,14 +220,26 @@ RULE_CATALOG: dict[str, RuleSpec] = {
     ),
 }
 
+# Default sell MA conditions per investment type
+DEFAULT_MA_CONDITIONS: dict[InvestmentType, list[dict]] = {
+    InvestmentType.long_term: [{"interval": "weekly", "time_period": 20}],
+    InvestmentType.short_term: [{"interval": "daily", "time_period": 21}],
+}
+
 DEFAULT_RULE_SELECTIONS: dict[InvestmentType, list[StrategyRuleSelection]] = {
     InvestmentType.long_term: [
-        StrategyRuleSelection(RULE_KEY_LT_SELL_20W_MA),
+        StrategyRuleSelection(
+            RULE_KEY_SELL_MA_ALL,
+            params={"conditions": DEFAULT_MA_CONDITIONS[InvestmentType.long_term]},
+        ),
         StrategyRuleSelection(RULE_KEY_TRIM_10PCT),
         StrategyRuleSelection(RULE_KEY_HOLD_ABOVE_COST),
     ],
     InvestmentType.short_term: [
-        StrategyRuleSelection(RULE_KEY_ST_SELL_21D_MA),
+        StrategyRuleSelection(
+            RULE_KEY_SELL_MA_ALL,
+            params={"conditions": DEFAULT_MA_CONDITIONS[InvestmentType.short_term]},
+        ),
         StrategyRuleSelection(RULE_KEY_TRIM_10PCT),
         StrategyRuleSelection(RULE_KEY_HOLD_ABOVE_COST),
     ],
@@ -249,7 +279,51 @@ def default_rule_selections_for_investment_type(
     normalized = _normalize_investment_type(investment_type)
     if normalized is None:
         return []
-    return [StrategyRuleSelection(s.rule_key) for s in DEFAULT_RULE_SELECTIONS[normalized]]
+    return list(DEFAULT_RULE_SELECTIONS[normalized])
+
+
+# ---------------------------------------------------------------------------
+# MA condition validation helpers
+# ---------------------------------------------------------------------------
+
+
+def validate_ma_conditions(conditions: list[dict]) -> list[str]:
+    """Validate a list of MA conditions.  Returns a list of error messages (empty if valid)."""
+    errors: list[str] = []
+    if len(conditions) > MAX_MA_CONDITIONS:
+        errors.append(f"Maximum {MAX_MA_CONDITIONS} conditions allowed")
+
+    seen: set[tuple[str, int]] = set()
+    valid_intervals = {"daily", "weekly"}
+
+    for i, cond in enumerate(conditions):
+        interval = cond.get("interval")
+        time_period = cond.get("time_period")
+
+        if interval not in valid_intervals:
+            errors.append(f"Condition {i + 1}: interval must be 'daily' or 'weekly'")
+            continue
+
+        if not isinstance(time_period, int) or time_period < 2 or time_period > 200:
+            errors.append(f"Condition {i + 1}: time_period must be an integer between 2 and 200")
+            continue
+
+        key = (interval, time_period)
+        if key in seen:
+            errors.append(f"Condition {i + 1}: duplicate ({interval}, {time_period})")
+        seen.add(key)
+
+    return errors
+
+
+def parse_params_json(raw: Optional[str]) -> Optional[dict]:
+    """Parse a params_json string into a dict.  Returns None on invalid JSON."""
+    if raw is None:
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -305,7 +379,7 @@ def evaluate_position(
     if selections is None:
         selections = default_rule_selections_for_investment_type(investment_type)
 
-    candidates: list[tuple[int, int, str, RuleSpec]] = []
+    candidates: list[tuple[int, int, str, RuleSpec, Optional[dict]]] = []
     seen_rule_keys: set[str] = set()
     for selection in selections:
         if selection.rule_key in seen_rule_keys:
@@ -323,13 +397,14 @@ def evaluate_position(
                 spec.default_sort_order,
                 spec.key,
                 spec,
+                selection.params,
             )
         )
 
     candidates.sort(key=lambda row: (row[0], row[1], row[2]))
 
-    for _, _, _, spec in candidates:
-        result = spec.evaluator(position, signals)
+    for _, _, _, spec, params in candidates:
+        result = spec.evaluator(position, signals, params)
         if result is not None:
             triggered.append(result)
 
