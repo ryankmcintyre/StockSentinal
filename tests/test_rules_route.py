@@ -654,3 +654,48 @@ class TestLowerHighLowerLowRules:
             assert get_required_weekly_bar_lookback(db) == 30
         finally:
             db.close()
+
+    def test_rules_page_lists_relative_weakness_rule(self, client):
+        resp = client.get("/rules")
+        assert resp.status_code == 200
+        assert "TRIM_RELATIVE_WEAKNESS_VS_SECTOR" in resp.text
+        assert "Relative weakness" in resp.text or "relative weakness" in resp.text
+        # Default lookback (63) and thresholds should render
+        assert "63" in resp.text
+        assert "8" in resp.text
+        assert "10" in resp.text
+
+    def test_relative_weakness_rule_default_disabled_with_seeded_params(self, _setup_db):
+        from app.rule_config import ensure_strategy_rule_defaults
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            rows = (
+                db.query(StrategyRuleConfig)
+                .filter(StrategyRuleConfig.rule_key == "TRIM_RELATIVE_WEAKNESS_VS_SECTOR")
+                .all()
+            )
+            assert len(rows) == 2  # 1 rule × 2 strategies
+            assert all(row.enabled is False for row in rows)
+            assert all(row.params_json is not None for row in rows)
+        finally:
+            db.close()
+
+    def test_required_daily_bar_lookback_uses_relative_weakness(self, _setup_db):
+        from app.rule_config import (
+            ensure_strategy_rule_defaults,
+            get_required_daily_bar_lookback,
+            update_strategy_rule_config,
+        )
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            assert get_required_daily_bar_lookback(db) == 0
+            update_strategy_rule_config(
+                db, "long-term", "TRIM_RELATIVE_WEAKNESS_VS_SECTOR", enabled=True
+            )
+            assert get_required_daily_bar_lookback(db) == 63
+        finally:
+            db.close()

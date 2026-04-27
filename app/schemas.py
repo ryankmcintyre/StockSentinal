@@ -25,11 +25,20 @@ class PositionBase(BaseModel):
     investment_type: InvestmentType
     current_price: float = Field(..., gt=0)
     notes: Optional[str] = None
+    sector_benchmark_ticker: Optional[str] = Field(None, max_length=10)
 
     @field_validator("ticker")
     @classmethod
     def ticker_uppercase(cls, v: str) -> str:
         return v.strip().upper()
+
+    @field_validator("sector_benchmark_ticker")
+    @classmethod
+    def benchmark_uppercase(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip().upper()
+        return v or None
 
     @field_validator("initial_purchase_date")
     @classmethod
@@ -57,6 +66,7 @@ class PositionUpdate(BaseModel):
     investment_type: Optional[InvestmentType] = None
     current_price: Optional[float] = Field(None, gt=0)
     notes: Optional[str] = None
+    sector_benchmark_ticker: Optional[str] = Field(None, max_length=10)
 
     @field_validator("ticker")
     @classmethod
@@ -64,6 +74,14 @@ class PositionUpdate(BaseModel):
         if v is not None:
             return v.strip().upper()
         return v
+
+    @field_validator("sector_benchmark_ticker")
+    @classmethod
+    def benchmark_uppercase(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip().upper()
+        return v or None
 
     @field_validator("initial_purchase_date")
     @classmethod

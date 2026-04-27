@@ -23,7 +23,7 @@ from app.alpha_vantage_client import (
     fetch_weekly_series as _fetch_weekly_series,
 )
 from app.config import require_alpha_vantage_api_key
-from app.models import MarketAtrCache, MarketIndicatorCache, MarketWeeklyBarCache, Position
+from app.models import MarketAtrCache, MarketDailyBarCache, MarketIndicatorCache, MarketWeeklyBarCache, Position
 from app.schemas import InvestmentType
 
 logger = logging.getLogger(__name__)
@@ -663,6 +663,126 @@ def load_weekly_bar_cache_for_tickers(
 
 
 # ---------------------------------------------------------------------------
+# Daily close bar cache (issue #22 — relative weakness vs sector)
+# ---------------------------------------------------------------------------
+
+
+def _daily_bar_cache_is_stale(
+    latest_row: Optional["MarketDailyBarCache"],
+    today: Optional[date] = None,
+) -> bool:
+    """Return True if the most recent cached daily bar is older than the
+    most recently completed trading day."""
+    if latest_row is None or latest_row.bar_date is None:
+        return True
+    target = _last_completed_trading_day(today)
+    return latest_row.bar_date < target
+
+
+def _refresh_daily_bar_cache_for_ticker(
+    db: Session,
+    ticker: str,
+    api_key: str,
+    lookback_days: int,
+) -> None:
+    """Fetch the daily series for *ticker* and upsert the latest *lookback_days+1* closes.
+
+    Stores ``lookback_days + 1`` bars so that period-return calculations
+    (current vs N bars ago) have the start-of-window close available.
+    """
+    bars = fetch_daily_series(ticker, api_key)
+    if not bars:
+        return
+
+    target_day = _last_completed_trading_day()
+    completed = [b for b in bars if b.date <= target_day]
+    completed.sort(key=lambda b: b.date, reverse=True)
+    keep = completed[: lookback_days + 1]
+
+    existing_rows = (
+        db.query(MarketDailyBarCache)
+        .filter(MarketDailyBarCache.ticker == ticker)
+        .all()
+    )
+    rows_by_date = {row.bar_date: row for row in existing_rows}
+    keep_dates = {b.date for b in keep}
+    now = datetime.now()
+    for bar in keep:
+        row = rows_by_date.get(bar.date)
+        if row is None:
+            row = MarketDailyBarCache(ticker=ticker, bar_date=bar.date)
+            db.add(row)
+        row.close = bar.close
+        row.retrieved_at = now
+
+    for existing_date, row in rows_by_date.items():
+        if existing_date not in keep_dates:
+            db.delete(row)
+
+
+def refresh_daily_bar_cache(
+    db: Session,
+    tickers: set[str],
+    lookback_days: int,
+    force: bool = False,
+) -> list[str]:
+    """Refresh the daily close bar cache for a set of tickers.
+
+    Args:
+        tickers: Set of ticker symbols (positions and benchmarks alike).
+        lookback_days: Largest configured period-return lookback.  The
+            cache stores ``lookback_days + 1`` bars per ticker.
+        force: If True, refresh even if the latest cached bar is current.
+    """
+    if not tickers or lookback_days <= 0:
+        return []
+
+    api_key = require_alpha_vantage_api_key()
+    errors: list[str] = []
+
+    for ticker in sorted(tickers):
+        if not force:
+            latest = (
+                db.query(MarketDailyBarCache)
+                .filter(MarketDailyBarCache.ticker == ticker)
+                .order_by(MarketDailyBarCache.bar_date.desc())
+                .first()
+            )
+            if not _daily_bar_cache_is_stale(latest):
+                continue
+
+        try:
+            _refresh_daily_bar_cache_for_ticker(db, ticker, api_key, lookback_days)
+        except Exception as exc:
+            msg = f"Daily bar cache refresh failed for {ticker}: {exc}"
+            logger.exception(msg)
+            errors.append(msg)
+
+    db.commit()
+    return errors
+
+
+def load_daily_bar_cache_for_tickers(
+    db: Session,
+    tickers: set[str],
+) -> dict[str, list["MarketDailyBarCache"]]:
+    """Load daily close bars for a set of tickers, sorted most-recent first."""
+    if not tickers:
+        return {}
+
+    rows = (
+        db.query(MarketDailyBarCache)
+        .filter(MarketDailyBarCache.ticker.in_(tickers))
+        .order_by(MarketDailyBarCache.ticker, MarketDailyBarCache.bar_date.desc())
+        .all()
+    )
+    result: dict[str, list[MarketDailyBarCache]] = {}
+    for row in rows:
+        result.setdefault(row.ticker, []).append(row)
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Position refresh
 # ---------------------------------------------------------------------------
 
@@ -707,6 +827,7 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
     # Refresh indicator cache for configured rules
     from app.rule_config import (
         get_required_atr_indicators,
+        get_required_daily_bar_lookback,
         get_required_indicators,
         get_required_weekly_bar_lookback,
     )
@@ -730,6 +851,17 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
             db, {position.ticker}, weekly_lookback, force=force,
         )
         errors.extend(weekly_bar_errors)
+
+    daily_lookback = get_required_daily_bar_lookback(db)
+    if daily_lookback > 0:
+        daily_tickers: set[str] = {position.ticker}
+        benchmark = getattr(position, "sector_benchmark_ticker", None)
+        if benchmark:
+            daily_tickers.add(benchmark.upper())
+        daily_bar_errors = refresh_daily_bar_cache(
+            db, daily_tickers, daily_lookback, force=force,
+        )
+        errors.extend(daily_bar_errors)
 
     position.refresh_error = "; ".join(errors) if errors else None
     db.commit()
@@ -829,6 +961,7 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
     # Refresh indicator cache for all tickers and configured conditions
     from app.rule_config import (
         get_required_atr_indicators,
+        get_required_daily_bar_lookback,
         get_required_indicators,
         get_required_weekly_bar_lookback,
     )
@@ -854,6 +987,19 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
         )
         if bar_errors:
             logger.warning("Weekly bar cache refresh errors: %s", bar_errors)
+
+    daily_lookback = get_required_daily_bar_lookback(db)
+    if daily_lookback > 0 and ticker_groups:
+        all_tickers = set(ticker_groups.keys())
+        for pos in positions:
+            benchmark = getattr(pos, "sector_benchmark_ticker", None)
+            if benchmark:
+                all_tickers.add(benchmark.upper())
+        daily_errors = refresh_daily_bar_cache(
+            db, all_tickers, daily_lookback, force=force,
+        )
+        if daily_errors:
+            logger.warning("Daily bar cache refresh errors: %s", daily_errors)
 
     logger.info("Refresh complete: %d/%d positions refreshed", refreshed, len(positions))
     return refreshed
