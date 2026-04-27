@@ -2,13 +2,11 @@
 
 import json
 from datetime import datetime
-from typing import Optional
 
 from sqlalchemy.orm import Session
 
 from app.models import StrategyRuleConfig
 from app.rule_engine import (
-    MAX_MA_CONDITIONS,
     RULE_CATALOG,
     RULE_KEY_SELL_MA_ALL,
     StrategyRuleSelection,
