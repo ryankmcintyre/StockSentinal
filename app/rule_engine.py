@@ -317,15 +317,18 @@ def validate_ma_conditions(conditions: list[dict]) -> list[str]:
 
 
 def parse_params_json(raw: Optional[str]) -> Optional[dict]:
-    """Parse a params_json string into a dict.  Returns None on invalid JSON."""
+    """Parse a params_json string into a dict.  Returns None on invalid or non-object JSON."""
     if raw is None:
         return None
     try:
-        return json.loads(raw)
+        parsed = json.loads(raw)
     except (json.JSONDecodeError, TypeError):
         return None
 
+    if not isinstance(parsed, dict):
+        return None
 
+    return parsed
 # ---------------------------------------------------------------------------
 # Computed helpers
 # ---------------------------------------------------------------------------
