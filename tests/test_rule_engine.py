@@ -11,6 +11,10 @@ import pytest
 
 from app.rule_engine import (
     MarketSignals,
+    RULE_KEY_HOLD_ABOVE_COST,
+    RULE_KEY_ST_SELL_21D_MA,
+    RULE_KEY_TRIM_10PCT,
+    StrategyRuleSelection,
     compute_hold_duration_days,
     compute_percent_gain,
     evaluate_position,
@@ -303,6 +307,55 @@ class TestEvaluatePosition:
         )
         results = evaluate_position(pos)  # no signals
         assert all(r.verdict != Verdict.sell for r in results)
+
+    def test_configured_rules_only_apply_selected_rules(self):
+        pos = FakePosition(
+            investment_type=InvestmentType.long_term,
+            cost_basis=100.0,
+            current_price=115.0,
+        )
+        signals = MarketSignals(weekly_close=160.0, weekly_sma_20=150.0)
+        configured = [StrategyRuleSelection(rule_key=RULE_KEY_HOLD_ABOVE_COST)]
+
+        results = evaluate_position(pos, signals=signals, configured_rules=configured)
+
+        assert len(results) == 1
+        assert results[0].rule_label == RULE_KEY_HOLD_ABOVE_COST
+        assert results[0].verdict == Verdict.hold
+
+    def test_verdict_priority_overrides_input_selection_order(self):
+        pos = FakePosition(
+            investment_type=InvestmentType.long_term,
+            cost_basis=100.0,
+            current_price=115.0,
+        )
+        signals = MarketSignals(weekly_close=160.0, weekly_sma_20=150.0)
+        configured = [
+            StrategyRuleSelection(rule_key=RULE_KEY_HOLD_ABOVE_COST),
+            StrategyRuleSelection(rule_key=RULE_KEY_TRIM_10PCT),
+        ]
+
+        results = evaluate_position(pos, signals=signals, configured_rules=configured)
+
+        assert results[0].rule_label == RULE_KEY_TRIM_10PCT
+        assert results[0].verdict == Verdict.trim
+
+    def test_unsupported_rule_key_for_type_is_skipped(self):
+        pos = FakePosition(
+            investment_type=InvestmentType.long_term,
+            cost_basis=100.0,
+            current_price=105.0,
+        )
+        signals = MarketSignals(weekly_close=160.0, weekly_sma_20=150.0)
+        configured = [
+            StrategyRuleSelection(rule_key=RULE_KEY_ST_SELL_21D_MA),
+            StrategyRuleSelection(rule_key=RULE_KEY_HOLD_ABOVE_COST),
+        ]
+
+        results = evaluate_position(pos, signals=signals, configured_rules=configured)
+
+        assert len(results) == 1
+        assert results[0].rule_label == RULE_KEY_HOLD_ABOVE_COST
 
 
 # ---------------------------------------------------------------------------

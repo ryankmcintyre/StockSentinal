@@ -1,6 +1,6 @@
 from datetime import date, datetime
 
-from sqlalchemy import Column, Date, DateTime, Float, Integer, String
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase
 
 
@@ -35,3 +35,18 @@ class Position(Base):
 
     # Refresh status
     refresh_error = Column(String, nullable=True)
+
+
+class StrategyRuleConfig(Base):
+    __tablename__ = "strategy_rule_configs"
+    __table_args__ = (
+        UniqueConstraint("investment_type", "rule_key", name="uq_strategy_rule_configs_type_key"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    investment_type = Column(String, nullable=False)  # "long-term" or "short-term"
+    rule_key = Column(String, nullable=False)
+    enabled = Column(Boolean, nullable=False, default=True)
+    params_json = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
