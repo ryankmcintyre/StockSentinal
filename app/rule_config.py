@@ -7,11 +7,8 @@ from sqlalchemy.orm import Session
 from app.models import StrategyRuleConfig
 from app.rule_engine import (
     RULE_CATALOG,
-    RULE_KEY_HOLD_ABOVE_COST,
-    RULE_KEY_LT_SELL_20W_MA,
-    RULE_KEY_ST_SELL_21D_MA,
-    RULE_KEY_TRIM_10PCT,
     StrategyRuleSelection,
+    default_rule_selections_for_investment_type,
     list_rule_specs_for_investment_type,
 )
 from app.schemas import InvestmentType
@@ -44,19 +41,10 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
         )
         existing_by_key = {row.rule_key: row for row in existing_rows}
 
-        # Keep the current product defaults enabled at startup.
-        if investment_type == InvestmentType.long_term:
-            default_enabled_keys = {
-                RULE_KEY_LT_SELL_20W_MA,
-                RULE_KEY_TRIM_10PCT,
-                RULE_KEY_HOLD_ABOVE_COST,
-            }
-        else:
-            default_enabled_keys = {
-                RULE_KEY_ST_SELL_21D_MA,
-                RULE_KEY_TRIM_10PCT,
-                RULE_KEY_HOLD_ABOVE_COST,
-            }
+        # Derive defaults from the rule engine's single source of truth.
+        default_enabled_keys = {
+            s.rule_key for s in default_rule_selections_for_investment_type(investment_type)
+        }
 
         for spec in list_rule_specs_for_investment_type(investment_type):
             if spec.key in existing_by_key:
