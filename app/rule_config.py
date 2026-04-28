@@ -15,16 +15,19 @@ from app.rule_engine import (
     RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
     RULE_KEY_TRIM_EXTENSION_ATR,
     RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+    RULE_KEY_TRIM_RELATIVE_WEAKNESS,
     RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
     StrategyRuleSelection,
     default_distribution_cluster_params,
     default_extension_atr_params,
     default_lh_ll_params,
+    default_relative_weakness_params,
     default_rule_selections_for_investment_type,
     default_upper_wick_params,
     get_distribution_cluster_lookback_weeks,
     get_extension_indicator_requirements,
     get_lh_ll_lookback_weeks,
+    get_relative_weakness_lookback_days,
     get_upper_wick_lookback_weeks,
     list_rule_specs_for_investment_type,
     parse_params_json,
@@ -120,6 +123,11 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
                 # rules UI and weekly-bar lookback calculation know their
                 # pivot + lookback parameters immediately.
                 params_json = json.dumps(default_lh_ll_params())
+            elif spec.key == RULE_KEY_TRIM_RELATIVE_WEAKNESS:
+                # Seed defaults for the relative-weakness rule so the rules
+                # UI and daily-bar lookback calculation know its parameters
+                # immediately on first run.
+                params_json = json.dumps(default_relative_weakness_params())
 
             db.add(
                 StrategyRuleConfig(
@@ -281,6 +289,20 @@ def get_rule_management_sections(db: Session) -> list[dict]:
                     ),
                     "kind": (
                         "trim" if spec.key == RULE_KEY_TRIM_FIRST_LOWER_HIGH else "sell"
+                    ),
+                }
+
+            # Include configured thresholds for the relative-weakness rule
+            if spec.key == RULE_KEY_TRIM_RELATIVE_WEAKNESS and config is not None:
+                defaults = default_relative_weakness_params()
+                params = parse_params_json(config.params_json) or defaults
+                rule_data["relative_weakness_params"] = {
+                    "lookback_days": get_relative_weakness_lookback_days(params),
+                    "min_benchmark_return": params.get(
+                        "min_benchmark_return", defaults["min_benchmark_return"]
+                    ),
+                    "underperformance_gap": params.get(
+                        "underperformance_gap", defaults["underperformance_gap"]
                     ),
                 }
 
@@ -541,4 +563,25 @@ def get_required_weekly_bar_lookback(db: Session) -> int:
                 max_lookback = max(max_lookback, get_distribution_cluster_lookback_weeks(params))
             else:
                 max_lookback = max(max_lookback, get_lh_ll_lookback_weeks(params))
+    return max_lookback
+
+
+def get_required_daily_bar_lookback(db: Session) -> int:
+    """Return the largest daily-close lookback (in trading days) required by enabled rules.
+
+    Returns 0 when no enabled rule needs daily close history.
+    """
+    ensure_strategy_rule_defaults(db)
+    max_lookback = 0
+    for investment_type in _supported_investment_types():
+        rows = (
+            db.query(StrategyRuleConfig)
+            .filter(StrategyRuleConfig.investment_type == investment_type.value)
+            .filter(StrategyRuleConfig.enabled.is_(True))
+            .filter(StrategyRuleConfig.rule_key == RULE_KEY_TRIM_RELATIVE_WEAKNESS)
+            .all()
+        )
+        for row in rows:
+            params = parse_params_json(row.params_json)
+            max_lookback = max(max_lookback, get_relative_weakness_lookback_days(params))
     return max_lookback

@@ -21,6 +21,7 @@ from app.market_data import (
     fetch_company_name,
     fetch_daily_series,
     load_atr_cache_for_tickers,
+    load_daily_bar_cache_for_tickers,
     load_indicator_cache_for_tickers,
     load_weekly_bar_cache_for_tickers,
     refresh_all_positions,
@@ -35,6 +36,7 @@ from app.rule_config import (
     update_strategy_rule_config,
 )
 from app.rule_engine import (
+    DailyClosePoint,
     MarketSignals,
     StrategyRuleSelection,
     WeeklyOhlcBar,
@@ -82,12 +84,27 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 
 
+def _daily_bars_for_position(pos: Position, all_daily_bars: dict[str, list]) -> dict[str, list] | None:
+    """Build the per-position {ticker: bars} dict for the relative-weakness rule."""
+    relevant: dict[str, list] = {}
+    pos_bars = all_daily_bars.get(pos.ticker)
+    if pos_bars:
+        relevant[pos.ticker.upper()] = pos_bars
+    benchmark = getattr(pos, "sector_benchmark_ticker", None)
+    if benchmark:
+        bench_bars = all_daily_bars.get(benchmark.upper())
+        if bench_bars:
+            relevant[benchmark.upper()] = bench_bars
+    return relevant or None
+
+
 def _enrich_position(
     pos: Position,
     enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
     indicator_cache: dict[tuple[str, int], tuple[float | None, float | None]] | None = None,
     atr_cache: dict[tuple[str, int], float | None] | None = None,
     weekly_bars: list | None = None,
+    daily_bars_by_ticker: dict[str, list] | None = None,
 ) -> dict:
     """Run rule engine on a Position and return a dict with all display fields."""
     # Build market signals from cached Alpha Vantage data
@@ -120,6 +137,16 @@ def _enrich_position(
             for bar in weekly_bars
         ]
 
+    # Populate daily close history per ticker (issue #22 — relative weakness)
+    if daily_bars_by_ticker:
+        signals.daily_close_history = {
+            ticker.upper(): [
+                DailyClosePoint(bar_date=bar.bar_date, close=bar.close)
+                for bar in bars
+            ]
+            for ticker, bars in daily_bars_by_ticker.items()
+        }
+
     # Use cached daily close as effective price when available, otherwise manual
     effective_price = pos.daily_close if pos.daily_close is not None else pos.current_price
 
@@ -151,6 +178,7 @@ def _enrich_position(
         "investment_type": pos.investment_type,
         "initial_purchase_date": pos.initial_purchase_date,
         "notes": pos.notes,
+        "sector_benchmark_ticker": pos.sector_benchmark_ticker,
         "percent_gain": compute_percent_gain(pos.cost_basis, effective_price),
         "hold_duration_days": compute_hold_duration_days(pos.initial_purchase_date),
         "verdict": verdict,
@@ -182,9 +210,17 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
 
     # Preload indicator cache for all tickers to avoid N+1 queries
     all_tickers = {p.ticker for p in positions}
+    benchmark_tickers = {
+        p.sector_benchmark_ticker.upper()
+        for p in positions
+        if p.sector_benchmark_ticker
+    }
     all_indicator_cache = load_indicator_cache_for_tickers(db, all_tickers)
     all_atr_cache = load_atr_cache_for_tickers(db, all_tickers)
     all_weekly_bars = load_weekly_bar_cache_for_tickers(db, all_tickers)
+    all_daily_bars = load_daily_bar_cache_for_tickers(
+        db, all_tickers | benchmark_tickers
+    )
 
     enriched = [
         _enrich_position(
@@ -193,6 +229,7 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
             all_indicator_cache.get(p.ticker),
             all_atr_cache.get(p.ticker),
             all_weekly_bars.get(p.ticker),
+            _daily_bars_for_position(p, all_daily_bars),
         )
         for p in positions
     ]
@@ -326,6 +363,7 @@ def add_position(
     initial_purchase_date: str = Form(...),
     investment_type: str = Form(...),
     notes: str = Form(""),
+    sector_benchmark_ticker: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Create a new position and redirect to portfolio.
@@ -335,6 +373,7 @@ def add_position(
     (SMA values and weekly data for long-term positions).
     """
     clean_ticker = ticker.strip().upper()
+    clean_benchmark = sector_benchmark_ticker.strip().upper() or None
     current_price = 0.0
     daily_close = None
     daily_market_date = None
@@ -363,6 +402,7 @@ def add_position(
         daily_market_date=daily_market_date,
         daily_retrieved_at=daily_retrieved_at,
         notes=notes.strip() or None,
+        sector_benchmark_ticker=clean_benchmark,
     )
     db.add(pos)
     db.commit()
@@ -397,6 +437,7 @@ def edit_position(
     investment_type: str = Form(...),
     current_price: float = Form(...),
     notes: str = Form(""),
+    sector_benchmark_ticker: str = Form(""),
     db: Session = Depends(get_db),
 ):
     """Update an existing position and redirect to portfolio.
@@ -412,6 +453,7 @@ def edit_position(
     pos.investment_type = investment_type
     pos.current_price = current_price
     pos.notes = notes.strip() or None
+    pos.sector_benchmark_ticker = sector_benchmark_ticker.strip().upper() or None
     db.commit()
     logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, current_price)
     return RedirectResponse(url="/", status_code=303)

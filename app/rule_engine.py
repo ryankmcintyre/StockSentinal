@@ -35,6 +35,13 @@ class WeeklyOhlcBar:
 
 
 @dataclass
+class DailyClosePoint:
+    """A single daily closing price consumed by the rule engine."""
+    bar_date: date
+    close: Optional[float]
+
+
+@dataclass
 class MarketSignals:
     """Structured market data consumed by the rule engine.
 
@@ -67,6 +74,11 @@ class MarketSignals:
     # in use does not require weekly OHLC.
     weekly_ohlc_history: list[WeeklyOhlcBar] = field(default_factory=list)
 
+    # Daily close history per ticker (most-recent first).  Used by the
+    # relative-weakness rule (issue #22) to compare a position's return
+    # against its sector benchmark over a lookback window.
+    daily_close_history: dict[str, list["DailyClosePoint"]] = field(default_factory=dict)
+
 
 @dataclass(frozen=True)
 class StrategyRuleSelection:
@@ -95,6 +107,7 @@ RULE_KEY_TRIM_DISTRIBUTION_CLUSTER = "TRIM_WEEKLY_DISTRIBUTION_CLUSTER"
 RULE_KEY_SELL_DISTRIBUTION_CLUSTER = "SELL_WEEKLY_DISTRIBUTION_CLUSTER"
 RULE_KEY_TRIM_FIRST_LOWER_HIGH = "TRIM_WEEKLY_FIRST_LOWER_HIGH"
 RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW = "SELL_WEEKLY_LOWER_HIGH_LOWER_LOW"
+RULE_KEY_TRIM_RELATIVE_WEAKNESS = "TRIM_RELATIVE_WEAKNESS_VS_SECTOR"
 RULE_KEY_TRIM_10PCT = "TRIM-10PCT"
 RULE_KEY_HOLD_ABOVE_COST = "HOLD-ABOVE-COST"
 
@@ -123,6 +136,11 @@ DEFAULT_LH_LL_PIVOT_LEFT = 2
 DEFAULT_LH_LL_PIVOT_RIGHT = 2
 DEFAULT_LH_LL_LOOKBACK_WEEKS = 30
 DEFAULT_LH_LL_REQUIRE_PRIOR_UPTREND = True
+
+# Default parameters for the relative-weakness vs sector rule (issue #22).
+DEFAULT_RELATIVE_WEAKNESS_LOOKBACK_DAYS = 63
+DEFAULT_RELATIVE_WEAKNESS_MIN_BENCHMARK_RETURN = 8.0
+DEFAULT_RELATIVE_WEAKNESS_UNDERPERFORMANCE_GAP = 10.0
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 
@@ -733,6 +751,85 @@ def rule_sell_lower_high_lower_low(
     )
 
 
+def _compute_period_return_pct(history: list["DailyClosePoint"], lookback_days: int) -> Optional[float]:
+    """Compute the percent return over the trailing ``lookback_days`` bars.
+
+    ``history`` is most-recent first.  Returns None when fewer than
+    ``lookback_days + 1`` valid closes are available or when the
+    starting close is non-positive.
+    """
+    if not history or lookback_days < 1:
+        return None
+    valid = [pt for pt in history if pt.close is not None and pt.close > 0]
+    if len(valid) < lookback_days + 1:
+        return None
+    latest = valid[0].close
+    start = valid[lookback_days].close
+    if start is None or start <= 0 or latest is None:
+        return None
+    return (latest - start) / start * 100.0
+
+
+def rule_trim_relative_weakness_vs_sector(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    """TRIM when a stock materially underperforms its sector benchmark
+    during a strong sector up move (issue #22).
+
+    Triggers when, over ``lookback_days``:
+      1. ``benchmark_return >= min_benchmark_return``
+      2. ``benchmark_return - stock_return >= underperformance_gap``
+
+    Skipped (returns None) when the position has no
+    ``sector_benchmark_ticker`` configured or when daily close history
+    is missing/insufficient for either ticker.
+    """
+    benchmark_ticker = getattr(position, "sector_benchmark_ticker", None)
+    if not benchmark_ticker:
+        return None
+
+    lookback_days = DEFAULT_RELATIVE_WEAKNESS_LOOKBACK_DAYS
+    min_benchmark_return = DEFAULT_RELATIVE_WEAKNESS_MIN_BENCHMARK_RETURN
+    underperformance_gap = DEFAULT_RELATIVE_WEAKNESS_UNDERPERFORMANCE_GAP
+    if params:
+        cand = params.get("lookback_days")
+        if isinstance(cand, int) and not isinstance(cand, bool) and cand >= 1:
+            lookback_days = cand
+        cand = params.get("min_benchmark_return")
+        if isinstance(cand, (int, float)) and not isinstance(cand, bool) and cand > 0:
+            min_benchmark_return = float(cand)
+        cand = params.get("underperformance_gap")
+        if isinstance(cand, (int, float)) and not isinstance(cand, bool) and cand > 0:
+            underperformance_gap = float(cand)
+
+    stock_history = signals.daily_close_history.get(position.ticker.upper()) if signals.daily_close_history else None
+    benchmark_history = signals.daily_close_history.get(benchmark_ticker.upper()) if signals.daily_close_history else None
+    if not stock_history or not benchmark_history:
+        return None
+
+    stock_return = _compute_period_return_pct(stock_history, lookback_days)
+    benchmark_return = _compute_period_return_pct(benchmark_history, lookback_days)
+    if stock_return is None or benchmark_return is None:
+        return None
+
+    if benchmark_return < min_benchmark_return:
+        return None
+    gap = benchmark_return - stock_return
+    if gap < underperformance_gap:
+        return None
+
+    return RuleResult(
+        rule_label=RULE_KEY_TRIM_RELATIVE_WEAKNESS,
+        verdict=Verdict.trim,
+        description=(
+            f"Underperformed {benchmark_ticker.upper()} by {gap:.1f}% over "
+            f"{lookback_days}d (stock {stock_return:+.1f}% vs benchmark {benchmark_return:+.1f}%)"
+        ),
+    )
+
+
 def rule_hold_above_cost_basis(
     position: PositionLike,
     _signals: Optional[MarketSignals] = None,
@@ -802,6 +899,12 @@ def _eval_sell_lower_high_lower_low(
     position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
 ) -> Optional[RuleResult]:
     return rule_sell_lower_high_lower_low(position, signals, params)
+
+
+def _eval_trim_relative_weakness(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_trim_relative_weakness_vs_sector(position, signals, params)
 
 
 def _eval_trim(
@@ -911,6 +1014,20 @@ RULE_CATALOG: dict[str, RuleSpec] = {
         supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
         default_sort_order=19,
         evaluator=_eval_trim_first_lower_high,
+    ),
+    RULE_KEY_TRIM_RELATIVE_WEAKNESS: RuleSpec(
+        key=RULE_KEY_TRIM_RELATIVE_WEAKNESS,
+        name="Trim on relative weakness vs. sector benchmark",
+        description=(
+            f"Trim when the position underperforms its sector benchmark by "
+            f">= {DEFAULT_RELATIVE_WEAKNESS_UNDERPERFORMANCE_GAP:g}% over "
+            f"{DEFAULT_RELATIVE_WEAKNESS_LOOKBACK_DAYS}d while the benchmark "
+            f"is up >= {DEFAULT_RELATIVE_WEAKNESS_MIN_BENCHMARK_RETURN:g}%."
+        ),
+        verdict=Verdict.trim,
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
+        default_sort_order=19,
+        evaluator=_eval_trim_relative_weakness,
     ),
     RULE_KEY_TRIM_10PCT: RuleSpec(
         key=RULE_KEY_TRIM_10PCT,
@@ -1147,6 +1264,24 @@ def get_lh_ll_lookback_weeks(params: Optional[dict]) -> int:
         if isinstance(cand, int) and cand >= 1:
             return cand
     return DEFAULT_LH_LL_LOOKBACK_WEEKS
+
+
+def default_relative_weakness_params() -> dict:
+    """Return default params for the relative-weakness rule (issue #22)."""
+    return {
+        "lookback_days": DEFAULT_RELATIVE_WEAKNESS_LOOKBACK_DAYS,
+        "min_benchmark_return": DEFAULT_RELATIVE_WEAKNESS_MIN_BENCHMARK_RETURN,
+        "underperformance_gap": DEFAULT_RELATIVE_WEAKNESS_UNDERPERFORMANCE_GAP,
+    }
+
+
+def get_relative_weakness_lookback_days(params: Optional[dict]) -> int:
+    """Return the configured lookback (in trading days) for the relative-weakness rule."""
+    if params:
+        cand = params.get("lookback_days")
+        if isinstance(cand, int) and cand >= 1:
+            return cand
+    return DEFAULT_RELATIVE_WEAKNESS_LOOKBACK_DAYS
 # ---------------------------------------------------------------------------
 # Computed helpers
 # ---------------------------------------------------------------------------

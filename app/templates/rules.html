@@ -177,6 +177,28 @@
                 </td>
             </tr>
             {% endif %}
+            {% if rule.relative_weakness_params is defined %}
+            <tr>
+                <td colspan="4" class="ma-conditions-cell">
+                    <div class="ma-conditions">
+                        <p class="text-muted ma-help">
+                            <strong>Relative weakness vs. sector:</strong>
+                            triggers when the position underperforms its
+                            sector benchmark by
+                            <strong>≥ {{ rule.relative_weakness_params.underperformance_gap }}%</strong>
+                            over the trailing
+                            <strong>{{ rule.relative_weakness_params.lookback_days }}</strong>
+                            trading days while the benchmark is up
+                            <strong>≥ {{ rule.relative_weakness_params.min_benchmark_return }}%</strong>.
+                        </p>
+                        <p class="text-muted">
+                            Each position needs a <em>Sector Benchmark Ticker</em>
+                            (e.g. SMH, XLK) configured for this rule to apply.
+                        </p>
+                    </div>
+                </td>
+            </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>

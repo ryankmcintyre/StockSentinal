@@ -64,6 +64,7 @@ class FakePosition:
     current_price: float = 110.0
     investment_type: str = InvestmentType.long_term
     initial_purchase_date: date = date(2024, 1, 1)
+    sector_benchmark_ticker: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -1101,3 +1102,194 @@ class TestLowerHighLowerLowRules:
         assert rule_trim_first_lower_high(
             FakePosition(), signals, params={"require_prior_uptrend": True}
         ) is None
+
+
+# ---------------------------------------------------------------------------
+# Tests for relative-weakness vs sector rule (issue #22)
+# ---------------------------------------------------------------------------
+
+
+from app.rule_engine import (  # noqa: E402
+    DailyClosePoint,
+    RULE_KEY_TRIM_RELATIVE_WEAKNESS,
+    default_relative_weakness_params,
+    get_relative_weakness_lookback_days,
+    rule_trim_relative_weakness_vs_sector,
+)
+
+
+def _daily_history(closes: list[float]) -> list[DailyClosePoint]:
+    """Build a daily-close history (most-recent first) from a list of prices.
+
+    closes[0] is treated as the most-recent close.
+    """
+    today = date(2026, 4, 24)
+    return [
+        DailyClosePoint(bar_date=today - timedelta(days=i), close=c)
+        for i, c in enumerate(closes)
+    ]
+
+
+def _signals_with_daily(history_by_ticker: dict[str, list[float]]) -> MarketSignals:
+    return MarketSignals(
+        daily_close_history={
+            t.upper(): _daily_history(closes) for t, closes in history_by_ticker.items()
+        }
+    )
+
+
+class TestRelativeWeaknessVsSector:
+    def test_triggers_when_benchmark_up_and_stock_lags(self):
+        # Stock: 100 → 102 (+2%), Benchmark SMH: 100 → 112 (+12%)
+        # Lookback = 5 days.  Gap = 10 → meets default 10% gap.
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker="SMH")
+        signals = _signals_with_daily({
+            "NVDA": [102, 101.5, 101, 100.5, 100.2, 100],
+            "SMH": [112, 110, 108, 105, 102, 100],
+        })
+        result = rule_trim_relative_weakness_vs_sector(
+            pos, signals, params={"lookback_days": 5}
+        )
+        assert result is not None
+        assert result.verdict == Verdict.trim
+        assert result.rule_label == RULE_KEY_TRIM_RELATIVE_WEAKNESS
+        assert "SMH" in result.description
+
+    def test_no_trigger_when_benchmark_flat(self):
+        # Benchmark up only 2% → below 8% min_benchmark_return default
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker="SMH")
+        signals = _signals_with_daily({
+            "NVDA": [90, 92, 95, 97, 99, 100],   # stock down 10%
+            "SMH": [102, 101, 101, 100, 100, 100],  # benchmark up 2%
+        })
+        assert rule_trim_relative_weakness_vs_sector(
+            pos, signals, params={"lookback_days": 5}
+        ) is None
+
+    def test_no_trigger_when_gap_below_threshold(self):
+        # Benchmark +12, stock +5 → gap 7% < default 10%
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker="SMH")
+        signals = _signals_with_daily({
+            "NVDA": [105, 104, 103, 102, 101, 100],
+            "SMH": [112, 110, 108, 105, 102, 100],
+        })
+        assert rule_trim_relative_weakness_vs_sector(
+            pos, signals, params={"lookback_days": 5}
+        ) is None
+
+    def test_skips_when_no_benchmark_configured(self):
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker=None)
+        signals = _signals_with_daily({
+            "NVDA": [102, 101.5, 101, 100.5, 100.2, 100],
+            "SMH": [112, 110, 108, 105, 102, 100],
+        })
+        assert rule_trim_relative_weakness_vs_sector(
+            pos, signals, params={"lookback_days": 5}
+        ) is None
+
+    def test_skips_when_benchmark_history_missing(self):
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker="SMH")
+        signals = _signals_with_daily({
+            "NVDA": [102, 101.5, 101, 100.5, 100.2, 100],
+            # No SMH history
+        })
+        assert rule_trim_relative_weakness_vs_sector(
+            pos, signals, params={"lookback_days": 5}
+        ) is None
+
+    def test_skips_when_stock_history_missing(self):
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker="SMH")
+        signals = _signals_with_daily({"SMH": [112, 110, 108, 105, 102, 100]})
+        assert rule_trim_relative_weakness_vs_sector(
+            pos, signals, params={"lookback_days": 5}
+        ) is None
+
+    def test_skips_when_history_too_short(self):
+        # Need lookback_days + 1 bars
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker="SMH")
+        signals = _signals_with_daily({
+            "NVDA": [102, 100],   # only 2 bars, need 6
+            "SMH": [112, 100],
+        })
+        assert rule_trim_relative_weakness_vs_sector(
+            pos, signals, params={"lookback_days": 5}
+        ) is None
+
+    def test_uses_custom_thresholds(self):
+        # Benchmark +5%, stock -3% → gap 8%.
+        # Defaults would skip (benchmark < 8%).  Custom thresholds let it fire.
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker="SMH")
+        signals = _signals_with_daily({
+            "NVDA": [97, 98, 99, 100, 100, 100],
+            "SMH": [105, 104, 103, 102, 101, 100],
+        })
+        result = rule_trim_relative_weakness_vs_sector(
+            pos, signals,
+            params={
+                "lookback_days": 5,
+                "min_benchmark_return": 4.0,
+                "underperformance_gap": 7.0,
+            },
+        )
+        assert result is not None
+        assert result.verdict == Verdict.trim
+
+    def test_uses_default_lookback_when_missing(self):
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker="SMH")
+        signals = MarketSignals()  # no history
+        # Should be skipped without crashing on missing data
+        assert rule_trim_relative_weakness_vs_sector(pos, signals, params=None) is None
+
+    def test_default_params_helper(self):
+        params = default_relative_weakness_params()
+        assert params["lookback_days"] == 63
+        assert params["min_benchmark_return"] == 8.0
+        assert params["underperformance_gap"] == 10.0
+
+    def test_get_lookback_days_helper(self):
+        assert get_relative_weakness_lookback_days(None) == 63
+        assert get_relative_weakness_lookback_days({"lookback_days": 30}) == 30
+        assert get_relative_weakness_lookback_days({}) == 63
+        # Invalid types fall back to default
+        assert get_relative_weakness_lookback_days({"lookback_days": -1}) == 63
+        assert get_relative_weakness_lookback_days({"lookback_days": "x"}) == 63
+
+    def test_invalid_close_in_history_is_handled(self):
+        # Mixed None + valid closes — should still compute when enough valid
+        pos = FakePosition(ticker="NVDA", sector_benchmark_ticker="SMH")
+        history_with_nones = [
+            DailyClosePoint(bar_date=date(2026, 4, 24) - timedelta(days=i), close=c)
+            for i, c in enumerate([102, None, 101, None, 100.5, 100.2, 100])
+        ]
+        signals = MarketSignals(daily_close_history={
+            "NVDA": history_with_nones,
+            "SMH": _daily_history([112, 110, 108, 105, 102, 100]),
+        })
+        # Position needs lookback+1=6 valid closes.  We have 5 valid → skip.
+        assert rule_trim_relative_weakness_vs_sector(
+            pos, signals, params={"lookback_days": 5}
+        ) is None
+
+    def test_evaluator_integration_via_evaluate_position(self):
+        # Wire through evaluate_position — should trigger trim when enabled
+        pos = FakePosition(
+            ticker="NVDA",
+            sector_benchmark_ticker="SMH",
+            current_price=102.0,
+            cost_basis=100.0,
+        )
+        signals = _signals_with_daily({
+            "NVDA": [102, 101.5, 101, 100.5, 100.2, 100],
+            "SMH": [112, 110, 108, 105, 102, 100],
+        })
+        results = evaluate_position(
+            pos,
+            signals=signals,
+            configured_rules=[
+                StrategyRuleSelection(
+                    RULE_KEY_TRIM_RELATIVE_WEAKNESS,
+                    params={"lookback_days": 5},
+                ),
+            ],
+        )
+        assert any(r.rule_label == RULE_KEY_TRIM_RELATIVE_WEAKNESS for r in results)

@@ -36,6 +36,10 @@ class Position(Base):
     # Refresh status
     refresh_error = Column(String, nullable=True)
 
+    # Per-position sector benchmark ticker (issue #22). Optional;
+    # the relative-weakness rule is skipped when missing.
+    sector_benchmark_ticker = Column(String, nullable=True)
+
 
 class MarketIndicatorCache(Base):
     """Cache for arbitrary SMA indicators fetched from Alpha Vantage.
@@ -112,6 +116,29 @@ class MarketWeeklyBarCache(Base):
     low = Column(Float, nullable=True)
     close = Column(Float, nullable=True)
     volume = Column(Float, nullable=True)
+    retrieved_at = Column(DateTime, nullable=True)
+
+
+class MarketDailyBarCache(Base):
+    """Cache for daily close prices per ticker.
+
+    Used by rules that need historical daily price action over a
+    rolling window (issue #22 relative-weakness comparison vs sector
+    benchmark).  Stores enough trailing closes to compute the largest
+    configured lookback return.
+    """
+    __tablename__ = "market_daily_bar_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker", "bar_date",
+            name="uq_daily_bar_ticker_date",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False)
+    bar_date = Column(Date, nullable=False)
+    close = Column(Float, nullable=True)
     retrieved_at = Column(DateTime, nullable=True)
 
 
