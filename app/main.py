@@ -599,8 +599,10 @@ def _refresh_all_positions_task(position_ids: list[int]):
             refresh_all_positions(db)
         except Exception as exc:
             logger.warning("Background refresh-all failed", exc_info=True)
+            detail = str(exc).strip() or exc.__class__.__name__
+            db.rollback()
             for pos in db.query(Position).filter(Position.id.in_(position_ids)).all():
-                pos.refresh_error = "Refresh failed"
+                pos.refresh_error = f"Refresh failed: {detail}"
             db.commit()
     finally:
         _mark_positions_refresh_state(db, position_ids, in_progress=False)
@@ -622,9 +624,13 @@ def _refresh_single_position_task(position_id: int):
             logger.warning(
                 "Background refresh failed for position id=%d", position_id, exc_info=True
             )
-            if pos:
-                pos.refresh_error = "Refresh failed"
-                db.commit()
+            if pos is not None:
+                detail = str(exc).strip() or exc.__class__.__name__
+                db.rollback()
+                pos = db.query(Position).filter(Position.id == position_id).first()
+                if pos is not None:
+                    pos.refresh_error = f"Refresh failed: {detail}"
+                    db.commit()
     finally:
         _mark_positions_refresh_state(db, [position_id], in_progress=False)
         db_generator.close()
@@ -649,7 +655,11 @@ def refresh_single(
     position_id: int,
     db: Session = Depends(get_db),
 ):
-    """Refresh cached market data for a single position."""
+    """Refresh cached market data for a single position inline.
+
+    Running this inline avoids a race where the redirect can render before
+    background work writes refresh_error.
+    """
     _clear_stale_refresh_flags(db)
     pos = db.query(Position).filter(Position.id == position_id).first()
     if pos and not pos.refresh_in_progress:
@@ -660,8 +670,12 @@ def refresh_single(
             logger.warning(
                 "Inline refresh failed for position id=%d", position_id, exc_info=True
             )
-            pos.refresh_error = "Refresh failed"
-            db.commit()
+            detail = str(exc).strip() or exc.__class__.__name__
+            db.rollback()
+            pos = db.query(Position).filter(Position.id == position_id).first()
+            if pos is not None:
+                pos.refresh_error = f"Refresh failed: {detail}"
+                db.commit()
         finally:
             _mark_positions_refresh_state(db, [position_id], in_progress=False)
     return RedirectResponse(url="/", status_code=303)
