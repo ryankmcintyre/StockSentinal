@@ -216,8 +216,8 @@ class TestRulesPage:
 
         resp = client.get("/")
         assert resp.status_code == 200
-        # Verify the full error message is rendered as visible text content in the reason cell
-        assert ">Daily refresh failed: Alpha Vantage API rate limit exceeded<" in resp.text
+        assert "Refresh failed" in resp.text
+        assert 'title="Daily refresh failed: Alpha Vantage API rate limit exceeded"' in resp.text
         assert "rule-tag-error" in resp.text
 
     def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
@@ -292,8 +292,8 @@ class TestRulesPage:
 
         resp = client.post(f"/refresh/{position_id}", follow_redirects=True)
         assert resp.status_code == 200
-        # Verify the full error message is rendered as visible text content in the reason cell
-        assert ">Refresh failed: Alpha Vantage API rate limit exceeded<" in resp.text
+        assert "Refresh failed" in resp.text
+        assert 'title="Refresh failed: Alpha Vantage API rate limit exceeded"' in resp.text
         assert "rule-tag-error" in resp.text
 
     def test_deprecated_sell_rules_are_cleaned_up(self, _setup_db):
