@@ -173,7 +173,7 @@ def _atr_cache_is_stale(
         return cache_row.atr_date < target
     elif interval == "weekly":
         target = _last_completed_trading_week_end(today)
-        return cache_row.atr_date < target
+        return cache_row.atr_date != target
     return True
 
 
