@@ -100,6 +100,8 @@ class TestAddPositionFetchesPrice:
         resp = client.get("/add")
         assert resp.status_code == 200
         assert 'name="current_price"' not in resp.text
+        assert 'data-api-submit="true"' in resp.text
+        assert "/static/refresh-status.js" in resp.text
 
 
 class TestAddPositionFormRemoved:

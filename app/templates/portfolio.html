@@ -24,13 +24,33 @@
 
 {% if api_configured and positions %}
 <section class="refresh-controls">
-    <form method="post" action="/refresh" class="inline-form">
-        <button type="submit" class="btn btn-small">Refresh All Market Data</button>
+    <form method="post" action="/refresh" class="inline-form" data-api-submit="true">
+        <button
+            type="submit"
+            class="btn btn-small"
+            {% if any_refresh_in_progress %}disabled title="Refresh already in progress"{% endif %}
+        >
+            Refresh All Market Data
+        </button>
     </form>
 </section>
 {% elif not api_configured %}
 <section class="refresh-controls">
     <p class="text-muted">Set <code>ALPHA_VANTAGE_API_KEY</code> to enable automated market data.</p>
+</section>
+{% endif %}
+
+{% if api_configured or any_refresh_in_progress %}
+<div
+    id="refresh-status-root"
+    data-refresh-status-enabled="true"
+    data-any-refresh-in-progress="{{ 'true' if any_refresh_in_progress else 'false' }}"
+></div>
+{% endif %}
+
+{% if any_refresh_in_progress %}
+<section class="refresh-banner" id="refresh-progress-banner">
+    Updating market data — this page will reload when finished.
 </section>
 {% endif %}
 
@@ -52,7 +72,7 @@
     </thead>
     <tbody>
         {% for pos in positions %}
-        <tr>
+        <tr data-position-id="{{ pos.id }}" data-refresh-in-progress="{{ 'true' if pos.refresh_in_progress else 'false' }}">
             <td>
                 <span class="verdict verdict-{{ pos.verdict.value | lower }}">
                     {{ pos.verdict.value }}
@@ -79,12 +99,24 @@
                 {% if pos.refresh_error %}
                     <span class="rule-tag rule-tag-error">{{ pos.refresh_error }}</span>
                 {% endif %}
+                {% if pos.refresh_in_progress %}
+                    <span
+                        class="rule-tag rule-tag-refreshing"
+                        data-refreshing-badge="true"
+                        data-position-id="{{ pos.id }}"
+                    >Refreshing...</span>
+                {% endif %}
             </td>
             <td class="actions">
                 <a href="/edit/{{ pos.id }}" class="btn btn-small">Edit</a>
                 {% if api_configured %}
-                <form method="post" action="/refresh/{{ pos.id }}" class="inline-form">
-                    <button type="submit" class="btn btn-small" title="Refresh market data">&#8635;</button>
+                <form method="post" action="/refresh/{{ pos.id }}" class="inline-form" data-api-submit="true">
+                    <button
+                        type="submit"
+                        class="btn btn-small"
+                        title="Refresh market data"
+                        {% if pos.refresh_in_progress %}disabled{% endif %}
+                    >&#8635;</button>
                 </form>
                 {% endif %}
                 <form method="post" action="/delete/{{ pos.id }}" class="inline-form"
