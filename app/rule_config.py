@@ -10,17 +10,21 @@ from app.rule_engine import (
     RULE_CATALOG,
     RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
     RULE_KEY_SELL_EXTENSION_ATR,
+    RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
     RULE_KEY_SELL_MA_ALL,
     RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
     RULE_KEY_TRIM_EXTENSION_ATR,
+    RULE_KEY_TRIM_FIRST_LOWER_HIGH,
     RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
     StrategyRuleSelection,
     default_distribution_cluster_params,
     default_extension_atr_params,
+    default_lh_ll_params,
     default_rule_selections_for_investment_type,
     default_upper_wick_params,
     get_distribution_cluster_lookback_weeks,
     get_extension_indicator_requirements,
+    get_lh_ll_lookback_weeks,
     get_upper_wick_lookback_weeks,
     list_rule_specs_for_investment_type,
     parse_params_json,
@@ -108,6 +112,14 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
                 # rules UI and weekly-bar lookback calculation know their
                 # baseline + cluster window parameters immediately.
                 params_json = json.dumps(default_distribution_cluster_params())
+            elif spec.key in (
+                RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+                RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
+            ):
+                # Seed defaults for the lower-high / lower-low rules so the
+                # rules UI and weekly-bar lookback calculation know their
+                # pivot + lookback parameters immediately.
+                params_json = json.dumps(default_lh_ll_params())
 
             db.add(
                 StrategyRuleConfig(
@@ -250,6 +262,25 @@ def get_rule_management_sections(db: Session) -> list[dict]:
                     "hits_required": params.get(hits_key, defaults[hits_key]),
                     "hits_kind": (
                         "trim" if spec.key == RULE_KEY_TRIM_DISTRIBUTION_CLUSTER else "sell"
+                    ),
+                }
+
+            # Include configured thresholds for the lower-high / lower-low rules
+            if spec.key in (
+                RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+                RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
+            ) and config is not None:
+                defaults = default_lh_ll_params()
+                params = parse_params_json(config.params_json) or defaults
+                rule_data["lh_ll_params"] = {
+                    "pivot_left": params.get("pivot_left", defaults["pivot_left"]),
+                    "pivot_right": params.get("pivot_right", defaults["pivot_right"]),
+                    "lookback_weeks": get_lh_ll_lookback_weeks(params),
+                    "require_prior_uptrend": params.get(
+                        "require_prior_uptrend", defaults["require_prior_uptrend"]
+                    ),
+                    "kind": (
+                        "trim" if spec.key == RULE_KEY_TRIM_FIRST_LOWER_HIGH else "sell"
                     ),
                 }
 
@@ -492,6 +523,8 @@ def get_required_weekly_bar_lookback(db: Session) -> int:
                         RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
                         RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
                         RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+                        RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+                        RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
                     )
                 )
             )
@@ -501,6 +534,11 @@ def get_required_weekly_bar_lookback(db: Session) -> int:
             params = parse_params_json(row.params_json)
             if row.rule_key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK:
                 max_lookback = max(max_lookback, get_upper_wick_lookback_weeks(params))
-            else:
+            elif row.rule_key in (
+                RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+                RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+            ):
                 max_lookback = max(max_lookback, get_distribution_cluster_lookback_weeks(params))
+            else:
+                max_lookback = max(max_lookback, get_lh_ll_lookback_weeks(params))
     return max_lookback

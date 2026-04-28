@@ -93,6 +93,8 @@ RULE_KEY_SELL_EXTENSION_ATR = "SELL_EXTENSION_ATR"
 RULE_KEY_TRIM_WEEKLY_UPPER_WICK = "TRIM_WEEKLY_UPPER_WICK"
 RULE_KEY_TRIM_DISTRIBUTION_CLUSTER = "TRIM_WEEKLY_DISTRIBUTION_CLUSTER"
 RULE_KEY_SELL_DISTRIBUTION_CLUSTER = "SELL_WEEKLY_DISTRIBUTION_CLUSTER"
+RULE_KEY_TRIM_FIRST_LOWER_HIGH = "TRIM_WEEKLY_FIRST_LOWER_HIGH"
+RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW = "SELL_WEEKLY_LOWER_HIGH_LOWER_LOW"
 RULE_KEY_TRIM_10PCT = "TRIM-10PCT"
 RULE_KEY_HOLD_ABOVE_COST = "HOLD-ABOVE-COST"
 
@@ -115,6 +117,12 @@ DEFAULT_DISTRIBUTION_CLUSTER_WINDOW_WEEKS = 8
 DEFAULT_DISTRIBUTION_VOLUME_MULTIPLIER = 1.5
 DEFAULT_DISTRIBUTION_TRIM_HITS = 2
 DEFAULT_DISTRIBUTION_SELL_HITS = 3
+
+# Default parameters for the lower-high / lower-low pattern rules (issue #21).
+DEFAULT_LH_LL_PIVOT_LEFT = 2
+DEFAULT_LH_LL_PIVOT_RIGHT = 2
+DEFAULT_LH_LL_LOOKBACK_WEEKS = 30
+DEFAULT_LH_LL_REQUIRE_PRIOR_UPTREND = True
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 
@@ -558,6 +566,173 @@ def rule_sell_distribution_cluster(
     )
 
 
+def _find_swing_highs_lows(
+    chronological: list[WeeklyOhlcBar],
+    pivot_left: int,
+    pivot_right: int,
+) -> tuple[list[tuple[int, float]], list[tuple[int, float]]]:
+    """Identify swing-high and swing-low pivot bars.
+
+    A bar at index i is a swing high if its high is strictly greater
+    than the highs of `pivot_left` bars before and `pivot_right` bars
+    after it.  Same logic with low for swing lows.
+
+    Returns (swing_highs, swing_lows) where each entry is (index, value).
+    Lists are in chronological order.
+    """
+    highs: list[tuple[int, float]] = []
+    lows: list[tuple[int, float]] = []
+    n = len(chronological)
+    for i in range(pivot_left, n - pivot_right):
+        b = chronological[i]
+        if b.high is None or b.low is None:
+            continue
+        is_high = True
+        is_low = True
+        for j in range(i - pivot_left, i + pivot_right + 1):
+            if j == i:
+                continue
+            other = chronological[j]
+            if other.high is None or other.low is None:
+                is_high = False
+                is_low = False
+                break
+            if other.high >= b.high:
+                is_high = False
+            if other.low <= b.low:
+                is_low = False
+            if not is_high and not is_low:
+                break
+        if is_high:
+            highs.append((i, b.high))
+        if is_low:
+            lows.append((i, b.low))
+    return highs, lows
+
+
+def _detect_lower_high_lower_low(
+    history: list[WeeklyOhlcBar],
+    params: Optional[dict],
+) -> Optional[dict]:
+    """Shared detector for the LH / LH+LL pattern rules (issue #21).
+
+    Returns a dict with keys ``has_lower_high``, ``has_lower_high_and_lower_low``,
+    ``pivot_left``, ``pivot_right``, ``lookback_weeks`` when the detector can
+    run; ``None`` otherwise (insufficient data, missing OHLC, or — when
+    ``require_prior_uptrend`` is set — no prior uptrend context).
+    """
+    if not history:
+        return None
+
+    pivot_left = DEFAULT_LH_LL_PIVOT_LEFT
+    pivot_right = DEFAULT_LH_LL_PIVOT_RIGHT
+    lookback = DEFAULT_LH_LL_LOOKBACK_WEEKS
+    require_uptrend = DEFAULT_LH_LL_REQUIRE_PRIOR_UPTREND
+    if params:
+        cand = params.get("pivot_left")
+        if isinstance(cand, int) and cand >= 1:
+            pivot_left = cand
+        cand = params.get("pivot_right")
+        if isinstance(cand, int) and cand >= 1:
+            pivot_right = cand
+        cand = params.get("lookback_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            lookback = cand
+        cand = params.get("require_prior_uptrend")
+        if isinstance(cand, bool):
+            require_uptrend = cand
+
+    window = history[:lookback]
+    if len(window) < pivot_left + pivot_right + 2:
+        return None
+
+    chronological = list(reversed(window))
+    swing_highs, swing_lows = _find_swing_highs_lows(
+        chronological, pivot_left, pivot_right
+    )
+
+    if len(swing_highs) < 2 or len(swing_lows) < 2:
+        return None
+
+    last_high_idx, last_high = swing_highs[-1]
+    prev_high_idx, prev_high = swing_highs[-2]
+    last_low_idx, last_low = swing_lows[-1]
+    prev_low_idx, prev_low = swing_lows[-2]
+
+    has_lower_high = last_high < prev_high
+    has_lower_low = last_low < prev_low
+
+    if require_uptrend and has_lower_high:
+        # Prior uptrend: the swing highs leading up to the previous high
+        # should be ascending.  Look at swing highs before prev_high.
+        prior_highs = [h for _, h in swing_highs[:-1]]
+        if len(prior_highs) < 2:
+            return None
+        # Require the previous high to be the highest of the prior swing highs.
+        if prev_high < max(prior_highs[:-1] or [prev_high]):
+            return None
+
+    return {
+        "has_lower_high": has_lower_high,
+        "has_lower_high_and_lower_low": (
+            has_lower_high
+            and has_lower_low
+            # Lower low must be confirmed AFTER the lower high to count
+            # as a trend-reversal sequence.
+            and last_low_idx > prev_high_idx
+        ),
+        "pivot_left": pivot_left,
+        "pivot_right": pivot_right,
+        "lookback_weeks": lookback,
+    }
+
+
+def rule_trim_first_lower_high(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    """TRIM on the first confirmed weekly lower high after a prior uptrend."""
+    detection = _detect_lower_high_lower_low(signals.weekly_ohlc_history, params)
+    if detection is None:
+        return None
+    if not detection["has_lower_high"]:
+        return None
+    # If the full LH+LL pattern is confirmed, leave the sell rule to handle it.
+    if detection["has_lower_high_and_lower_low"]:
+        return None
+    return RuleResult(
+        rule_label=RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+        verdict=Verdict.trim,
+        description=(
+            f"First lower weekly high confirmed (pivot {detection['pivot_left']}/"
+            f"{detection['pivot_right']}, {detection['lookback_weeks']}wk lookback)"
+        ),
+    )
+
+
+def rule_sell_lower_high_lower_low(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    """SELL when both a lower weekly high and a subsequent lower weekly low are confirmed."""
+    detection = _detect_lower_high_lower_low(signals.weekly_ohlc_history, params)
+    if detection is None:
+        return None
+    if not detection["has_lower_high_and_lower_low"]:
+        return None
+    return RuleResult(
+        rule_label=RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
+        verdict=Verdict.sell,
+        description=(
+            f"Lower high + lower low pattern confirmed (pivot "
+            f"{detection['pivot_left']}/{detection['pivot_right']}, "
+            f"{detection['lookback_weeks']}wk lookback)"
+        ),
+    )
+
+
 def rule_hold_above_cost_basis(
     position: PositionLike,
     _signals: Optional[MarketSignals] = None,
@@ -615,6 +790,18 @@ def _eval_sell_distribution_cluster(
     position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
 ) -> Optional[RuleResult]:
     return rule_sell_distribution_cluster(position, signals, params)
+
+
+def _eval_trim_first_lower_high(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_trim_first_lower_high(position, signals, params)
+
+
+def _eval_sell_lower_high_lower_low(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_sell_lower_high_lower_low(position, signals, params)
 
 
 def _eval_trim(
@@ -700,6 +887,30 @@ RULE_CATALOG: dict[str, RuleSpec] = {
         supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
         default_sort_order=18,
         evaluator=_eval_trim_distribution_cluster,
+    ),
+    RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW: RuleSpec(
+        key=RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
+        name="Sell on weekly lower-high + lower-low reversal",
+        description=(
+            "Sell when a confirmed lower weekly high is followed by a lower "
+            "weekly low (classic uptrend → downtrend reversal)."
+        ),
+        verdict=Verdict.sell,
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
+        default_sort_order=19,
+        evaluator=_eval_sell_lower_high_lower_low,
+    ),
+    RULE_KEY_TRIM_FIRST_LOWER_HIGH: RuleSpec(
+        key=RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+        name="Trim on first weekly lower high",
+        description=(
+            "Trim on the first confirmed weekly lower high after a prior "
+            "uptrend — early warning of a trend character change."
+        ),
+        verdict=Verdict.trim,
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
+        default_sort_order=19,
+        evaluator=_eval_trim_first_lower_high,
     ),
     RULE_KEY_TRIM_10PCT: RuleSpec(
         key=RULE_KEY_TRIM_10PCT,
@@ -917,6 +1128,25 @@ def get_distribution_cluster_lookback_weeks(params: Optional[dict]) -> int:
         if isinstance(cand, int) and cand >= 1:
             window = cand
     return max(baseline, window)
+
+
+def default_lh_ll_params() -> dict:
+    """Return default params for the lower-high / lower-low rules (issue #21)."""
+    return {
+        "pivot_left": DEFAULT_LH_LL_PIVOT_LEFT,
+        "pivot_right": DEFAULT_LH_LL_PIVOT_RIGHT,
+        "lookback_weeks": DEFAULT_LH_LL_LOOKBACK_WEEKS,
+        "require_prior_uptrend": DEFAULT_LH_LL_REQUIRE_PRIOR_UPTREND,
+    }
+
+
+def get_lh_ll_lookback_weeks(params: Optional[dict]) -> int:
+    """Return the configured lookback window for the LH/LL rules."""
+    if params:
+        cand = params.get("lookback_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            return cand
+    return DEFAULT_LH_LL_LOOKBACK_WEEKS
 # ---------------------------------------------------------------------------
 # Computed helpers
 # ---------------------------------------------------------------------------

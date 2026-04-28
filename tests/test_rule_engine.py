@@ -19,6 +19,8 @@ from app.rule_engine import (
     RULE_KEY_TRIM_EXTENSION_ATR,
     RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
     RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+    RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+    RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
     RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
     StrategyRuleSelection,
     WeeklyOhlcBar,
@@ -26,20 +28,24 @@ from app.rule_engine import (
     compute_percent_gain,
     default_distribution_cluster_params,
     default_extension_atr_params,
+    default_lh_ll_params,
     default_upper_wick_params,
     evaluate_position,
     get_distribution_cluster_lookback_weeks,
     get_extension_indicator_requirements,
+    get_lh_ll_lookback_weeks,
     get_upper_wick_lookback_weeks,
     get_verdict,
     parse_params_json,
     rule_hold_above_cost_basis,
     rule_sell_distribution_cluster,
     rule_sell_extension_atr,
+    rule_sell_lower_high_lower_low,
     rule_sell_ma_all,
     rule_trim_above_10_percent,
     rule_trim_distribution_cluster,
     rule_trim_extension_atr,
+    rule_trim_first_lower_high,
     rule_trim_weekly_upper_wick,
     validate_ma_conditions,
 )
@@ -959,3 +965,139 @@ class TestDistributionClusterRules:
         assert get_distribution_cluster_lookback_weeks(
             {"baseline_lookback_weeks": 50, "cluster_window_weeks": 4}
         ) == 50
+
+
+# ---------------------------------------------------------------------------
+# Tests for lower-high / lower-low rules (issue #21)
+# ---------------------------------------------------------------------------
+
+
+def _hl_bar(d, h, l):
+    return WeeklyOhlcBar(bar_date=d, open=(h + l) / 2, high=h, low=l, close=(h + l) / 2)
+
+
+class TestLowerHighLowerLowRules:
+    def _bars_from_pattern(self, highs_lows):
+        """Build a most-recent-first weekly bar history from a chronological
+        list of (high, low) tuples.
+        """
+        d = date(2025, 6, 13)
+        bars_chrono = []
+        for i, (h, l) in enumerate(highs_lows):
+            bars_chrono.append(_hl_bar(d - timedelta(weeks=len(highs_lows) - 1 - i), h, l))
+        return list(reversed(bars_chrono))
+
+    def test_uptrend_then_first_lower_high_triggers_trim(self):
+        # Pivot 1/1. Pattern produces a lower swing high without forming a
+        # confirmed lower swing low afterward.
+        # bar:   0    1    2    3    4    5    6    7    8    9
+        # high: 100  120  100   90  115  100   85   95   90   95
+        # low:   95  115   95   80  110   95   80   90   85   88
+        # swing highs: idx 1 (120), idx 4 (115), idx 7 (95) → 95 < 115 (LH)
+        # swing lows:  idx 3 (80), idx 6 (80) → equal, not strictly lower
+        pattern = [
+            (100, 95), (120, 115), (100, 95), (90, 80), (115, 110),
+            (100, 95), (85, 80), (95, 90), (90, 85), (95, 88),
+        ]
+        bars = self._bars_from_pattern(pattern)
+        signals = _signals_with(bars)
+        result = rule_trim_first_lower_high(
+            FakePosition(),
+            signals,
+            params={"pivot_left": 1, "pivot_right": 1, "require_prior_uptrend": False},
+        )
+        assert result is not None
+        assert result.verdict == Verdict.trim
+        assert result.rule_label == RULE_KEY_TRIM_FIRST_LOWER_HIGH
+        # Sell rule must NOT fire here (no confirmed lower low)
+        assert rule_sell_lower_high_lower_low(
+            FakePosition(),
+            signals,
+            params={"pivot_left": 1, "pivot_right": 1, "require_prior_uptrend": False},
+        ) is None
+
+    def test_lower_high_plus_lower_low_triggers_sell(self):
+        # Pivot 1/1; build LH then LL after:
+        # bar:     0    1    2    3    4    5    6    7    8    9
+        # high:    100  130  110  90   125  100  90   80   95   85
+        # low:     95   125  105  85   120  95   85   70   90   80
+        # swing highs: idx 1 (130), idx 4 (125) → LH
+        # swing lows:  idx 3 (85), idx 7 (70) → LL after the LH
+        pattern = [
+            (100, 95), (130, 125), (110, 105), (90, 85), (125, 120),
+            (100, 95), (90, 85), (80, 70), (95, 90), (85, 80),
+        ]
+        bars = self._bars_from_pattern(pattern)
+        signals = _signals_with(bars)
+        result = rule_sell_lower_high_lower_low(
+            FakePosition(),
+            signals,
+            params={"pivot_left": 1, "pivot_right": 1, "require_prior_uptrend": False},
+        )
+        assert result is not None
+        assert result.verdict == Verdict.sell
+        assert result.rule_label == RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW
+        # Trim rule should NOT also fire when sell pattern is confirmed
+        assert rule_trim_first_lower_high(
+            FakePosition(),
+            signals,
+            params={"pivot_left": 1, "pivot_right": 1, "require_prior_uptrend": False},
+        ) is None
+
+    def test_choppy_data_does_not_false_trigger(self):
+        # Sideways oscillation: alternating bars that don't form clear trend
+        pattern = [(100, 90)] * 20
+        bars = self._bars_from_pattern(pattern)
+        signals = _signals_with(bars)
+        assert rule_trim_first_lower_high(FakePosition(), signals) is None
+        assert rule_sell_lower_high_lower_low(FakePosition(), signals) is None
+
+    def test_insufficient_history_returns_none(self):
+        bars = [_hl_bar(date(2025, 6, 13), 100, 90)]
+        signals = _signals_with(bars)
+        assert rule_trim_first_lower_high(FakePosition(), signals) is None
+        assert rule_sell_lower_high_lower_low(FakePosition(), signals) is None
+
+    def test_empty_history_returns_none(self):
+        signals = _signals_with([])
+        assert rule_trim_first_lower_high(FakePosition(), signals) is None
+        assert rule_sell_lower_high_lower_low(FakePosition(), signals) is None
+
+    def test_missing_high_low_skips_pivot(self):
+        # All bars missing high → no pivots → no trigger
+        bars = [
+            WeeklyOhlcBar(bar_date=date(2025, 6, 13) - timedelta(weeks=i),
+                          open=None, high=None, low=None, close=None)
+            for i in range(15)
+        ]
+        signals = _signals_with(bars)
+        assert rule_trim_first_lower_high(FakePosition(), signals) is None
+        assert rule_sell_lower_high_lower_low(FakePosition(), signals) is None
+
+    def test_default_lh_ll_params_values(self):
+        params = default_lh_ll_params()
+        assert params["pivot_left"] == 2
+        assert params["pivot_right"] == 2
+        assert params["lookback_weeks"] == 30
+        assert params["require_prior_uptrend"] is True
+
+    def test_get_lh_ll_lookback_weeks_uses_default(self):
+        assert get_lh_ll_lookback_weeks(None) == 30
+        assert get_lh_ll_lookback_weeks({"lookback_weeks": 50}) == 50
+        assert get_lh_ll_lookback_weeks({}) == 30
+
+    def test_require_prior_uptrend_filters_non_uptrend_lower_highs(self):
+        # Two declining swing highs but no prior uptrend leading up to them.
+        # require_prior_uptrend=True (default) → no trim
+        pattern = [
+            (110, 100), (100, 90), (90, 80),  # declining only — no uptrend
+            (95, 85), (90, 80), (85, 75), (80, 70),
+            (85, 75), (80, 70), (75, 65),
+        ]
+        bars = self._bars_from_pattern(pattern)
+        signals = _signals_with(bars)
+        # With require_prior_uptrend=False the rule may fire; with True it
+        # should suppress.
+        assert rule_trim_first_lower_high(
+            FakePosition(), signals, params={"require_prior_uptrend": True}
+        ) is None

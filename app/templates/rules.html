@@ -153,6 +153,30 @@
                 </td>
             </tr>
             {% endif %}
+            {% if rule.lh_ll_params is defined %}
+            <tr>
+                <td colspan="4" class="ma-conditions-cell">
+                    <div class="ma-conditions">
+                        <p class="text-muted ma-help">
+                            <strong>Weekly lower-high / lower-low pattern:</strong>
+                            uses pivot windows of
+                            <strong>{{ rule.lh_ll_params.pivot_left }}</strong> bars left and
+                            <strong>{{ rule.lh_ll_params.pivot_right }}</strong> bars right
+                            to identify swing highs/lows over the last
+                            <strong>{{ rule.lh_ll_params.lookback_weeks }}</strong> weeks.
+                        </p>
+                        <p class="text-muted">
+                            {% if rule.lh_ll_params.kind == 'sell' %}
+                                Sells when a lower swing high is followed by a lower swing low.
+                            {% else %}
+                                Trims on the first confirmed lower swing high
+                                {% if rule.lh_ll_params.require_prior_uptrend %}after a prior uptrend{% endif %}.
+                            {% endif %}
+                        </p>
+                    </div>
+                </td>
+            </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>
