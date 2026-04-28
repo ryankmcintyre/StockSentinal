@@ -90,8 +90,17 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
         default_selections = default_rule_selections_for_investment_type(investment_type)
         default_by_key = {s.rule_key: s for s in default_selections}
         default_enabled_keys = set(default_by_key.keys())
+        spec_by_key = {spec.key: spec for spec in list_rule_specs_for_investment_type(investment_type)}
 
-        for spec in list_rule_specs_for_investment_type(investment_type):
+        for rule_key, row in existing_by_key.items():
+            spec = spec_by_key.get(rule_key)
+            if spec is None:
+                continue
+            if row.sort_order != spec.default_sort_order:
+                row.sort_order = spec.default_sort_order
+                changed = True
+
+        for spec in spec_by_key.values():
             if spec.key in existing_by_key:
                 continue
 
@@ -142,6 +151,7 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
                     investment_type=investment_type.value,
                     rule_key=spec.key,
                     enabled=spec.key in default_enabled_keys,
+                    sort_order=spec.default_sort_order,
                     params_json=params_json,
                 )
             )
@@ -373,6 +383,7 @@ def update_strategy_rule_config(
         row = StrategyRuleConfig(
             investment_type=investment_type.value,
             rule_key=rule_key,
+            sort_order=spec.default_sort_order,
         )
         db.add(row)
 

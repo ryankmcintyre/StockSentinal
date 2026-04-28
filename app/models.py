@@ -181,6 +181,7 @@ class StrategyRuleConfig(Base):
     investment_type = Column(String, nullable=False)  # "long-term" or "short-term"
     rule_key = Column(String, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
+    sort_order = Column(Integer, nullable=False, default=0)
     params_json = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
     updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
