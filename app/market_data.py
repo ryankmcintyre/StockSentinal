@@ -173,7 +173,7 @@ def _atr_cache_is_stale(
         return cache_row.atr_date < target
     elif interval == "weekly":
         target = _last_completed_trading_week_end(today)
-        return cache_row.atr_date < target
+        return cache_row.atr_date != target
     return True
 
 
@@ -618,13 +618,16 @@ def refresh_weekly_bar_cache(
 
     for ticker in sorted(tickers):
         if not force:
-            latest = (
+            cached_rows = (
                 db.query(MarketWeeklyBarCache)
                 .filter(MarketWeeklyBarCache.ticker == ticker)
                 .order_by(MarketWeeklyBarCache.bar_date.desc())
-                .first()
+                .limit(lookback_weeks)
+                .all()
             )
-            if not _weekly_bar_cache_is_stale(latest):
+            latest = cached_rows[0] if cached_rows else None
+            has_required_history = len(cached_rows) >= lookback_weeks
+            if has_required_history and not _weekly_bar_cache_is_stale(latest):
                 continue
 
         try:
@@ -739,16 +742,16 @@ def refresh_daily_bar_cache(
 
     api_key = require_alpha_vantage_api_key()
     errors: list[str] = []
+    expected_row_count = lookback_days + 1
 
     for ticker in sorted(tickers):
         if not force:
-            latest = (
-                db.query(MarketDailyBarCache)
-                .filter(MarketDailyBarCache.ticker == ticker)
-                .order_by(MarketDailyBarCache.bar_date.desc())
-                .first()
+            ticker_cache_query = db.query(MarketDailyBarCache).filter(
+                MarketDailyBarCache.ticker == ticker
             )
-            if not _daily_bar_cache_is_stale(latest):
+            latest = ticker_cache_query.order_by(MarketDailyBarCache.bar_date.desc()).first()
+            cached_row_count = ticker_cache_query.count()
+            if cached_row_count == expected_row_count and not _daily_bar_cache_is_stale(latest):
                 continue
 
         try:
@@ -822,7 +825,10 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
         else:
             logger.debug("%s weekly data is fresh, skipping", position.ticker)
     else:
-        logger.debug("%s is short-term, skipping weekly refresh", position.ticker)
+        logger.debug(
+            "%s is short-term, skipping Position weekly snapshot refresh",
+            position.ticker,
+        )
 
     # Refresh indicator cache for configured rules
     from app.rule_config import (

@@ -241,7 +241,7 @@ def _compute_atr_extension_ratio(
     """Compute the ATR extension ratio and return (ratio, resolved_params).
 
     Returns None when any required input is missing or invalid (no rule fires).
-    Formula: (current_price - sma_period) / atr_period
+    Formula: (current_price - sma_value) / atr_value
 
     Guards:
       - current_price <= 0           → None
@@ -803,13 +803,13 @@ def rule_trim_relative_weakness_vs_sector(
     underperformance_gap = DEFAULT_RELATIVE_WEAKNESS_UNDERPERFORMANCE_GAP
     if params:
         cand = params.get("lookback_days")
-        if isinstance(cand, int) and cand >= 1:
+        if isinstance(cand, int) and not isinstance(cand, bool) and cand >= 1:
             lookback_days = cand
         cand = params.get("min_benchmark_return")
-        if isinstance(cand, (int, float)):
+        if isinstance(cand, (int, float)) and not isinstance(cand, bool) and cand > 0:
             min_benchmark_return = float(cand)
         cand = params.get("underperformance_gap")
-        if isinstance(cand, (int, float)):
+        if isinstance(cand, (int, float)) and not isinstance(cand, bool) and cand > 0:
             underperformance_gap = float(cand)
 
     stock_history = signals.daily_close_history.get(position.ticker.upper()) if signals.daily_close_history else None
