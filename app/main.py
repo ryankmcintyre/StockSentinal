@@ -27,7 +27,7 @@ from app.market_data import (
     refresh_all_positions,
     refresh_position,
 )
-from app.models import Position
+from app.models import Position, PositionKeyLevel
 from app.rule_config import (
     add_ma_condition,
     get_enabled_rule_selections_by_investment_type,
@@ -457,6 +457,66 @@ def edit_position(
     db.commit()
     logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, current_price)
     return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/edit/{position_id}/key-levels/add")
+def add_key_level(
+    position_id: int,
+    level_price: float = Form(...),
+    label: str = Form(""),
+    notes: str = Form(""),
+    db: Session = Depends(get_db),
+):
+    """Add a manually-identified key level to a position (issue #23)."""
+    pos = db.query(Position).filter(Position.id == position_id).first()
+    if not pos:
+        return RedirectResponse(url="/", status_code=303)
+    if level_price > 0:
+        kl = PositionKeyLevel(
+            position_id=pos.id,
+            level_price=level_price,
+            label=label.strip() or None,
+            notes=notes.strip() or None,
+            is_active=True,
+        )
+        db.add(kl)
+        db.commit()
+        logger.info(
+            "Added key level $%.2f for position id=%d %s",
+            level_price, position_id, pos.ticker,
+        )
+    return RedirectResponse(url=f"/edit/{position_id}", status_code=303)
+
+
+@app.post("/edit/{position_id}/key-levels/{level_id}/delete")
+def delete_key_level(position_id: int, level_id: int, db: Session = Depends(get_db)):
+    """Delete a key level from a position."""
+    kl = (
+        db.query(PositionKeyLevel)
+        .filter(PositionKeyLevel.id == level_id)
+        .filter(PositionKeyLevel.position_id == position_id)
+        .first()
+    )
+    if kl:
+        db.delete(kl)
+        db.commit()
+        logger.info("Deleted key level id=%d for position id=%d", level_id, position_id)
+    return RedirectResponse(url=f"/edit/{position_id}", status_code=303)
+
+
+@app.post("/edit/{position_id}/key-levels/{level_id}/toggle")
+def toggle_key_level(position_id: int, level_id: int, db: Session = Depends(get_db)):
+    """Toggle the is_active flag on a key level."""
+    kl = (
+        db.query(PositionKeyLevel)
+        .filter(PositionKeyLevel.id == level_id)
+        .filter(PositionKeyLevel.position_id == position_id)
+        .first()
+    )
+    if kl:
+        kl.is_active = not kl.is_active
+        db.commit()
+    return RedirectResponse(url=f"/edit/{position_id}", status_code=303)
 
 
 @app.post("/delete/{position_id}")

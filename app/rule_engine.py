@@ -108,6 +108,7 @@ RULE_KEY_SELL_DISTRIBUTION_CLUSTER = "SELL_WEEKLY_DISTRIBUTION_CLUSTER"
 RULE_KEY_TRIM_FIRST_LOWER_HIGH = "TRIM_WEEKLY_FIRST_LOWER_HIGH"
 RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW = "SELL_WEEKLY_LOWER_HIGH_LOWER_LOW"
 RULE_KEY_TRIM_RELATIVE_WEAKNESS = "TRIM_RELATIVE_WEAKNESS_VS_SECTOR"
+RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM = "SELL_FAILED_BREAKOUT_RECLAIM"
 RULE_KEY_TRIM_10PCT = "TRIM-10PCT"
 RULE_KEY_HOLD_ABOVE_COST = "HOLD-ABOVE-COST"
 
@@ -141,6 +142,13 @@ DEFAULT_LH_LL_REQUIRE_PRIOR_UPTREND = True
 DEFAULT_RELATIVE_WEAKNESS_LOOKBACK_DAYS = 63
 DEFAULT_RELATIVE_WEAKNESS_MIN_BENCHMARK_RETURN = 8.0
 DEFAULT_RELATIVE_WEAKNESS_UNDERPERFORMANCE_GAP = 10.0
+
+# Default parameters for the failed-breakout / reclaim-failure rule (issue #23).
+DEFAULT_FAILED_BREAKOUT_CONFIRM_WEEKS = 1
+DEFAULT_FAILED_BREAKOUT_FAILURE_BUFFER_PCT = 1.0
+DEFAULT_FAILED_BREAKOUT_RECLAIM_WINDOW_WEEKS = 4
+DEFAULT_FAILED_BREAKOUT_RECLAIM_FAIL_BUFFER_PCT = 0.5
+DEFAULT_FAILED_BREAKOUT_LOOKBACK_WEEKS = 52
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 
@@ -830,6 +838,154 @@ def rule_trim_relative_weakness_vs_sector(
     )
 
 
+def _detect_failed_breakout_reclaim(
+    history_chronological: list[WeeklyOhlcBar],
+    level: float,
+    confirm_weeks: int,
+    failure_buffer_pct: float,
+    reclaim_window_weeks: int,
+    reclaim_fail_buffer_pct: float,
+) -> Optional[dict]:
+    """Detect the failed breakout + failed reclaim sequence for a key level.
+
+    Walks the chronological weekly history (oldest first) and looks for:
+      1. ``confirm_weeks`` consecutive weekly closes strictly above ``level``
+         (breakout span), then
+      2. a later weekly close at or below ``level * (1 - failure_buffer_pct/100)``
+         (failure week), then
+      3. within the next ``reclaim_window_weeks`` chronologically forward
+         bars, at least one bar where ``high >= level`` but
+         ``close <= level * (1 - reclaim_fail_buffer_pct/100)``
+         (failed reclaim attempt).
+
+    Returns a dict with detection details when the full sequence is found
+    (using the most-recent qualifying failure window), ``None`` otherwise.
+    """
+    if not history_chronological or level <= 0 or confirm_weeks < 1:
+        return None
+    failure_threshold = level * (1.0 - failure_buffer_pct / 100.0)
+    reclaim_fail_threshold = level * (1.0 - reclaim_fail_buffer_pct / 100.0)
+
+    last_match: Optional[dict] = None
+    n = len(history_chronological)
+
+    # Find consecutive breakout spans, then for each, look for a failure.
+    i = 0
+    while i < n:
+        bar = history_chronological[i]
+        if bar.close is not None and bar.close > level:
+            run_start = i
+            while i < n and history_chronological[i].close is not None and history_chronological[i].close > level:
+                i += 1
+            run_end = i - 1
+            run_len = run_end - run_start + 1
+            if run_len >= confirm_weeks:
+                # Look for a failure week strictly after the breakout span
+                fail_idx: Optional[int] = None
+                for j in range(run_end + 1, n):
+                    fb = history_chronological[j]
+                    if fb.close is not None and fb.close <= failure_threshold:
+                        fail_idx = j
+                        break
+                if fail_idx is not None:
+                    # Within the reclaim window, look for any failed reclaim attempt
+                    window_end = min(fail_idx + reclaim_window_weeks, n - 1)
+                    failed_reclaim_idx: Optional[int] = None
+                    for k in range(fail_idx + 1, window_end + 1):
+                        rb = history_chronological[k]
+                        if (
+                            rb.high is not None
+                            and rb.close is not None
+                            and rb.high >= level
+                            and rb.close <= reclaim_fail_threshold
+                        ):
+                            failed_reclaim_idx = k
+                            break
+                    if failed_reclaim_idx is not None:
+                        last_match = {
+                            "level": level,
+                            "breakout_start_date": history_chronological[run_start].bar_date,
+                            "breakout_end_date": history_chronological[run_end].bar_date,
+                            "failure_date": history_chronological[fail_idx].bar_date,
+                            "failed_reclaim_date": history_chronological[failed_reclaim_idx].bar_date,
+                        }
+        else:
+            i += 1
+    return last_match
+
+
+def rule_sell_failed_breakout_reclaim(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    """SELL when price loses a manually-flagged key level after a confirmed
+    breakout and then fails to reclaim it within the configured window
+    (issue #23).
+
+    Iterates over the position's ``key_levels`` (only ``is_active=True``
+    entries) and triggers if the failed-breakout + failed-reclaim
+    sequence completes for any of them within the lookback window.
+    """
+    key_levels = getattr(position, "key_levels", None) or []
+    active_levels = [
+        kl for kl in key_levels
+        if getattr(kl, "is_active", True) and getattr(kl, "level_price", None) is not None
+        and kl.level_price > 0
+    ]
+    if not active_levels or not signals.weekly_ohlc_history:
+        return None
+
+    confirm_weeks = DEFAULT_FAILED_BREAKOUT_CONFIRM_WEEKS
+    failure_buffer_pct = DEFAULT_FAILED_BREAKOUT_FAILURE_BUFFER_PCT
+    reclaim_window_weeks = DEFAULT_FAILED_BREAKOUT_RECLAIM_WINDOW_WEEKS
+    reclaim_fail_buffer_pct = DEFAULT_FAILED_BREAKOUT_RECLAIM_FAIL_BUFFER_PCT
+    lookback_weeks = DEFAULT_FAILED_BREAKOUT_LOOKBACK_WEEKS
+    if params:
+        cand = params.get("breakout_confirm_weeks")
+        if isinstance(cand, int) and not isinstance(cand, bool) and cand >= 1:
+            confirm_weeks = cand
+        cand = params.get("failure_buffer_pct")
+        if not isinstance(cand, bool) and isinstance(cand, (int, float)) and cand >= 0:
+            failure_buffer_pct = float(cand)
+        cand = params.get("reclaim_window_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            reclaim_window_weeks = cand
+        cand = params.get("reclaim_fail_buffer_pct")
+        if not isinstance(cand, bool) and isinstance(cand, (int, float)) and cand >= 0:
+            reclaim_fail_buffer_pct = float(cand)
+        cand = params.get("lookback_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            lookback_weeks = cand
+
+    window = signals.weekly_ohlc_history[:lookback_weeks]
+    chronological = list(reversed(window))
+
+    # Evaluate active levels in deterministic order (lowest price first)
+    sorted_levels = sorted(active_levels, key=lambda kl: kl.level_price)
+    for kl in sorted_levels:
+        match = _detect_failed_breakout_reclaim(
+            chronological,
+            level=kl.level_price,
+            confirm_weeks=confirm_weeks,
+            failure_buffer_pct=failure_buffer_pct,
+            reclaim_window_weeks=reclaim_window_weeks,
+            reclaim_fail_buffer_pct=reclaim_fail_buffer_pct,
+        )
+        if match is None:
+            continue
+        label = getattr(kl, "label", None) or f"${kl.level_price:.2f}"
+        return RuleResult(
+            rule_label=RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
+            verdict=Verdict.sell,
+            description=(
+                f"Failed breakout + failed reclaim of key level {label} "
+                f"(broke {match['failure_date']}, failed reclaim {match['failed_reclaim_date']})"
+            ),
+        )
+    return None
+
+
 def rule_hold_above_cost_basis(
     position: PositionLike,
     _signals: Optional[MarketSignals] = None,
@@ -905,6 +1061,12 @@ def _eval_trim_relative_weakness(
     position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
 ) -> Optional[RuleResult]:
     return rule_trim_relative_weakness_vs_sector(position, signals, params)
+
+
+def _eval_sell_failed_breakout_reclaim(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_sell_failed_breakout_reclaim(position, signals, params)
 
 
 def _eval_trim(
@@ -1028,6 +1190,18 @@ RULE_CATALOG: dict[str, RuleSpec] = {
         supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
         default_sort_order=19,
         evaluator=_eval_trim_relative_weakness,
+    ),
+    RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM: RuleSpec(
+        key=RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
+        name="Sell on failed breakout + failed reclaim of key level",
+        description=(
+            "Sell when price breaks above a manually-flagged key level, fades "
+            "back below it, and then fails to reclaim it on a subsequent attempt."
+        ),
+        verdict=Verdict.sell,
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
+        default_sort_order=16,
+        evaluator=_eval_sell_failed_breakout_reclaim,
     ),
     RULE_KEY_TRIM_10PCT: RuleSpec(
         key=RULE_KEY_TRIM_10PCT,
@@ -1282,6 +1456,26 @@ def get_relative_weakness_lookback_days(params: Optional[dict]) -> int:
         if isinstance(cand, int) and cand >= 1:
             return cand
     return DEFAULT_RELATIVE_WEAKNESS_LOOKBACK_DAYS
+
+
+def default_failed_breakout_params() -> dict:
+    """Return default params for the failed-breakout / reclaim rule (issue #23)."""
+    return {
+        "breakout_confirm_weeks": DEFAULT_FAILED_BREAKOUT_CONFIRM_WEEKS,
+        "failure_buffer_pct": DEFAULT_FAILED_BREAKOUT_FAILURE_BUFFER_PCT,
+        "reclaim_window_weeks": DEFAULT_FAILED_BREAKOUT_RECLAIM_WINDOW_WEEKS,
+        "reclaim_fail_buffer_pct": DEFAULT_FAILED_BREAKOUT_RECLAIM_FAIL_BUFFER_PCT,
+        "lookback_weeks": DEFAULT_FAILED_BREAKOUT_LOOKBACK_WEEKS,
+    }
+
+
+def get_failed_breakout_lookback_weeks(params: Optional[dict]) -> int:
+    """Return the configured lookback window for the failed-breakout rule."""
+    if params:
+        cand = params.get("lookback_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            return cand
+    return DEFAULT_FAILED_BREAKOUT_LOOKBACK_WEEKS
 # ---------------------------------------------------------------------------
 # Computed helpers
 # ---------------------------------------------------------------------------

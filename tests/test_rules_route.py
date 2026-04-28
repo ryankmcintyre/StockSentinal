@@ -699,3 +699,43 @@ class TestLowerHighLowerLowRules:
             assert get_required_daily_bar_lookback(db) == 63
         finally:
             db.close()
+
+    def test_rules_page_lists_failed_breakout_rule(self, client):
+        resp = client.get("/rules")
+        assert resp.status_code == 200
+        assert "SELL_FAILED_BREAKOUT_RECLAIM" in resp.text
+        assert "Failed breakout" in resp.text or "failed breakout" in resp.text
+
+    def test_failed_breakout_rule_default_disabled_with_seeded_params(self, _setup_db):
+        from app.rule_config import ensure_strategy_rule_defaults
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            rows = (
+                db.query(StrategyRuleConfig)
+                .filter(StrategyRuleConfig.rule_key == "SELL_FAILED_BREAKOUT_RECLAIM")
+                .all()
+            )
+            assert len(rows) == 2
+            assert all(row.enabled is False for row in rows)
+            assert all(row.params_json is not None for row in rows)
+        finally:
+            db.close()
+
+    def test_required_weekly_bar_lookback_includes_failed_breakout(self, _setup_db):
+        from app.rule_config import (
+            ensure_strategy_rule_defaults,
+            get_required_weekly_bar_lookback,
+            update_strategy_rule_config,
+        )
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+            update_strategy_rule_config(
+                db, "long-term", "SELL_FAILED_BREAKOUT_RECLAIM", enabled=True
+            )
+            assert get_required_weekly_bar_lookback(db) >= 52
+        finally:
+            db.close()

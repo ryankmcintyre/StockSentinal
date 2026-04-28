@@ -14,6 +14,7 @@ from app.rule_engine import (
     MAX_MA_CONDITIONS,
     RULE_KEY_HOLD_ABOVE_COST,
     RULE_KEY_SELL_EXTENSION_ATR,
+    RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
     RULE_KEY_SELL_MA_ALL,
     RULE_KEY_TRIM_10PCT,
     RULE_KEY_TRIM_EXTENSION_ATR,
@@ -28,11 +29,13 @@ from app.rule_engine import (
     compute_percent_gain,
     default_distribution_cluster_params,
     default_extension_atr_params,
+    default_failed_breakout_params,
     default_lh_ll_params,
     default_upper_wick_params,
     evaluate_position,
     get_distribution_cluster_lookback_weeks,
     get_extension_indicator_requirements,
+    get_failed_breakout_lookback_weeks,
     get_lh_ll_lookback_weeks,
     get_upper_wick_lookback_weeks,
     get_verdict,
@@ -40,6 +43,7 @@ from app.rule_engine import (
     rule_hold_above_cost_basis,
     rule_sell_distribution_cluster,
     rule_sell_extension_atr,
+    rule_sell_failed_breakout_reclaim,
     rule_sell_lower_high_lower_low,
     rule_sell_ma_all,
     rule_trim_above_10_percent,
@@ -1293,3 +1297,192 @@ class TestRelativeWeaknessVsSector:
             ],
         )
         assert any(r.rule_label == RULE_KEY_TRIM_RELATIVE_WEAKNESS for r in results)
+
+
+# ---------------------------------------------------------------------------
+# Tests for failed-breakout / reclaim-failure rule (issue #23)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class FakeKeyLevel:
+    level_price: float
+    is_active: bool = True
+    label: str | None = None
+    notes: str | None = None
+
+
+def _make_weekly_bars(closes_and_highs: list[tuple[float, float]]) -> list[WeeklyOhlcBar]:
+    """Build weekly bars (most-recent first) from a list of (close, high) tuples
+    given in chronological order.
+
+    The list passed in is chronological [oldest...newest]; we reverse so the
+    resulting MarketSignals.weekly_ohlc_history is most-recent first.
+    """
+    chronological = []
+    base_date = date(2025, 1, 3)  # Friday
+    for i, (close, high) in enumerate(closes_and_highs):
+        chronological.append(WeeklyOhlcBar(
+            bar_date=base_date + timedelta(weeks=i),
+            open=close,
+            high=high,
+            low=min(close, high) - 1,
+            close=close,
+            volume=1000.0,
+        ))
+    return list(reversed(chronological))
+
+
+def _signals_with_weekly(bars: list[WeeklyOhlcBar]) -> MarketSignals:
+    return MarketSignals(weekly_ohlc_history=bars)
+
+
+class TestFailedBreakoutReclaim:
+    def test_full_sequence_triggers_sell(self):
+        # Level = 100. Chronologically:
+        #   weeks 1-3: closes 95,96,97 (below)
+        #   week 4: 102 close, high 102 — breakout (confirm_weeks=1)
+        #   week 5: 95 close (failure: <= 99)
+        #   week 6: high 100, close 95 — failed reclaim
+        bars = _make_weekly_bars([
+            (95, 96), (96, 97), (97, 98),
+            (102, 103), (95, 102), (95, 100),
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition()
+        pos.key_levels = [FakeKeyLevel(level_price=100.0, label="LTH")]
+
+        result = rule_sell_failed_breakout_reclaim(pos, signals)
+        assert result is not None
+        assert result.verdict == Verdict.sell
+        assert result.rule_label == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM
+        assert "LTH" in result.description
+
+    def test_breakout_without_failure_no_trigger(self):
+        # Breakout at 102 then stays above
+        bars = _make_weekly_bars([
+            (95, 96), (102, 103), (105, 107), (108, 110), (110, 112),
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition()
+        pos.key_levels = [FakeKeyLevel(level_price=100.0)]
+        assert rule_sell_failed_breakout_reclaim(pos, signals) is None
+
+    def test_failure_with_successful_reclaim_no_trigger(self):
+        # Breakout, failure, then a successful reclaim (close above level)
+        bars = _make_weekly_bars([
+            (95, 96), (102, 103), (95, 102), (105, 106),  # successful reclaim
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition()
+        pos.key_levels = [FakeKeyLevel(level_price=100.0)]
+        assert rule_sell_failed_breakout_reclaim(pos, signals) is None
+
+    def test_no_key_levels_no_trigger(self):
+        bars = _make_weekly_bars([
+            (95, 96), (102, 103), (95, 102), (95, 100),
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition()
+        pos.key_levels = []
+        assert rule_sell_failed_breakout_reclaim(pos, signals) is None
+
+    def test_inactive_key_level_skipped(self):
+        bars = _make_weekly_bars([
+            (95, 96), (102, 103), (95, 102), (95, 100),
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition()
+        pos.key_levels = [FakeKeyLevel(level_price=100.0, is_active=False)]
+        assert rule_sell_failed_breakout_reclaim(pos, signals) is None
+
+    def test_reclaim_attempt_outside_window_no_trigger(self):
+        # reclaim_window_weeks=4 default — failed reclaim attempt happens
+        # 5 weeks after the failure, so it's outside the window.
+        bars = _make_weekly_bars([
+            (102, 103),                             # breakout
+            (95, 102),                              # failure
+            (90, 92), (90, 92), (90, 92), (90, 92), # 4 quiet bars below
+            (95, 100),                              # would-be failed reclaim, but outside window
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition()
+        pos.key_levels = [FakeKeyLevel(level_price=100.0)]
+        assert rule_sell_failed_breakout_reclaim(pos, signals) is None
+
+    def test_no_weekly_history_no_trigger(self):
+        signals = MarketSignals()  # empty history
+        pos = FakePosition()
+        pos.key_levels = [FakeKeyLevel(level_price=100.0)]
+        assert rule_sell_failed_breakout_reclaim(pos, signals) is None
+
+    def test_multiple_levels_lowest_evaluated_first(self):
+        # Two levels: 100 (matches) and 200 (no signal).  Lowest first.
+        bars = _make_weekly_bars([
+            (95, 96), (102, 103), (95, 102), (95, 100),
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition()
+        pos.key_levels = [
+            FakeKeyLevel(level_price=200.0, label="HIGH"),
+            FakeKeyLevel(level_price=100.0, label="LOW"),
+        ]
+        result = rule_sell_failed_breakout_reclaim(pos, signals)
+        assert result is not None
+        assert "LOW" in result.description
+
+    def test_confirm_weeks_requires_consecutive_breakout(self):
+        # Only 1 week above level, but confirm_weeks=2 → no breakout confirmed
+        bars = _make_weekly_bars([
+            (95, 96), (102, 103), (95, 102), (95, 100),
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition()
+        pos.key_levels = [FakeKeyLevel(level_price=100.0)]
+        result = rule_sell_failed_breakout_reclaim(
+            pos, signals, params={"breakout_confirm_weeks": 2}
+        )
+        assert result is None
+
+    def test_default_params_helper(self):
+        params = default_failed_breakout_params()
+        assert params["breakout_confirm_weeks"] == 1
+        assert params["failure_buffer_pct"] == 1.0
+        assert params["reclaim_window_weeks"] == 4
+        assert params["reclaim_fail_buffer_pct"] == 0.5
+        assert params["lookback_weeks"] == 52
+
+    def test_get_lookback_helper(self):
+        assert get_failed_breakout_lookback_weeks(None) == 52
+        assert get_failed_breakout_lookback_weeks({"lookback_weeks": 100}) == 100
+        assert get_failed_breakout_lookback_weeks({}) == 52
+
+    def test_evaluator_integration_via_evaluate_position(self):
+        bars = _make_weekly_bars([
+            (95, 96), (102, 103), (95, 102), (95, 100),
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition(current_price=95.0)
+        pos.key_levels = [FakeKeyLevel(level_price=100.0)]
+        results = evaluate_position(
+            pos,
+            signals=signals,
+            configured_rules=[
+                StrategyRuleSelection(RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM),
+            ],
+        )
+        assert any(r.rule_label == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM for r in results)
+        assert get_verdict(results) == Verdict.sell
+
+    def test_failure_buffer_pct_respects_threshold(self):
+        # Level 100, failure_buffer_pct = 5 → failure threshold = 95
+        # Close at 96 should NOT trigger failure.
+        bars = _make_weekly_bars([
+            (95, 96), (102, 103), (96, 102), (96, 100),
+        ])
+        signals = _signals_with_weekly(bars)
+        pos = FakePosition()
+        pos.key_levels = [FakeKeyLevel(level_price=100.0)]
+        assert rule_sell_failed_breakout_reclaim(
+            pos, signals, params={"failure_buffer_pct": 5.0}
+        ) is None
