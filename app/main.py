@@ -561,8 +561,11 @@ def _refresh_single_position_task(position_id: int):
             )
             if pos is not None:
                 detail = str(exc).strip() or exc.__class__.__name__
-                pos.refresh_error = f"Refresh failed: {detail}"
-                db.commit()
+                db.rollback()
+                pos = db.query(Position).filter(Position.id == position_id).first()
+                if pos is not None:
+                    pos.refresh_error = f"Refresh failed: {detail}"
+                    db.commit()
     finally:
         db_generator.close()
 
@@ -593,6 +596,9 @@ def refresh_single(
                 "Inline refresh failed for position id=%d", position_id, exc_info=True
             )
             detail = str(exc).strip() or exc.__class__.__name__
-            pos.refresh_error = f"Refresh failed: {detail}"
-            db.commit()
+            db.rollback()
+            pos = db.query(Position).filter(Position.id == position_id).first()
+            if pos is not None:
+                pos.refresh_error = f"Refresh failed: {detail}"
+                db.commit()
     return RedirectResponse(url="/", status_code=303)
