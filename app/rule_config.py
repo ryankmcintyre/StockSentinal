@@ -159,16 +159,29 @@ def get_rule_management_sections(db: Session) -> list[dict]:
 
             # Include configured thresholds for the ATR-extension rules
             if spec.key in (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR) and config is not None:
-                params = parse_params_json(config.params_json) or default_extension_atr_params()
+                default_params = default_extension_atr_params()
+                parsed_params = parse_params_json(config.params_json)
+                params = parsed_params if parsed_params is not None else default_params
                 threshold_key = (
                     "trim_threshold"
                     if spec.key == RULE_KEY_TRIM_EXTENSION_ATR
                     else "sell_threshold"
                 )
-                threshold = params.get(threshold_key)
-                if threshold is None:
-                    threshold = default_extension_atr_params()[threshold_key]
-                (interval, sma_period), (_, atr_period) = get_extension_indicator_requirements(params)
+                default_threshold = default_params[threshold_key]
+                raw_threshold = params.get(threshold_key)
+                try:
+                    threshold = float(raw_threshold)
+                    if threshold <= 0:
+                        threshold = default_threshold
+                except (TypeError, ValueError):
+                    threshold = default_threshold
+
+                sanitized_params = dict(params)
+                sanitized_params[threshold_key] = threshold
+
+                (interval, sma_period), (_, atr_period) = get_extension_indicator_requirements(
+                    sanitized_params
+                )
                 rule_data["extension_params"] = {
                     "threshold": threshold,
                     "sma_period": sma_period,
