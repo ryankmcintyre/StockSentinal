@@ -705,7 +705,10 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
         else:
             logger.debug("%s weekly data is fresh, skipping", position.ticker)
     else:
-        logger.debug("%s is short-term, skipping weekly refresh", position.ticker)
+        logger.debug(
+            "%s is short-term, skipping Position weekly snapshot refresh",
+            position.ticker,
+        )
 
     # Refresh indicator cache for configured rules
     from app.rule_config import (
