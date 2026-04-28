@@ -618,13 +618,16 @@ def refresh_weekly_bar_cache(
 
     for ticker in sorted(tickers):
         if not force:
-            latest = (
+            cached_rows = (
                 db.query(MarketWeeklyBarCache)
                 .filter(MarketWeeklyBarCache.ticker == ticker)
                 .order_by(MarketWeeklyBarCache.bar_date.desc())
-                .first()
+                .limit(lookback_weeks)
+                .all()
             )
-            if not _weekly_bar_cache_is_stale(latest):
+            latest = cached_rows[0] if cached_rows else None
+            has_required_history = len(cached_rows) >= lookback_weeks
+            if has_required_history and not _weekly_bar_cache_is_stale(latest):
                 continue
 
         try:
