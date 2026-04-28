@@ -207,11 +207,11 @@
                             <strong>Failed breakout / reclaim failure:</strong>
                             sells when a manually-flagged key level is broken
                             above for ≥ <strong>{{ rule.failed_breakout_params.breakout_confirm_weeks }}</strong>
-                            weekly close(s), then lost (close ≤
+                            weekly close(s), then lost (close at least
                             <strong>{{ rule.failed_breakout_params.failure_buffer_pct }}%</strong>
                             below the level), then fails to reclaim within
                             <strong>{{ rule.failed_breakout_params.reclaim_window_weeks }}</strong>
-                            weeks (close stays ≥
+                            weeks (close stays at least
                             <strong>{{ rule.failed_breakout_params.reclaim_fail_buffer_pct }}%</strong>
                             below the level).
                         </p>
