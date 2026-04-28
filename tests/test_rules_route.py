@@ -11,6 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import get_db
 from app.main import app
 from app.models import Base, Position, StrategyRuleConfig
+from app.rule_engine import list_rule_specs_for_investment_type
 
 
 @pytest.fixture(autouse=True)
@@ -229,6 +230,32 @@ class TestRulesPage:
                 .all()
             )
             assert len(ma_rows) == 2
+        finally:
+            db.close()
+
+    def test_default_rule_rows_persist_catalog_sort_order(self, _setup_db):
+        """Default seeding should persist each rule's catalog sort order."""
+        from app.rule_config import ensure_strategy_rule_defaults
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(db)
+
+            for investment_type in ("long-term", "short-term"):
+                expected_sort_order_by_key = {
+                    spec.key: spec.default_sort_order
+                    for spec in list_rule_specs_for_investment_type(investment_type)
+                }
+                rows = (
+                    db.query(StrategyRuleConfig)
+                    .filter(StrategyRuleConfig.investment_type == investment_type)
+                    .all()
+                )
+
+                assert rows
+                assert {row.rule_key for row in rows} == set(expected_sort_order_by_key)
+                for row in rows:
+                    assert row.sort_order == expected_sort_order_by_key[row.rule_key]
         finally:
             db.close()
 
