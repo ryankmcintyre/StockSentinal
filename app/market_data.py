@@ -746,16 +746,16 @@ def refresh_daily_bar_cache(
 
     api_key = require_alpha_vantage_api_key()
     errors: list[str] = []
+    expected_row_count = lookback_days + 1
 
     for ticker in sorted(tickers):
         if not force:
-            latest = (
-                db.query(MarketDailyBarCache)
-                .filter(MarketDailyBarCache.ticker == ticker)
-                .order_by(MarketDailyBarCache.bar_date.desc())
-                .first()
+            ticker_cache_query = db.query(MarketDailyBarCache).filter(
+                MarketDailyBarCache.ticker == ticker
             )
-            if not _daily_bar_cache_is_stale(latest):
+            latest = ticker_cache_query.order_by(MarketDailyBarCache.bar_date.desc()).first()
+            cached_row_count = ticker_cache_query.count()
+            if cached_row_count == expected_row_count and not _daily_bar_cache_is_stale(latest):
                 continue
 
         try:
