@@ -943,13 +943,13 @@ def rule_sell_failed_breakout_reclaim(
     lookback_weeks = DEFAULT_FAILED_BREAKOUT_LOOKBACK_WEEKS
     if params:
         cand = params.get("breakout_confirm_weeks")
-        if isinstance(cand, int) and cand >= 1:
+        if isinstance(cand, int) and not isinstance(cand, bool) and cand >= 1:
             confirm_weeks = cand
         cand = params.get("failure_buffer_pct")
         if isinstance(cand, (int, float)):
             failure_buffer_pct = float(cand)
         cand = params.get("reclaim_window_weeks")
-        if isinstance(cand, int) and cand >= 1:
+        if isinstance(cand, int) and not isinstance(cand, bool) and cand >= 1:
             reclaim_window_weeks = cand
         cand = params.get("reclaim_fail_buffer_pct")
         if isinstance(cand, (int, float)):
