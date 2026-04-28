@@ -679,7 +679,7 @@ def _detect_lower_high_lower_low(
             and has_lower_low
             # Lower low must be confirmed AFTER the lower high to count
             # as a trend-reversal sequence.
-            and last_low_idx > last_high_idx
+            and last_low_idx > prev_high_idx
         ),
         "pivot_left": pivot_left,
         "pivot_right": pivot_right,
