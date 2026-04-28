@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,7 +16,7 @@ from app.alpha_vantage_client import (
     AlphaVantageError,
 )
 from app.config import get_alpha_vantage_api_key, get_log_level
-from app.database import get_db, init_db
+from app.database import SessionLocal, get_db, init_db
 from app.market_data import (
     fetch_company_name,
     fetch_daily_series,
@@ -68,6 +68,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Starting Stock Sentinel — initializing database")
     init_db()
+    db = SessionLocal()
+    try:
+        cleared = _clear_stale_refresh_flags(db)
+        if cleared:
+            logger.info("Cleared %d stale refresh-in-progress flags", cleared)
+    finally:
+        db.close()
     logger.info("Database initialized, application ready")
     yield
 
@@ -82,6 +89,7 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 # ---------------------------------------------------------------------------
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
+REFRESH_STALE_TIMEOUT_MINUTES = 5
 
 
 def _daily_bars_for_position(pos: Position, all_daily_bars: dict[str, list]) -> dict[str, list] | None:
@@ -96,6 +104,47 @@ def _daily_bars_for_position(pos: Position, all_daily_bars: dict[str, list]) -> 
         if bench_bars:
             relevant[benchmark.upper()] = bench_bars
     return relevant or None
+
+
+def _mark_positions_refresh_state(
+    db: Session,
+    position_ids: list[int],
+    *,
+    in_progress: bool,
+) -> int:
+    """Set refresh status fields for one or more positions and commit."""
+    if not position_ids:
+        return 0
+
+    positions = db.query(Position).filter(Position.id.in_(position_ids)).all()
+    now = datetime.now()
+    for pos in positions:
+        pos.refresh_in_progress = in_progress
+        pos.refresh_started_at = now if in_progress else None
+        if in_progress:
+            pos.refresh_error = None
+    db.commit()
+    return len(positions)
+
+
+def _clear_stale_refresh_flags(db: Session) -> int:
+    """Reset stale in-progress flags left behind by interrupted refreshes."""
+    cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    stale_positions = (
+        db.query(Position)
+        .filter(Position.refresh_in_progress.is_(True))
+        .filter(Position.refresh_started_at.is_not(None))
+        .filter(Position.refresh_started_at < cutoff)
+        .all()
+    )
+    if not stale_positions:
+        return 0
+
+    for pos in stale_positions:
+        pos.refresh_in_progress = False
+        pos.refresh_started_at = None
+    db.commit()
+    return len(stale_positions)
 
 
 def _enrich_position(
@@ -193,6 +242,8 @@ def _enrich_position(
         "weekly_market_date": pos.weekly_market_date,
         "weekly_retrieved_at": pos.weekly_retrieved_at,
         "refresh_error": pos.refresh_error,
+        "refresh_in_progress": bool(pos.refresh_in_progress),
+        "refresh_started_at": pos.refresh_started_at,
         "has_market_data": pos.daily_close is not None or pos.weekly_close is not None,
     }
 
@@ -205,6 +256,7 @@ def _enrich_position(
 @app.get("/")
 def portfolio(request: Request, db: Session = Depends(get_db)):
     """Dashboard: list all positions with verdicts, sorted by urgency."""
+    _clear_stale_refresh_flags(db)
     positions = db.query(Position).all()
     enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(db)
 
@@ -241,6 +293,7 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
         "hold": sum(1 for p in enriched if p["verdict"] == Verdict.hold),
         "total": len(enriched),
     }
+    any_refresh_in_progress = any(p["refresh_in_progress"] for p in enriched)
 
     return templates.TemplateResponse(
         request,
@@ -249,6 +302,7 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
             "positions": enriched,
             "summary": summary,
             "api_configured": get_alpha_vantage_api_key() is not None,
+            "any_refresh_in_progress": any_refresh_in_progress,
         },
     )
 
@@ -411,6 +465,7 @@ def add_position(
     # Queue a background refresh to fetch SMA and weekly data
     if api_key:
         db.refresh(pos)
+        _mark_positions_refresh_state(db, [pos.id], in_progress=True)
         background_tasks.add_task(_refresh_single_position_task, pos.id)
 
     return RedirectResponse(url="/", status_code=303)
@@ -535,13 +590,21 @@ def delete_position(position_id: int, db: Session = Depends(get_db)):
 # ---------------------------------------------------------------------------
 
 
-def _refresh_all_positions_task():
+def _refresh_all_positions_task(position_ids: list[int]):
     """Run a full market data refresh in the background with its own DB session."""
     db_generator = get_db()
     db = next(db_generator)
     try:
-        refresh_all_positions(db)
+        try:
+            refresh_all_positions(db)
+        except Exception as exc:
+            logger.warning("Background refresh-all failed", exc_info=True)
+            detail = str(exc).strip() or exc.__class__.__name__
+            for pos in db.query(Position).filter(Position.id.in_(position_ids)).all():
+                pos.refresh_error = f"Refresh failed: {detail}"
+            db.commit()
     finally:
+        _mark_positions_refresh_state(db, position_ids, in_progress=False)
         db_generator.close()
 
 
@@ -549,34 +612,79 @@ def _refresh_single_position_task(position_id: int):
     """Run a single-position market data refresh in the background with its own DB session."""
     db_generator = get_db()
     db = next(db_generator)
+    pos = None
     try:
+        _mark_positions_refresh_state(db, [position_id], in_progress=True)
         try:
             pos = db.query(Position).filter(Position.id == position_id).first()
             if pos:
                 refresh_position(pos, db)
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "Background refresh failed for position id=%d", position_id, exc_info=True
             )
+            if pos:
+                detail = str(exc).strip() or exc.__class__.__name__
+                pos.refresh_error = f"Refresh failed: {detail}"
+                db.commit()
     finally:
+        _mark_positions_refresh_state(db, [position_id], in_progress=False)
         db_generator.close()
 
 
 @app.post("/refresh")
-def refresh_all(background_tasks: BackgroundTasks):
+def refresh_all(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     """Refresh cached market data for all positions (respects staleness checks)."""
-    background_tasks.add_task(_refresh_all_positions_task)
+    _clear_stale_refresh_flags(db)
+    if db.query(Position).filter(Position.refresh_in_progress.is_(True)).first():
+        return RedirectResponse(url="/", status_code=303)
+
+    position_ids = [pos_id for (pos_id,) in db.query(Position.id).all()]
+    if position_ids:
+        _mark_positions_refresh_state(db, position_ids, in_progress=True)
+        background_tasks.add_task(_refresh_all_positions_task, position_ids)
     return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/refresh/{position_id}")
 def refresh_single(
     position_id: int,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """Refresh cached market data for a single position."""
+    _clear_stale_refresh_flags(db)
     pos = db.query(Position).filter(Position.id == position_id).first()
-    if pos:
-        background_tasks.add_task(_refresh_single_position_task, position_id)
+    if pos and not pos.refresh_in_progress:
+        _mark_positions_refresh_state(db, [position_id], in_progress=True)
+        try:
+            refresh_position(pos, db)
+        except Exception as exc:
+            logger.warning(
+                "Inline refresh failed for position id=%d", position_id, exc_info=True
+            )
+            detail = str(exc).strip() or exc.__class__.__name__
+            pos.refresh_error = f"Refresh failed: {detail}"
+            db.commit()
+        finally:
+            _mark_positions_refresh_state(db, [position_id], in_progress=False)
     return RedirectResponse(url="/", status_code=303)
+
+
+@app.get("/api/refresh-status")
+def refresh_status(db: Session = Depends(get_db)):
+    """Expose lightweight in-progress refresh state for client-side polling."""
+    _clear_stale_refresh_flags(db)
+    positions = db.query(Position).all()
+    return {
+        "any_in_progress": any(bool(pos.refresh_in_progress) for pos in positions),
+        "positions": [
+            {
+                "id": pos.id,
+                "in_progress": bool(pos.refresh_in_progress),
+                "started_at": (
+                    pos.refresh_started_at.isoformat() if pos.refresh_started_at else None
+                ),
+            }
+            for pos in positions
+        ],
+    }
