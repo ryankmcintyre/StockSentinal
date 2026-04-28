@@ -599,9 +599,8 @@ def _refresh_all_positions_task(position_ids: list[int]):
             refresh_all_positions(db)
         except Exception as exc:
             logger.warning("Background refresh-all failed", exc_info=True)
-            detail = str(exc).strip() or exc.__class__.__name__
             for pos in db.query(Position).filter(Position.id.in_(position_ids)).all():
-                pos.refresh_error = f"Refresh failed: {detail}"
+                pos.refresh_error = "Refresh failed"
             db.commit()
     finally:
         _mark_positions_refresh_state(db, position_ids, in_progress=False)
@@ -624,8 +623,7 @@ def _refresh_single_position_task(position_id: int):
                 "Background refresh failed for position id=%d", position_id, exc_info=True
             )
             if pos:
-                detail = str(exc).strip() or exc.__class__.__name__
-                pos.refresh_error = f"Refresh failed: {detail}"
+                pos.refresh_error = "Refresh failed"
                 db.commit()
     finally:
         _mark_positions_refresh_state(db, [position_id], in_progress=False)
@@ -662,8 +660,7 @@ def refresh_single(
             logger.warning(
                 "Inline refresh failed for position id=%d", position_id, exc_info=True
             )
-            detail = str(exc).strip() or exc.__class__.__name__
-            pos.refresh_error = f"Refresh failed: {detail}"
+            pos.refresh_error = "Refresh failed"
             db.commit()
         finally:
             _mark_positions_refresh_state(db, [position_id], in_progress=False)
