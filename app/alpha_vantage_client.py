@@ -50,6 +50,13 @@ class SMAPoint:
     sma: float
 
 
+@dataclass
+class ATRPoint:
+    """A single ATR (Average True Range) data point."""
+    date: date
+    atr: float
+
+
 def _get(params: dict, api_key: str) -> dict:
     """Make a GET request to Alpha Vantage and return parsed JSON.
 
@@ -213,4 +220,46 @@ def fetch_sma(
 
     points.sort(key=lambda p: p.date, reverse=True)
     logger.debug("Fetched %d SMA-%d (%s) points for %s", len(points), time_period, interval, symbol)
+    return points
+
+
+def fetch_atr(
+    symbol: str,
+    interval: str,
+    time_period: int,
+    api_key: str,
+) -> list[ATRPoint]:
+    """Fetch ATR (Average True Range) technical indicator values from Alpha Vantage.
+
+    Args:
+        symbol: Ticker symbol.
+        interval: 'daily' or 'weekly'.
+        time_period: Look-back window for ATR (e.g. 14).
+        api_key: Alpha Vantage API key.
+
+    Returns ATR points sorted most-recent-first.
+    """
+    params = {
+        "function": "ATR",
+        "symbol": symbol,
+        "interval": interval,
+        "time_period": str(time_period),
+    }
+    data = _get(params, api_key)
+
+    analysis_key = "Technical Analysis: ATR"
+    if analysis_key not in data:
+        raise AlphaVantageError(
+            f"Unexpected response structure: missing '{analysis_key}' key"
+        )
+
+    points: list[ATRPoint] = []
+    for date_str, values in data[analysis_key].items():
+        points.append(ATRPoint(
+            date=date.fromisoformat(date_str),
+            atr=float(values["ATR"]),
+        ))
+
+    points.sort(key=lambda p: p.date, reverse=True)
+    logger.debug("Fetched %d ATR-%d (%s) points for %s", len(points), time_period, interval, symbol)
     return points

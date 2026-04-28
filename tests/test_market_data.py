@@ -153,7 +153,9 @@ class TestRefreshPosition:
     def _mock_indicator_cache(self, mocker):
         """Mock indicator cache operations used by refresh functions."""
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
+        mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
         mocker.patch("app.market_data.refresh_indicator_cache", return_value=[])
+        mocker.patch("app.market_data.refresh_atr_cache", return_value=[])
 
     def test_refreshes_daily_when_daily_is_stale(self, mocker):
         position = FakePosition(investment_type="long-term")
@@ -232,7 +234,9 @@ class TestRefreshAllPositions:
     def _mock_indicator_cache(self, mocker):
         """Mock indicator cache operations used by refresh functions."""
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
+        mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
         mocker.patch("app.market_data.refresh_indicator_cache", return_value=[])
+        mocker.patch("app.market_data.refresh_atr_cache", return_value=[])
 
     def test_refreshes_only_stale_positions(self, mocker):
         pos1 = FakePosition(ticker="AAPL", investment_type="long-term")

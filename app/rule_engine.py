@@ -30,6 +30,9 @@ class MarketSignals:
     Fixed fields are kept for backward compatibility.  The flexible
     ``ma_signals`` dict stores arbitrary MA indicator data keyed by
     ``(interval, time_period)`` → ``(close_value, sma_value)``.
+
+    The ``atr_signals`` dict stores ATR indicator data keyed by
+    ``(interval, time_period)`` → ``atr_value``.
     """
     daily_close: Optional[float] = None
     daily_sma_21: Optional[float] = None
@@ -41,6 +44,10 @@ class MarketSignals:
     ma_signals: dict[tuple[str, int], tuple[Optional[float], Optional[float]]] = field(
         default_factory=dict
     )
+
+    # ATR indicator store populated from the ATR cache.
+    # Key: (interval, time_period)  Value: atr_value
+    atr_signals: dict[tuple[str, int], Optional[float]] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -63,8 +70,17 @@ class RuleSpec:
 
 
 RULE_KEY_SELL_MA_ALL = "SELL_MA_ALL"
+RULE_KEY_TRIM_EXTENSION_ATR = "TRIM_EXTENSION_ATR"
+RULE_KEY_SELL_EXTENSION_ATR = "SELL_EXTENSION_ATR"
 RULE_KEY_TRIM_10PCT = "TRIM-10PCT"
 RULE_KEY_HOLD_ABOVE_COST = "HOLD-ABOVE-COST"
+
+# Default parameters for the ATR-extension rules.
+DEFAULT_EXTENSION_TRIM_THRESHOLD = 8.0
+DEFAULT_EXTENSION_SELL_THRESHOLD = 10.0
+DEFAULT_EXTENSION_SMA_PERIOD = 50
+DEFAULT_EXTENSION_ATR_PERIOD = 14
+DEFAULT_EXTENSION_INTERVAL = "daily"
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 
@@ -149,6 +165,129 @@ def rule_trim_above_10_percent(
     return None
 
 
+def _compute_atr_extension_ratio(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict],
+) -> Optional[tuple[float, dict]]:
+    """Compute the ATR extension ratio and return (ratio, resolved_params).
+
+    Returns None when any required input is missing or invalid (no rule fires).
+    Formula: (current_price - sma_value) / atr_value
+
+    Guards:
+      - current_price <= 0           → None
+      - sma value missing            → None
+      - atr value missing or <= 0    → None
+    """
+    resolved = {
+        "sma_period": DEFAULT_EXTENSION_SMA_PERIOD,
+        "atr_period": DEFAULT_EXTENSION_ATR_PERIOD,
+        "interval": DEFAULT_EXTENSION_INTERVAL,
+    }
+    if params:
+        sma_period = params.get("sma_period")
+        if isinstance(sma_period, int) and sma_period >= 2:
+            resolved["sma_period"] = sma_period
+        atr_period = params.get("atr_period")
+        if isinstance(atr_period, int) and atr_period >= 2:
+            resolved["atr_period"] = atr_period
+        interval = params.get("interval")
+        if interval in ("daily", "weekly"):
+            resolved["interval"] = interval
+
+    current_price = position.current_price
+    if current_price is None or current_price <= 0:
+        return None
+
+    ma_signal = signals.ma_signals.get((resolved["interval"], resolved["sma_period"]))
+    if ma_signal is None:
+        return None
+    _, sma_value = ma_signal
+    if sma_value is None or sma_value <= 0:
+        return None
+
+    atr_value = signals.atr_signals.get((resolved["interval"], resolved["atr_period"]))
+    if atr_value is None or atr_value <= 0:
+        return None
+
+    ratio = (current_price - sma_value) / atr_value
+    return ratio, resolved
+
+
+def rule_trim_extension_atr(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    """TRIM when price is stretched >= trim_threshold * ATR above the SMA.
+
+    Default threshold is 8x. Fires whenever the ratio meets or exceeds the
+    trim threshold. The Sell-Extension rule (10x) handles the more extreme
+    case at higher precedence; both can fire simultaneously, in which case
+    Sell wins via verdict precedence.
+    """
+    computed = _compute_atr_extension_ratio(position, signals, params)
+    if computed is None:
+        return None
+    ratio, resolved = computed
+
+    threshold = DEFAULT_EXTENSION_TRIM_THRESHOLD
+    if params:
+        candidate = params.get("trim_threshold", params.get("threshold"))
+        if isinstance(candidate, (int, float)) and candidate > 0:
+            threshold = float(candidate)
+
+    if ratio < threshold:
+        return None
+
+    return RuleResult(
+        rule_label=RULE_KEY_TRIM_EXTENSION_ATR,
+        verdict=Verdict.trim,
+        description=(
+            f"Price extended {ratio:.2f}x ATR-{resolved['atr_period']} "
+            f"above {resolved['interval']} SMA-{resolved['sma_period']} "
+            f"(>= {threshold:g}x)"
+        ),
+    )
+
+
+def rule_sell_extension_atr(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    """SELL when price is stretched >= sell_threshold * ATR above the SMA.
+
+    Default threshold is 10x. The further price stretches from its moving
+    average measured in ATR multiples, the more aggressive buying must be
+    to sustain it; mean reversion at extreme distances is the rationale.
+    """
+    computed = _compute_atr_extension_ratio(position, signals, params)
+    if computed is None:
+        return None
+    ratio, resolved = computed
+
+    threshold = DEFAULT_EXTENSION_SELL_THRESHOLD
+    if params:
+        candidate = params.get("sell_threshold", params.get("threshold"))
+        if isinstance(candidate, (int, float)) and candidate > 0:
+            threshold = float(candidate)
+
+    if ratio < threshold:
+        return None
+
+    return RuleResult(
+        rule_label=RULE_KEY_SELL_EXTENSION_ATR,
+        verdict=Verdict.sell,
+        description=(
+            f"Price extended {ratio:.2f}x ATR-{resolved['atr_period']} "
+            f"above {resolved['interval']} SMA-{resolved['sma_period']} "
+            f"(>= {threshold:g}x)"
+        ),
+    )
+
+
 def rule_hold_above_cost_basis(
     position: PositionLike,
     _signals: Optional[MarketSignals] = None,
@@ -178,6 +317,18 @@ def _eval_sell_ma(
     return rule_sell_ma_all(position, signals, params)
 
 
+def _eval_sell_extension_atr(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_sell_extension_atr(position, signals, params)
+
+
+def _eval_trim_extension_atr(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_trim_extension_atr(position, signals, params)
+
+
 def _eval_trim(
     position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
 ) -> Optional[RuleResult]:
@@ -199,6 +350,32 @@ RULE_CATALOG: dict[str, RuleSpec] = {
         supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
         default_sort_order=10,
         evaluator=_eval_sell_ma,
+    ),
+    RULE_KEY_SELL_EXTENSION_ATR: RuleSpec(
+        key=RULE_KEY_SELL_EXTENSION_ATR,
+        name="Sell on ATR extension above moving average",
+        description=(
+            f"Sell when price is >= {DEFAULT_EXTENSION_SELL_THRESHOLD:g}x ATR-"
+            f"{DEFAULT_EXTENSION_ATR_PERIOD} above the {DEFAULT_EXTENSION_INTERVAL} "
+            f"SMA-{DEFAULT_EXTENSION_SMA_PERIOD}"
+        ),
+        verdict=Verdict.sell,
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
+        default_sort_order=15,
+        evaluator=_eval_sell_extension_atr,
+    ),
+    RULE_KEY_TRIM_EXTENSION_ATR: RuleSpec(
+        key=RULE_KEY_TRIM_EXTENSION_ATR,
+        name="Trim on ATR extension above moving average",
+        description=(
+            f"Trim when price is >= {DEFAULT_EXTENSION_TRIM_THRESHOLD:g}x ATR-"
+            f"{DEFAULT_EXTENSION_ATR_PERIOD} above the {DEFAULT_EXTENSION_INTERVAL} "
+            f"SMA-{DEFAULT_EXTENSION_SMA_PERIOD}"
+        ),
+        verdict=Verdict.trim,
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
+        default_sort_order=15,
+        evaluator=_eval_trim_extension_atr,
     ),
     RULE_KEY_TRIM_10PCT: RuleSpec(
         key=RULE_KEY_TRIM_10PCT,
@@ -329,6 +506,46 @@ def parse_params_json(raw: Optional[str]) -> Optional[dict]:
         return None
 
     return parsed
+
+
+def default_extension_atr_params() -> dict:
+    """Return the default params dict for the ATR extension rules.
+
+    Both TRIM_EXTENSION_ATR and SELL_EXTENSION_ATR seed with this same
+    shape so the rules.html UI can describe their thresholds uniformly.
+    The trim/sell rules each look at their own threshold field but share
+    the SMA / ATR / interval inputs.
+    """
+    return {
+        "trim_threshold": DEFAULT_EXTENSION_TRIM_THRESHOLD,
+        "sell_threshold": DEFAULT_EXTENSION_SELL_THRESHOLD,
+        "sma_period": DEFAULT_EXTENSION_SMA_PERIOD,
+        "atr_period": DEFAULT_EXTENSION_ATR_PERIOD,
+        "interval": DEFAULT_EXTENSION_INTERVAL,
+    }
+
+
+def get_extension_indicator_requirements(
+    params: Optional[dict],
+) -> tuple[tuple[str, int], tuple[str, int]]:
+    """Return the ((interval, sma_period), (interval, atr_period)) the rule needs.
+
+    Falls back to defaults for any missing or invalid params field.
+    """
+    interval = DEFAULT_EXTENSION_INTERVAL
+    sma_period = DEFAULT_EXTENSION_SMA_PERIOD
+    atr_period = DEFAULT_EXTENSION_ATR_PERIOD
+    if params:
+        cand_interval = params.get("interval")
+        if cand_interval in ("daily", "weekly"):
+            interval = cand_interval
+        cand_sma = params.get("sma_period")
+        if isinstance(cand_sma, int) and cand_sma >= 2:
+            sma_period = cand_sma
+        cand_atr = params.get("atr_period")
+        if isinstance(cand_atr, int) and cand_atr >= 2:
+            atr_period = cand_atr
+    return (interval, sma_period), (interval, atr_period)
 # ---------------------------------------------------------------------------
 # Computed helpers
 # ---------------------------------------------------------------------------

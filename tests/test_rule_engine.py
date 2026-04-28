@@ -13,17 +13,23 @@ from app.rule_engine import (
     MarketSignals,
     MAX_MA_CONDITIONS,
     RULE_KEY_HOLD_ABOVE_COST,
+    RULE_KEY_SELL_EXTENSION_ATR,
     RULE_KEY_SELL_MA_ALL,
     RULE_KEY_TRIM_10PCT,
+    RULE_KEY_TRIM_EXTENSION_ATR,
     StrategyRuleSelection,
     compute_hold_duration_days,
     compute_percent_gain,
+    default_extension_atr_params,
     evaluate_position,
+    get_extension_indicator_requirements,
     get_verdict,
     parse_params_json,
     rule_hold_above_cost_basis,
+    rule_sell_extension_atr,
     rule_sell_ma_all,
     rule_trim_above_10_percent,
+    rule_trim_extension_atr,
     validate_ma_conditions,
 )
 from app.schemas import InvestmentType, Verdict
@@ -477,3 +483,207 @@ class TestGetVerdict:
 
     def test_empty_list_defaults_to_hold(self):
         assert get_verdict([]) == Verdict.hold
+
+
+# ---------------------------------------------------------------------------
+# Tests for ATR-extension rules (issue #18)
+# ---------------------------------------------------------------------------
+
+
+def _atr_signals(
+    *,
+    sma_50: float | None = 100.0,
+    atr_14: float | None = 1.0,
+    interval: str = "daily",
+    sma_period: int = 50,
+    atr_period: int = 14,
+) -> MarketSignals:
+    """Build a MarketSignals populated with SMA + ATR for the extension rules."""
+    ma = {}
+    if sma_50 is not None:
+        ma[(interval, sma_period)] = (None, sma_50)
+    atr = {}
+    if atr_14 is not None:
+        atr[(interval, atr_period)] = atr_14
+    return MarketSignals(ma_signals=ma, atr_signals=atr)
+
+
+class TestRuleTrimExtensionAtr:
+    def test_below_threshold_does_not_trigger(self):
+        # ratio = (107.99 - 100) / 1.0 = 7.99 < 8 → no trigger
+        pos = FakePosition(current_price=107.99)
+        assert rule_trim_extension_atr(pos, _atr_signals()) is None
+
+    def test_at_threshold_triggers_trim(self):
+        # ratio = (108 - 100) / 1.0 = 8.00 → trim
+        pos = FakePosition(current_price=108.0)
+        result = rule_trim_extension_atr(pos, _atr_signals())
+        assert result is not None
+        assert result.verdict == Verdict.trim
+        assert result.rule_label == RULE_KEY_TRIM_EXTENSION_ATR
+
+    def test_just_below_sell_threshold_still_triggers_trim(self):
+        # ratio = 9.99 → trim still fires (sell rule is separate)
+        pos = FakePosition(current_price=109.99)
+        result = rule_trim_extension_atr(pos, _atr_signals())
+        assert result is not None
+        assert result.verdict == Verdict.trim
+
+    def test_at_or_above_sell_threshold_trim_still_fires(self):
+        # Trim rule is independent of sell threshold; engine precedence
+        # decides the final verdict when both rules are configured.
+        pos = FakePosition(current_price=110.0)
+        result = rule_trim_extension_atr(pos, _atr_signals())
+        assert result is not None
+        assert result.verdict == Verdict.trim
+
+    def test_missing_sma_does_not_trigger(self):
+        pos = FakePosition(current_price=110.0)
+        assert rule_trim_extension_atr(pos, _atr_signals(sma_50=None)) is None
+
+    def test_missing_atr_does_not_trigger(self):
+        pos = FakePosition(current_price=110.0)
+        assert rule_trim_extension_atr(pos, _atr_signals(atr_14=None)) is None
+
+    def test_zero_atr_does_not_trigger(self):
+        pos = FakePosition(current_price=110.0)
+        assert rule_trim_extension_atr(pos, _atr_signals(atr_14=0.0)) is None
+
+    def test_negative_atr_does_not_trigger(self):
+        pos = FakePosition(current_price=110.0)
+        assert rule_trim_extension_atr(pos, _atr_signals(atr_14=-1.0)) is None
+
+    def test_zero_or_negative_price_does_not_trigger(self):
+        pos = FakePosition(current_price=0.0)
+        assert rule_trim_extension_atr(pos, _atr_signals()) is None
+
+    def test_zero_or_negative_sma_does_not_trigger(self):
+        pos = FakePosition(current_price=110.0)
+        assert rule_trim_extension_atr(pos, _atr_signals(sma_50=0.0)) is None
+
+    def test_custom_threshold_via_params(self):
+        # ratio = 5; threshold lowered to 4 → fires
+        pos = FakePosition(current_price=105.0)
+        params = default_extension_atr_params() | {"trim_threshold": 4.0}
+        result = rule_trim_extension_atr(pos, _atr_signals(), params)
+        assert result is not None
+        assert result.verdict == Verdict.trim
+
+    def test_custom_periods_via_params(self):
+        # Configure a weekly SMA-200 / ATR-21 setup
+        pos = FakePosition(current_price=120.0)
+        signals = _atr_signals(
+            sma_50=100.0, atr_14=2.0, interval="weekly", sma_period=200, atr_period=21,
+        )
+        params = {"interval": "weekly", "sma_period": 200, "atr_period": 21}
+        result = rule_trim_extension_atr(pos, signals, params)
+        assert result is not None
+        assert result.verdict == Verdict.trim
+        # ratio = (120 - 100) / 2 = 10x > default trim threshold (8)
+        assert "10.00x" in result.description
+
+
+class TestRuleSellExtensionAtr:
+    def test_below_threshold_does_not_trigger(self):
+        # ratio = 9.99 < 10 → no sell
+        pos = FakePosition(current_price=109.99)
+        assert rule_sell_extension_atr(pos, _atr_signals()) is None
+
+    def test_at_threshold_triggers_sell(self):
+        # ratio = 10.0 → sell
+        pos = FakePosition(current_price=110.0)
+        result = rule_sell_extension_atr(pos, _atr_signals())
+        assert result is not None
+        assert result.verdict == Verdict.sell
+        assert result.rule_label == RULE_KEY_SELL_EXTENSION_ATR
+
+    def test_well_above_threshold_triggers_sell(self):
+        pos = FakePosition(current_price=200.0)  # ratio = 100
+        result = rule_sell_extension_atr(pos, _atr_signals())
+        assert result is not None
+        assert result.verdict == Verdict.sell
+
+    def test_below_trim_threshold_does_not_trigger(self):
+        # ratio = 7.99 — neither rule fires
+        pos = FakePosition(current_price=107.99)
+        assert rule_sell_extension_atr(pos, _atr_signals()) is None
+
+    def test_missing_sma_does_not_trigger(self):
+        pos = FakePosition(current_price=200.0)
+        assert rule_sell_extension_atr(pos, _atr_signals(sma_50=None)) is None
+
+    def test_missing_or_zero_atr_does_not_trigger(self):
+        pos = FakePosition(current_price=200.0)
+        assert rule_sell_extension_atr(pos, _atr_signals(atr_14=None)) is None
+        assert rule_sell_extension_atr(pos, _atr_signals(atr_14=0.0)) is None
+
+    def test_custom_sell_threshold_via_params(self):
+        # raise sell threshold to 12 → ratio=10 no longer triggers sell
+        pos = FakePosition(current_price=110.0)
+        params = default_extension_atr_params() | {"sell_threshold": 12.0}
+        assert rule_sell_extension_atr(pos, _atr_signals(), params) is None
+
+
+class TestExtensionRulesIntegration:
+    """End-to-end checks that extension rules play nice with evaluate_position."""
+
+    def _selections(self):
+        return [
+            StrategyRuleSelection(
+                RULE_KEY_SELL_EXTENSION_ATR,
+                params=default_extension_atr_params(),
+            ),
+            StrategyRuleSelection(
+                RULE_KEY_TRIM_EXTENSION_ATR,
+                params=default_extension_atr_params(),
+            ),
+            StrategyRuleSelection(RULE_KEY_HOLD_ABOVE_COST),
+        ]
+
+    def test_sell_wins_when_both_rules_fire(self):
+        pos = FakePosition(current_price=110.0)
+        results = evaluate_position(pos, signals=_atr_signals(), configured_rules=self._selections())
+        # Both Trim and Sell fired plus Hold; Sell should win precedence.
+        assert results, "expected at least one rule to fire"
+        assert results[0].verdict == Verdict.sell
+        assert results[0].rule_label == RULE_KEY_SELL_EXTENSION_ATR
+        # Trim should also be in the triggered list at lower priority.
+        labels = [r.rule_label for r in results]
+        assert RULE_KEY_TRIM_EXTENSION_ATR in labels
+
+    def test_only_trim_fires_when_between_thresholds(self):
+        pos = FakePosition(current_price=109.0)  # ratio = 9
+        results = evaluate_position(pos, signals=_atr_signals(), configured_rules=self._selections())
+        assert results[0].verdict == Verdict.trim
+        assert results[0].rule_label == RULE_KEY_TRIM_EXTENSION_ATR
+
+    def test_neither_extension_rule_fires_below_8x(self):
+        pos = FakePosition(current_price=107.0)
+        results = evaluate_position(pos, signals=_atr_signals(), configured_rules=self._selections())
+        # Only HOLD-ABOVE-COST should fire
+        assert [r.rule_label for r in results] == [RULE_KEY_HOLD_ABOVE_COST]
+
+
+class TestExtensionIndicatorRequirements:
+    def test_defaults(self):
+        sma_req, atr_req = get_extension_indicator_requirements(None)
+        assert sma_req == ("daily", 50)
+        assert atr_req == ("daily", 14)
+
+    def test_uses_params(self):
+        sma_req, atr_req = get_extension_indicator_requirements(
+            {"interval": "weekly", "sma_period": 200, "atr_period": 21}
+        )
+        assert sma_req == ("weekly", 200)
+        assert atr_req == ("weekly", 21)
+
+    def test_invalid_interval_falls_back_to_default(self):
+        sma_req, _ = get_extension_indicator_requirements({"interval": "monthly"})
+        assert sma_req == ("daily", 50)
+
+    def test_invalid_periods_fall_back_to_defaults(self):
+        sma_req, atr_req = get_extension_indicator_requirements(
+            {"sma_period": "fifty", "atr_period": -1}
+        )
+        assert sma_req == ("daily", 50)
+        assert atr_req == ("daily", 14)

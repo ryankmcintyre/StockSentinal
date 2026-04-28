@@ -8,9 +8,13 @@ from sqlalchemy.orm import Session
 from app.models import StrategyRuleConfig
 from app.rule_engine import (
     RULE_CATALOG,
+    RULE_KEY_SELL_EXTENSION_ATR,
     RULE_KEY_SELL_MA_ALL,
+    RULE_KEY_TRIM_EXTENSION_ATR,
     StrategyRuleSelection,
+    default_extension_atr_params,
     default_rule_selections_for_investment_type,
+    get_extension_indicator_requirements,
     list_rule_specs_for_investment_type,
     parse_params_json,
     validate_ma_conditions,
@@ -78,6 +82,12 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
             params_json = None
             if default_sel and default_sel.params:
                 params_json = json.dumps(default_sel.params)
+            elif spec.key in (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR):
+                # Seed sensible defaults for the ATR-extension rules even
+                # when they are disabled by default so the UI/refresh
+                # pipeline can reason about their thresholds and indicator
+                # requirements without first requiring user configuration.
+                params_json = json.dumps(default_extension_atr_params())
 
             db.add(
                 StrategyRuleConfig(
@@ -146,6 +156,38 @@ def get_rule_management_sections(db: Session) -> list[dict]:
                 params = parse_params_json(config.params_json)
                 conditions = params.get("conditions", []) if params else []
                 rule_data["ma_conditions"] = conditions
+
+            # Include configured thresholds for the ATR-extension rules
+            if spec.key in (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR) and config is not None:
+                default_params = default_extension_atr_params()
+                parsed_params = parse_params_json(config.params_json)
+                params = parsed_params if parsed_params is not None else default_params
+                threshold_key = (
+                    "trim_threshold"
+                    if spec.key == RULE_KEY_TRIM_EXTENSION_ATR
+                    else "sell_threshold"
+                )
+                default_threshold = default_params[threshold_key]
+                raw_threshold = params.get(threshold_key)
+                try:
+                    threshold = float(raw_threshold)
+                    if threshold <= 0:
+                        threshold = default_threshold
+                except (TypeError, ValueError):
+                    threshold = default_threshold
+
+                sanitized_params = dict(params)
+                sanitized_params[threshold_key] = threshold
+
+                (interval, sma_period), (_, atr_period) = get_extension_indicator_requirements(
+                    sanitized_params
+                )
+                rule_data["extension_params"] = {
+                    "threshold": threshold,
+                    "sma_period": sma_period,
+                    "atr_period": atr_period,
+                    "interval": interval,
+                }
 
             rules.append(rule_data)
 
@@ -305,30 +347,64 @@ def remove_ma_condition(
 
 
 def get_required_indicators(db: Session) -> set[tuple[str, int]]:
-    """Return the set of (interval, time_period) tuples required by enabled SELL_MA_ALL rules.
+    """Return the set of (interval, time_period) tuples required by enabled rules.
 
-    Used by the market data refresh logic to know which indicators to fetch.
+    Includes indicators required by:
+      - SELL_MA_ALL conditions
+      - The ATR-extension rules' SMA inputs (e.g. SMA-50 daily)
+
+    Used by the market data refresh logic to know which SMA indicators to fetch.
     """
     ensure_strategy_rule_defaults(db)
     indicators: set[tuple[str, int]] = set()
 
     for investment_type in _supported_investment_types():
-        row = (
+        rows = (
             db.query(StrategyRuleConfig)
             .filter(StrategyRuleConfig.investment_type == investment_type.value)
-            .filter(StrategyRuleConfig.rule_key == RULE_KEY_SELL_MA_ALL)
             .filter(StrategyRuleConfig.enabled.is_(True))
-            .first()
+            .all()
         )
-        if row is None or row.params_json is None:
-            continue
-        params = parse_params_json(row.params_json)
-        if params is None:
-            continue
-        for cond in params.get("conditions", []):
-            interval = cond.get("interval")
-            time_period = cond.get("time_period")
-            if interval and isinstance(time_period, int):
-                indicators.add((interval, time_period))
+        for row in rows:
+            params = parse_params_json(row.params_json)
+            if row.rule_key == RULE_KEY_SELL_MA_ALL:
+                if params is None:
+                    continue
+                for cond in params.get("conditions", []):
+                    interval = cond.get("interval")
+                    time_period = cond.get("time_period")
+                    if interval and isinstance(time_period, int):
+                        indicators.add((interval, time_period))
+            elif row.rule_key in (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR):
+                sma_req, _ = get_extension_indicator_requirements(params)
+                indicators.add(sma_req)
+
+    return indicators
+
+
+def get_required_atr_indicators(db: Session) -> set[tuple[str, int]]:
+    """Return the set of (interval, time_period) tuples required for ATR data.
+
+    Used by the market data refresh logic to know which ATR indicators to fetch.
+    """
+    ensure_strategy_rule_defaults(db)
+    indicators: set[tuple[str, int]] = set()
+
+    for investment_type in _supported_investment_types():
+        rows = (
+            db.query(StrategyRuleConfig)
+            .filter(StrategyRuleConfig.investment_type == investment_type.value)
+            .filter(StrategyRuleConfig.enabled.is_(True))
+            .filter(
+                StrategyRuleConfig.rule_key.in_(
+                    (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR)
+                )
+            )
+            .all()
+        )
+        for row in rows:
+            params = parse_params_json(row.params_json)
+            _, atr_req = get_extension_indicator_requirements(params)
+            indicators.add(atr_req)
 
     return indicators
