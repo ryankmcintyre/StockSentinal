@@ -577,11 +577,22 @@ def refresh_all(background_tasks: BackgroundTasks):
 @app.post("/refresh/{position_id}")
 def refresh_single(
     position_id: int,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    """Refresh cached market data for a single position."""
+    """Refresh cached market data for a single position inline.
+
+    Running this inline avoids a race where the redirect can render before
+    background work writes refresh_error.
+    """
     pos = db.query(Position).filter(Position.id == position_id).first()
     if pos:
-        background_tasks.add_task(_refresh_single_position_task, position_id)
+        try:
+            refresh_position(pos, db)
+        except Exception as exc:
+            logger.warning(
+                "Inline refresh failed for position id=%d", position_id, exc_info=True
+            )
+            detail = str(exc).strip() or exc.__class__.__name__
+            pos.refresh_error = f"Refresh failed: {detail}"
+            db.commit()
     return RedirectResponse(url="/", status_code=303)

@@ -268,6 +268,34 @@ class TestRulesPage:
         finally:
             verify_db.close()
 
+    def test_single_refresh_route_shows_error_on_redirect(self, client, _setup_db, mocker):
+        db = _setup_db()
+        try:
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+            )
+            db.add(pos)
+            db.commit()
+            position_id = pos.id
+        finally:
+            db.close()
+
+        def _raise_rate_limit(_pos, _db):
+            raise RuntimeError("Alpha Vantage API rate limit exceeded")
+
+        mocker.patch("app.main.refresh_position", side_effect=_raise_rate_limit)
+
+        resp = client.post(f"/refresh/{position_id}", follow_redirects=True)
+        assert resp.status_code == 200
+        assert "Refresh error" in resp.text
+        assert "title=\"Refresh failed: Alpha Vantage API rate limit exceeded\"" in resp.text
+
     def test_deprecated_sell_rules_are_cleaned_up(self, _setup_db):
         """Old hardcoded sell rule rows should be removed on defaults seeding."""
         db = _setup_db()
