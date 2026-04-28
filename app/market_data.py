@@ -624,7 +624,14 @@ def refresh_weekly_bar_cache(
                 .order_by(MarketWeeklyBarCache.bar_date.desc())
                 .first()
             )
-            if not _weekly_bar_cache_is_stale(latest):
+            cached_row_count = (
+                db.query(MarketWeeklyBarCache)
+                .filter(MarketWeeklyBarCache.ticker == ticker)
+                .count()
+            )
+            cache_is_current = not _weekly_bar_cache_is_stale(latest)
+            cache_has_requested_lookback = cached_row_count == lookback_weeks
+            if cache_is_current and cache_has_requested_lookback:
                 continue
 
         try:
