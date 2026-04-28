@@ -14,6 +14,7 @@ from app.rule_engine import (
     MAX_MA_CONDITIONS,
     RULE_KEY_HOLD_ABOVE_COST,
     RULE_KEY_SELL_EXTENSION_ATR,
+    RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
     RULE_KEY_SELL_MA_ALL,
     RULE_KEY_TRIM_10PCT,
     RULE_KEY_TRIM_EXTENSION_ATR,
@@ -28,11 +29,13 @@ from app.rule_engine import (
     compute_percent_gain,
     default_distribution_cluster_params,
     default_extension_atr_params,
+    default_failed_breakout_params,
     default_lh_ll_params,
     default_upper_wick_params,
     evaluate_position,
     get_distribution_cluster_lookback_weeks,
     get_extension_indicator_requirements,
+    get_failed_breakout_lookback_weeks,
     get_lh_ll_lookback_weeks,
     get_upper_wick_lookback_weeks,
     get_verdict,
@@ -40,6 +43,7 @@ from app.rule_engine import (
     rule_hold_above_cost_basis,
     rule_sell_distribution_cluster,
     rule_sell_extension_atr,
+    rule_sell_failed_breakout_reclaim,
     rule_sell_lower_high_lower_low,
     rule_sell_ma_all,
     rule_trim_above_10_percent,
@@ -1298,14 +1302,6 @@ class TestRelativeWeaknessVsSector:
 # ---------------------------------------------------------------------------
 # Tests for failed-breakout / reclaim-failure rule (issue #23)
 # ---------------------------------------------------------------------------
-
-
-from app.rule_engine import (  # noqa: E402
-    RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
-    default_failed_breakout_params,
-    get_failed_breakout_lookback_weeks,
-    rule_sell_failed_breakout_reclaim,
-)
 
 
 @dataclass

@@ -860,14 +860,13 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
 
     daily_lookback = get_required_daily_bar_lookback(db)
     if daily_lookback > 0:
-        daily_tickers: set[str] = {position.ticker}
         benchmark = getattr(position, "sector_benchmark_ticker", None)
         if benchmark:
-            daily_tickers.add(benchmark.upper())
-        daily_bar_errors = refresh_daily_bar_cache(
-            db, daily_tickers, daily_lookback, force=force,
-        )
-        errors.extend(daily_bar_errors)
+            daily_tickers: set[str] = {position.ticker, benchmark.upper()}
+            daily_bar_errors = refresh_daily_bar_cache(
+                db, daily_tickers, daily_lookback, force=force,
+            )
+            errors.extend(daily_bar_errors)
 
     position.refresh_error = "; ".join(errors) if errors else None
     db.commit()
@@ -996,16 +995,18 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
 
     daily_lookback = get_required_daily_bar_lookback(db)
     if daily_lookback > 0 and ticker_groups:
-        all_tickers = set(ticker_groups.keys())
+        daily_tickers: set[str] = set()
         for pos in positions:
             benchmark = getattr(pos, "sector_benchmark_ticker", None)
             if benchmark:
-                all_tickers.add(benchmark.upper())
-        daily_errors = refresh_daily_bar_cache(
-            db, all_tickers, daily_lookback, force=force,
-        )
-        if daily_errors:
-            logger.warning("Daily bar cache refresh errors: %s", daily_errors)
+                daily_tickers.add(pos.ticker)
+                daily_tickers.add(benchmark.upper())
+        if daily_tickers:
+            daily_errors = refresh_daily_bar_cache(
+                db, daily_tickers, daily_lookback, force=force,
+            )
+            if daily_errors:
+                logger.warning("Daily bar cache refresh errors: %s", daily_errors)
 
     logger.info("Refresh complete: %d/%d positions refreshed", refreshed, len(positions))
     return refreshed
