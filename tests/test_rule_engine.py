@@ -17,22 +17,28 @@ from app.rule_engine import (
     RULE_KEY_SELL_MA_ALL,
     RULE_KEY_TRIM_10PCT,
     RULE_KEY_TRIM_EXTENSION_ATR,
+    RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+    RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
     RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
     StrategyRuleSelection,
     WeeklyOhlcBar,
     compute_hold_duration_days,
     compute_percent_gain,
+    default_distribution_cluster_params,
     default_extension_atr_params,
     default_upper_wick_params,
     evaluate_position,
+    get_distribution_cluster_lookback_weeks,
     get_extension_indicator_requirements,
     get_upper_wick_lookback_weeks,
     get_verdict,
     parse_params_json,
     rule_hold_above_cost_basis,
+    rule_sell_distribution_cluster,
     rule_sell_extension_atr,
     rule_sell_ma_all,
     rule_trim_above_10_percent,
+    rule_trim_distribution_cluster,
     rule_trim_extension_atr,
     rule_trim_weekly_upper_wick,
     validate_ma_conditions,
@@ -814,3 +820,142 @@ class TestRuleTrimWeeklyUpperWick:
         assert get_upper_wick_lookback_weeks({}) == 26
         assert get_upper_wick_lookback_weeks({"lookback_high_weeks": "x"}) == 26
         assert get_upper_wick_lookback_weeks({"lookback_high_weeks": 13}) == 13
+
+
+# ---------------------------------------------------------------------------
+# Tests for distribution-cluster rules (issue #20)
+# ---------------------------------------------------------------------------
+
+
+def _vol_bar(d, o, c, v):
+    """Helper: weekly bar with explicit open/close + volume."""
+    return WeeklyOhlcBar(bar_date=d, open=o, high=max(o, c), low=min(o, c), close=c, volume=v)
+
+
+def _signals_with(bars):
+    s = MarketSignals()
+    s.weekly_ohlc_history = bars
+    return s
+
+
+class TestDistributionClusterRules:
+    def _build_history(self, recent_red_count, recent_red_volume=200.0):
+        """Build a history with `recent_red_count` high-volume red weeks
+        in the most recent 8 weeks, plus 20 normal red+green weeks of
+        baseline median volume = 100.
+        """
+        history = []
+        # Most recent: high-volume red weeks
+        d = date(2025, 6, 13)
+        for i in range(recent_red_count):
+            history.append(_vol_bar(d, o=100, c=90, v=recent_red_volume))
+            d -= timedelta(weeks=1)
+        # Fill remaining cluster window with green weeks (no hits)
+        for _ in range(8 - recent_red_count):
+            history.append(_vol_bar(d, o=90, c=100, v=100.0))
+            d -= timedelta(weeks=1)
+        # Baseline: normal red weeks at vol 100 → median = 100
+        for _ in range(12):
+            history.append(_vol_bar(d, o=100, c=90, v=100.0))
+            d -= timedelta(weeks=1)
+        return history
+
+    def test_two_hits_triggers_trim(self):
+        # Defaults: trim_hits=2, sell_hits=3, multiplier=1.5 → threshold=150
+        # 2 hits at vol 200 in last 8 weeks → trim
+        signals = _signals_with(self._build_history(recent_red_count=2))
+        result = rule_trim_distribution_cluster(FakePosition(), signals)
+        assert result is not None
+        assert result.verdict == Verdict.trim
+        # Sell rule should not fire at 2 hits
+        assert rule_sell_distribution_cluster(FakePosition(), signals) is None
+
+    def test_three_hits_triggers_sell_not_trim(self):
+        # 3 hits at vol 200 → sell fires; trim defers (>= sell_hits)
+        signals = _signals_with(self._build_history(recent_red_count=3))
+        sell = rule_sell_distribution_cluster(FakePosition(), signals)
+        assert sell is not None
+        assert sell.verdict == Verdict.sell
+        trim = rule_trim_distribution_cluster(FakePosition(), signals)
+        assert trim is None
+
+    def test_one_hit_does_nothing(self):
+        signals = _signals_with(self._build_history(recent_red_count=1))
+        assert rule_trim_distribution_cluster(FakePosition(), signals) is None
+        assert rule_sell_distribution_cluster(FakePosition(), signals) is None
+
+    def test_high_volume_green_weeks_ignored(self):
+        # 5 high-volume GREEN weeks in cluster window → no hits
+        history = []
+        d = date(2025, 6, 13)
+        for _ in range(5):
+            history.append(_vol_bar(d, o=90, c=100, v=300.0))  # green high-vol
+            d -= timedelta(weeks=1)
+        for _ in range(20):  # baseline of normal red weeks
+            history.append(_vol_bar(d, o=100, c=90, v=100.0))
+            d -= timedelta(weeks=1)
+        signals = _signals_with(history)
+        assert rule_trim_distribution_cluster(FakePosition(), signals) is None
+        assert rule_sell_distribution_cluster(FakePosition(), signals) is None
+
+    def test_returns_none_when_no_red_baseline(self):
+        # All-green baseline → no median to compute
+        history = []
+        d = date(2025, 6, 13)
+        for _ in range(8):
+            history.append(_vol_bar(d, o=100, c=90, v=300.0))  # red but no baseline
+            d -= timedelta(weeks=1)
+        for _ in range(20):
+            history.append(_vol_bar(d, o=90, c=100, v=100.0))  # all green baseline
+            d -= timedelta(weeks=1)
+        signals = _signals_with(history)
+        # baseline window is just history[:20] which contains 8 red + 12 green.
+        # The 8 red weeks form the baseline, vol=300, median=300 → threshold=450
+        # No hit weeks reach 450. So no fire.
+        assert rule_trim_distribution_cluster(FakePosition(), signals) is None
+
+    def test_missing_volume_skips_bars(self):
+        # Bar with volume=None should not be counted
+        history = [
+            WeeklyOhlcBar(bar_date=date(2025, 6, 13), open=100, high=100, low=90, close=90, volume=None),
+            WeeklyOhlcBar(bar_date=date(2025, 6, 6), open=100, high=100, low=90, close=90, volume=None),
+        ] + [
+            _vol_bar(date(2025, 5, 30) - timedelta(weeks=i), o=100, c=90, v=100.0)
+            for i in range(20)
+        ]
+        signals = _signals_with(history)
+        # No volume on recent bars → no hits, so no trim/sell
+        assert rule_trim_distribution_cluster(FakePosition(), signals) is None
+        assert rule_sell_distribution_cluster(FakePosition(), signals) is None
+
+    def test_returns_none_on_empty_history(self):
+        signals = _signals_with([])
+        assert rule_trim_distribution_cluster(FakePosition(), signals) is None
+        assert rule_sell_distribution_cluster(FakePosition(), signals) is None
+
+    def test_custom_params_override(self):
+        # 2 hits at 200 vol; raise trim_hits to 5 → no trim fires
+        signals = _signals_with(self._build_history(recent_red_count=2))
+        result = rule_trim_distribution_cluster(
+            FakePosition(),
+            signals,
+            params={"trim_hits": 5, "sell_hits": 6},
+        )
+        assert result is None
+
+    def test_default_distribution_cluster_params_values(self):
+        params = default_distribution_cluster_params()
+        assert params["baseline_lookback_weeks"] == 20
+        assert params["cluster_window_weeks"] == 8
+        assert params["volume_multiplier"] == 1.5
+        assert params["trim_hits"] == 2
+        assert params["sell_hits"] == 3
+
+    def test_get_distribution_cluster_lookback_weeks_uses_max(self):
+        assert get_distribution_cluster_lookback_weeks(None) == 20
+        assert get_distribution_cluster_lookback_weeks(
+            {"baseline_lookback_weeks": 10, "cluster_window_weeks": 30}
+        ) == 30
+        assert get_distribution_cluster_lookback_weeks(
+            {"baseline_lookback_weeks": 50, "cluster_window_weeks": 4}
+        ) == 50

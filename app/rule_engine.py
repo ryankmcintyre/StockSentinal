@@ -91,6 +91,8 @@ RULE_KEY_SELL_MA_ALL = "SELL_MA_ALL"
 RULE_KEY_TRIM_EXTENSION_ATR = "TRIM_EXTENSION_ATR"
 RULE_KEY_SELL_EXTENSION_ATR = "SELL_EXTENSION_ATR"
 RULE_KEY_TRIM_WEEKLY_UPPER_WICK = "TRIM_WEEKLY_UPPER_WICK"
+RULE_KEY_TRIM_DISTRIBUTION_CLUSTER = "TRIM_WEEKLY_DISTRIBUTION_CLUSTER"
+RULE_KEY_SELL_DISTRIBUTION_CLUSTER = "SELL_WEEKLY_DISTRIBUTION_CLUSTER"
 RULE_KEY_TRIM_10PCT = "TRIM-10PCT"
 RULE_KEY_HOLD_ABOVE_COST = "HOLD-ABOVE-COST"
 
@@ -106,6 +108,13 @@ DEFAULT_UPPER_WICK_RATIO_MIN = 0.60
 DEFAULT_UPPER_WICK_BODY_RATIO_MAX = 0.25
 DEFAULT_UPPER_WICK_NEAR_HIGH_PCT = 5.0
 DEFAULT_UPPER_WICK_LOOKBACK_WEEKS = 26
+
+# Default parameters for the weekly distribution-cluster rules (issue #20).
+DEFAULT_DISTRIBUTION_BASELINE_LOOKBACK_WEEKS = 20
+DEFAULT_DISTRIBUTION_CLUSTER_WINDOW_WEEKS = 8
+DEFAULT_DISTRIBUTION_VOLUME_MULTIPLIER = 1.5
+DEFAULT_DISTRIBUTION_TRIM_HITS = 2
+DEFAULT_DISTRIBUTION_SELL_HITS = 3
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 
@@ -410,6 +419,145 @@ def rule_trim_weekly_upper_wick(
     )
 
 
+def _detect_distribution_cluster_hits(
+    history: list[WeeklyOhlcBar],
+    params: Optional[dict],
+) -> Optional[tuple[int, int, int, float, float]]:
+    """Shared detector for the distribution-cluster rules (issue #20).
+
+    Returns (hit_count, cluster_window_weeks, baseline_lookback_weeks,
+    multiplier, baseline_volume) or None when the detector cannot run
+    (insufficient data, missing volume, etc.).
+    """
+    if not history:
+        return None
+
+    baseline_lookback = DEFAULT_DISTRIBUTION_BASELINE_LOOKBACK_WEEKS
+    cluster_window = DEFAULT_DISTRIBUTION_CLUSTER_WINDOW_WEEKS
+    multiplier = DEFAULT_DISTRIBUTION_VOLUME_MULTIPLIER
+    if params:
+        cand = params.get("baseline_lookback_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            baseline_lookback = cand
+        cand = params.get("cluster_window_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            cluster_window = cand
+        cand = params.get("volume_multiplier")
+        if isinstance(cand, (int, float)) and cand > 0:
+            multiplier = float(cand)
+
+    # Baseline: median volume of red weeks across baseline_lookback window
+    baseline_window = history[:baseline_lookback]
+    red_volumes = [
+        b.volume
+        for b in baseline_window
+        if b.open is not None
+        and b.close is not None
+        and b.volume is not None
+        and b.volume > 0
+        and b.close < b.open
+    ]
+    if not red_volumes:
+        return None
+
+    sorted_vols = sorted(red_volumes)
+    n = len(sorted_vols)
+    if n % 2 == 1:
+        baseline_volume = sorted_vols[n // 2]
+    else:
+        baseline_volume = (sorted_vols[n // 2 - 1] + sorted_vols[n // 2]) / 2.0
+    if baseline_volume <= 0:
+        return None
+
+    threshold = baseline_volume * multiplier
+
+    cluster_window_bars = history[:cluster_window]
+    hits = 0
+    for bar in cluster_window_bars:
+        if (
+            bar.open is None
+            or bar.close is None
+            or bar.volume is None
+            or bar.volume <= 0
+        ):
+            continue
+        if bar.close < bar.open and bar.volume >= threshold:
+            hits += 1
+
+    return hits, cluster_window, baseline_lookback, multiplier, baseline_volume
+
+
+def rule_trim_distribution_cluster(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    """TRIM when the cluster of high-volume red weeks reaches the trim threshold.
+
+    Counts weeks within the recent cluster window where the weekly close is
+    below the open and volume is at least ``volume_multiplier`` x the median
+    volume of red weeks in the baseline window.  Trim fires when hits >=
+    trim_hits (default 2).  Sell is handled by the companion sell rule.
+    """
+    detection = _detect_distribution_cluster_hits(signals.weekly_ohlc_history, params)
+    if detection is None:
+        return None
+    hits, window, baseline_window, multiplier, _ = detection
+
+    trim_hits = DEFAULT_DISTRIBUTION_TRIM_HITS
+    sell_hits = DEFAULT_DISTRIBUTION_SELL_HITS
+    if params:
+        cand = params.get("trim_hits")
+        if isinstance(cand, int) and cand >= 1:
+            trim_hits = cand
+        cand = params.get("sell_hits")
+        if isinstance(cand, int) and cand >= 1:
+            sell_hits = cand
+
+    # Trim when within the trim band; let the sell rule fire above sell_hits.
+    if hits < trim_hits or hits >= sell_hits:
+        return None
+
+    return RuleResult(
+        rule_label=RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+        verdict=Verdict.trim,
+        description=(
+            f"{hits} high-volume red week(s) in last {window}wk "
+            f"(>= {multiplier:g}x median red-week volume over {baseline_window}wk)"
+        ),
+    )
+
+
+def rule_sell_distribution_cluster(
+    position: PositionLike,
+    signals: MarketSignals,
+    params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    """SELL when high-volume red weeks reach the higher-conviction threshold."""
+    detection = _detect_distribution_cluster_hits(signals.weekly_ohlc_history, params)
+    if detection is None:
+        return None
+    hits, window, baseline_window, multiplier, _ = detection
+
+    sell_hits = DEFAULT_DISTRIBUTION_SELL_HITS
+    if params:
+        cand = params.get("sell_hits")
+        if isinstance(cand, int) and cand >= 1:
+            sell_hits = cand
+
+    if hits < sell_hits:
+        return None
+
+    return RuleResult(
+        rule_label=RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+        verdict=Verdict.sell,
+        description=(
+            f"{hits} high-volume red week(s) in last {window}wk "
+            f"(>= {multiplier:g}x median red-week volume over {baseline_window}wk)"
+        ),
+    )
+
+
 def rule_hold_above_cost_basis(
     position: PositionLike,
     _signals: Optional[MarketSignals] = None,
@@ -455,6 +603,18 @@ def _eval_trim_weekly_upper_wick(
     position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
 ) -> Optional[RuleResult]:
     return rule_trim_weekly_upper_wick(position, signals, params)
+
+
+def _eval_trim_distribution_cluster(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_trim_distribution_cluster(position, signals, params)
+
+
+def _eval_sell_distribution_cluster(
+    position: PositionLike, signals: MarketSignals, params: Optional[dict] = None,
+) -> Optional[RuleResult]:
+    return rule_sell_distribution_cluster(position, signals, params)
 
 
 def _eval_trim(
@@ -516,6 +676,30 @@ RULE_CATALOG: dict[str, RuleSpec] = {
         supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
         default_sort_order=17,
         evaluator=_eval_trim_weekly_upper_wick,
+    ),
+    RULE_KEY_SELL_DISTRIBUTION_CLUSTER: RuleSpec(
+        key=RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+        name="Sell on clustered high-volume red weeks",
+        description=(
+            f"Sell when {DEFAULT_DISTRIBUTION_SELL_HITS}+ high-volume red weeks "
+            f"appear within the last {DEFAULT_DISTRIBUTION_CLUSTER_WINDOW_WEEKS} weeks."
+        ),
+        verdict=Verdict.sell,
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
+        default_sort_order=18,
+        evaluator=_eval_sell_distribution_cluster,
+    ),
+    RULE_KEY_TRIM_DISTRIBUTION_CLUSTER: RuleSpec(
+        key=RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+        name="Trim on clustered high-volume red weeks",
+        description=(
+            f"Trim when {DEFAULT_DISTRIBUTION_TRIM_HITS}+ high-volume red weeks "
+            f"appear within the last {DEFAULT_DISTRIBUTION_CLUSTER_WINDOW_WEEKS} weeks."
+        ),
+        verdict=Verdict.trim,
+        supported_investment_types=(InvestmentType.long_term, InvestmentType.short_term),
+        default_sort_order=18,
+        evaluator=_eval_trim_distribution_cluster,
     ),
     RULE_KEY_TRIM_10PCT: RuleSpec(
         key=RULE_KEY_TRIM_10PCT,
@@ -705,6 +889,34 @@ def get_upper_wick_lookback_weeks(params: Optional[dict]) -> int:
         if isinstance(cand, int) and cand >= 1:
             return cand
     return DEFAULT_UPPER_WICK_LOOKBACK_WEEKS
+
+
+def default_distribution_cluster_params() -> dict:
+    """Return default params for the distribution-cluster rules (issue #20)."""
+    return {
+        "baseline_lookback_weeks": DEFAULT_DISTRIBUTION_BASELINE_LOOKBACK_WEEKS,
+        "cluster_window_weeks": DEFAULT_DISTRIBUTION_CLUSTER_WINDOW_WEEKS,
+        "volume_multiplier": DEFAULT_DISTRIBUTION_VOLUME_MULTIPLIER,
+        "trim_hits": DEFAULT_DISTRIBUTION_TRIM_HITS,
+        "sell_hits": DEFAULT_DISTRIBUTION_SELL_HITS,
+    }
+
+
+def get_distribution_cluster_lookback_weeks(params: Optional[dict]) -> int:
+    """Return the largest weekly-bar lookback the cluster rule needs.
+
+    Equal to max(baseline_lookback_weeks, cluster_window_weeks).
+    """
+    baseline = DEFAULT_DISTRIBUTION_BASELINE_LOOKBACK_WEEKS
+    window = DEFAULT_DISTRIBUTION_CLUSTER_WINDOW_WEEKS
+    if params:
+        cand = params.get("baseline_lookback_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            baseline = cand
+        cand = params.get("cluster_window_weeks")
+        if isinstance(cand, int) and cand >= 1:
+            window = cand
+    return max(baseline, window)
 # ---------------------------------------------------------------------------
 # Computed helpers
 # ---------------------------------------------------------------------------

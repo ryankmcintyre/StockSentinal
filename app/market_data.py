@@ -618,13 +618,16 @@ def refresh_weekly_bar_cache(
 
     for ticker in sorted(tickers):
         if not force:
-            latest = (
+            cached_rows = (
                 db.query(MarketWeeklyBarCache)
                 .filter(MarketWeeklyBarCache.ticker == ticker)
                 .order_by(MarketWeeklyBarCache.bar_date.desc())
-                .first()
+                .limit(lookback_weeks)
+                .all()
             )
-            if not _weekly_bar_cache_is_stale(latest):
+            latest = cached_rows[0] if cached_rows else None
+            has_required_history = len(cached_rows) >= lookback_weeks
+            if has_required_history and not _weekly_bar_cache_is_stale(latest):
                 continue
 
         try:
@@ -702,7 +705,10 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
         else:
             logger.debug("%s weekly data is fresh, skipping", position.ticker)
     else:
-        logger.debug("%s is short-term, skipping weekly refresh", position.ticker)
+        logger.debug(
+            "%s is short-term, skipping Position weekly snapshot refresh",
+            position.ticker,
+        )
 
     # Refresh indicator cache for configured rules
     from app.rule_config import (
