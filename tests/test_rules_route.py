@@ -195,6 +195,77 @@ class TestRulesPage:
         assert "Price is 15.0% above cost basis (&gt;10%)" not in after.text
         assert "Price is at or above cost basis" in after.text
 
+    def test_portfolio_shows_refresh_error_message_in_reason_column(self, client, _setup_db):
+        db = _setup_db()
+        try:
+            db.add(
+                Position(
+                    ticker="AAPL",
+                    company_name="Apple Inc.",
+                    cost_basis=100.0,
+                    initial_purchase_date=date(2025, 1, 1),
+                    investment_type="long-term",
+                    current_price=115.0,
+                    notes=None,
+                    refresh_error="Daily refresh failed: Alpha Vantage API rate limit exceeded",
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "Refresh error: Daily refresh failed: Alpha Vantage API rate limit exceeded" in resp.text
+        assert "rule-tag-error" in resp.text
+
+    def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
+        from app.main import _refresh_single_position_task
+
+        testing_session = _setup_db
+
+        db = testing_session()
+        try:
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+            )
+            db.add(pos)
+            db.commit()
+            position_id = pos.id
+        finally:
+            db.close()
+
+        def _fake_get_db():
+            session = testing_session()
+            try:
+                yield session
+            finally:
+                session.close()
+
+        mocker.patch("app.main.get_db", _fake_get_db)
+        mocker.patch(
+            "app.main.refresh_position",
+            side_effect=RuntimeError("Alpha Vantage API rate limit exceeded"),
+        )
+
+        _refresh_single_position_task(position_id)
+
+        verify_db = testing_session()
+        try:
+            refreshed = verify_db.query(Position).filter(Position.id == position_id).first()
+            assert refreshed is not None
+            assert refreshed.refresh_error == (
+                "Refresh failed: Alpha Vantage API rate limit exceeded"
+            )
+        finally:
+            verify_db.close()
+
     def test_deprecated_sell_rules_are_cleaned_up(self, _setup_db):
         """Old hardcoded sell rule rows should be removed on defaults seeding."""
         db = _setup_db()

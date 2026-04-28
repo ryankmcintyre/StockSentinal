@@ -77,7 +77,7 @@
                     <span class="rule-tag">{{ rule.description }}</span>
                 {% endfor %}
                 {% if pos.refresh_error %}
-                    <span class="rule-tag rule-tag-error" title="{{ pos.refresh_error }}">Refresh error</span>
+                    <span class="rule-tag rule-tag-error">Refresh error: {{ pos.refresh_error }}</span>
                 {% endif %}
             </td>
             <td class="actions">

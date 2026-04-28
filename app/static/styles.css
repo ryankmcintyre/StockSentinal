@@ -309,7 +309,9 @@ h2 {
 .rule-tag-error {
     background: #fde8e8;
     color: #d32f2f;
-    cursor: help;
+    display: block;
+    cursor: default;
+    white-space: normal;
 }
 
 /* --- Form hint text --- */

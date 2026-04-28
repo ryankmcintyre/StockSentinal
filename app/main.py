@@ -549,15 +549,20 @@ def _refresh_single_position_task(position_id: int):
     """Run a single-position market data refresh in the background with its own DB session."""
     db_generator = get_db()
     db = next(db_generator)
+    pos = None
     try:
         try:
             pos = db.query(Position).filter(Position.id == position_id).first()
             if pos:
                 refresh_position(pos, db)
-        except Exception:
+        except Exception as exc:
             logger.warning(
                 "Background refresh failed for position id=%d", position_id, exc_info=True
             )
+            if pos is not None:
+                detail = str(exc).strip() or exc.__class__.__name__
+                pos.refresh_error = f"Refresh failed: {detail}"
+                db.commit()
     finally:
         db_generator.close()
 
