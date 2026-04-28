@@ -17,12 +17,16 @@ from app.rule_engine import (
     RULE_KEY_SELL_MA_ALL,
     RULE_KEY_TRIM_10PCT,
     RULE_KEY_TRIM_EXTENSION_ATR,
+    RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
     StrategyRuleSelection,
+    WeeklyOhlcBar,
     compute_hold_duration_days,
     compute_percent_gain,
     default_extension_atr_params,
+    default_upper_wick_params,
     evaluate_position,
     get_extension_indicator_requirements,
+    get_upper_wick_lookback_weeks,
     get_verdict,
     parse_params_json,
     rule_hold_above_cost_basis,
@@ -30,6 +34,7 @@ from app.rule_engine import (
     rule_sell_ma_all,
     rule_trim_above_10_percent,
     rule_trim_extension_atr,
+    rule_trim_weekly_upper_wick,
     validate_ma_conditions,
 )
 from app.schemas import InvestmentType, Verdict
@@ -687,3 +692,125 @@ class TestExtensionIndicatorRequirements:
         )
         assert sma_req == ("daily", 50)
         assert atr_req == ("daily", 14)
+
+
+# ---------------------------------------------------------------------------
+# Tests for rule_trim_weekly_upper_wick (issue #19)
+# ---------------------------------------------------------------------------
+
+
+def _wick_bar(d, o, h, l, c):
+    return WeeklyOhlcBar(bar_date=d, open=o, high=h, low=l, close=c)
+
+
+class TestRuleTrimWeeklyUpperWick:
+    def _signals_with_history(self, bars):
+        s = MarketSignals()
+        s.weekly_ohlc_history = bars
+        return s
+
+    def test_trims_on_classic_upper_wick_near_high(self):
+        # tight range; close 5% below high; small body; long upper wick
+        # range=8, body=1 (12.5%), upper_wick=5 (62.5%), close 5% below recent_high=100
+        latest = _wick_bar(date(2024, 6, 7), o=94, h=100, l=92, c=95)
+        prev = _wick_bar(date(2024, 5, 31), o=90, h=98, l=88, c=95)
+        signals = self._signals_with_history([latest, prev])
+        result = rule_trim_weekly_upper_wick(FakePosition(), signals)
+        assert result is not None
+        assert result.verdict == Verdict.trim
+        assert result.rule_label == RULE_KEY_TRIM_WEEKLY_UPPER_WICK
+
+    def test_no_trim_when_close_far_from_recent_high(self):
+        # Wick + body OK on latest bar, but recent_high (from older bar) is
+        # far above close (95) so the "near recent highs" filter rejects it.
+        latest = _wick_bar(date(2024, 6, 7), o=94, h=100, l=92, c=95)
+        old_high = _wick_bar(date(2024, 1, 5), o=200, h=300, l=200, c=250)
+        signals = self._signals_with_history([latest, old_high])
+        result = rule_trim_weekly_upper_wick(FakePosition(), signals)
+        assert result is None
+
+    def test_no_trim_when_body_too_large(self):
+        # body = 60 of 100 range = 60% > 25% max (use permissive near-high
+        # so we isolate the body-ratio failure)
+        latest = _wick_bar(date(2024, 6, 7), o=100, h=200, l=100, c=160)
+        signals = self._signals_with_history([latest])
+        result = rule_trim_weekly_upper_wick(
+            FakePosition(),
+            signals,
+            params={"near_high_pct": 50.0, "upper_wick_ratio_min": 0.30},
+        )
+        assert result is None
+
+    def test_no_trim_when_upper_wick_too_small(self):
+        # upper wick = 20 of 100 range = 20% < 60% min (use permissive
+        # near-high so we isolate the wick-ratio failure)
+        latest = _wick_bar(date(2024, 6, 7), o=100, h=200, l=100, c=180)
+        signals = self._signals_with_history([latest])
+        result = rule_trim_weekly_upper_wick(
+            FakePosition(),
+            signals,
+            params={"near_high_pct": 50.0},
+        )
+        assert result is None
+
+    def test_no_trim_on_zero_range_bar(self):
+        latest = _wick_bar(date(2024, 6, 7), o=100, h=100, l=100, c=100)
+        signals = self._signals_with_history([latest])
+        assert rule_trim_weekly_upper_wick(FakePosition(), signals) is None
+
+    def test_returns_none_when_ohlc_missing(self):
+        latest = WeeklyOhlcBar(bar_date=date(2024, 6, 7), open=None, high=200, low=100, close=110)
+        signals = self._signals_with_history([latest])
+        assert rule_trim_weekly_upper_wick(FakePosition(), signals) is None
+
+    def test_returns_none_when_history_empty(self):
+        assert rule_trim_weekly_upper_wick(FakePosition(), MarketSignals()) is None
+
+    def test_custom_params_override_thresholds(self):
+        # range=8, body=1 (12.5%), upper_wick=5 (62.5%), close 5% below high=100.
+        # With defaults this fires; tighten to require 70% wick → no longer fires.
+        latest = _wick_bar(date(2024, 6, 7), o=94, h=100, l=92, c=95)
+        signals = self._signals_with_history([latest])
+        # Defaults: triggers
+        assert rule_trim_weekly_upper_wick(FakePosition(), signals) is not None
+        # Custom: 70% wick min — should not trigger (62.5% < 70%)
+        result = rule_trim_weekly_upper_wick(
+            FakePosition(),
+            signals,
+            params={
+                "upper_wick_ratio_min": 0.70,
+                "body_ratio_max": 0.25,
+                "near_high_pct": 5.0,
+                "lookback_high_weeks": 4,
+            },
+        )
+        assert result is None
+
+    def test_lookback_window_bounds_recent_high(self):
+        # Old very-high week is outside lookback window of 2; recent_high = 100
+        latest = _wick_bar(date(2024, 6, 7), o=94, h=100, l=92, c=95)
+        prev = _wick_bar(date(2024, 5, 31), o=90, h=98, l=88, c=95)
+        old_high = _wick_bar(date(2024, 1, 5), o=200, h=500, l=200, c=400)
+        signals = self._signals_with_history([latest, prev, old_high])
+        # Default lookback=26 includes the old very-high → no trim
+        assert rule_trim_weekly_upper_wick(FakePosition(), signals) is None
+        # Lookback=2 excludes it → trim fires
+        result = rule_trim_weekly_upper_wick(
+            FakePosition(),
+            signals,
+            params={"lookback_high_weeks": 2},
+        )
+        assert result is not None
+
+    def test_default_upper_wick_params_values(self):
+        params = default_upper_wick_params()
+        assert params["upper_wick_ratio_min"] == 0.60
+        assert params["body_ratio_max"] == 0.25
+        assert params["near_high_pct"] == 5.0
+        assert params["lookback_high_weeks"] == 26
+
+    def test_get_upper_wick_lookback_weeks_uses_default(self):
+        assert get_upper_wick_lookback_weeks(None) == 26
+        assert get_upper_wick_lookback_weeks({}) == 26
+        assert get_upper_wick_lookback_weeks({"lookback_high_weeks": "x"}) == 26
+        assert get_upper_wick_lookback_weeks({"lookback_high_weeks": 13}) == 13

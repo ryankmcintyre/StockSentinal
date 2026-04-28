@@ -7,9 +7,12 @@ import pytest
 from app.market_data import (
     _last_completed_trading_day,
     _last_completed_trading_week_end,
+    _weekly_bar_cache_is_stale,
     daily_data_is_stale,
+    load_weekly_bar_cache_for_tickers,
     refresh_all_positions,
     refresh_position,
+    refresh_weekly_bar_cache,
     weekly_data_is_stale,
 )
 
@@ -156,6 +159,8 @@ class TestRefreshPosition:
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
         mocker.patch("app.market_data.refresh_indicator_cache", return_value=[])
         mocker.patch("app.market_data.refresh_atr_cache", return_value=[])
+        mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
+        mocker.patch("app.market_data.refresh_weekly_bar_cache", return_value=[])
 
     def test_refreshes_daily_when_daily_is_stale(self, mocker):
         position = FakePosition(investment_type="long-term")
@@ -237,6 +242,8 @@ class TestRefreshAllPositions:
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
         mocker.patch("app.market_data.refresh_indicator_cache", return_value=[])
         mocker.patch("app.market_data.refresh_atr_cache", return_value=[])
+        mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
+        mocker.patch("app.market_data.refresh_weekly_bar_cache", return_value=[])
 
     def test_refreshes_only_stale_positions(self, mocker):
         pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
@@ -431,3 +438,143 @@ class TestRefreshAllPositions:
 
         assert pos2.daily_close == 150.0
         assert pos2.refresh_error is None
+
+
+# ---------------------------------------------------------------------------
+# Weekly OHLC bar cache (issue #19)
+# ---------------------------------------------------------------------------
+
+
+class TestWeeklyBarCache:
+    @pytest.fixture()
+    def db(self):
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.pool import StaticPool
+
+        from app.models import Base
+
+        engine = create_engine(
+            "sqlite://",
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+        Base.metadata.create_all(bind=engine)
+        Session = sessionmaker(bind=engine)
+        session = Session()
+        try:
+            yield session
+        finally:
+            session.close()
+            engine.dispose()
+
+    def test_is_stale_when_no_rows(self):
+        assert _weekly_bar_cache_is_stale(None) is True
+
+    def test_is_stale_when_latest_row_is_old(self, db):
+        from app.models import MarketWeeklyBarCache
+
+        latest = MarketWeeklyBarCache(
+            ticker="IBM", bar_date=date(2020, 1, 3), close=100.0,
+            retrieved_at=datetime.now(),
+        )
+        assert _weekly_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is True
+
+    def test_is_fresh_when_latest_row_is_current(self, db):
+        from app.models import MarketWeeklyBarCache
+
+        # Most recently completed trading week ending Friday before today
+        target = _last_completed_trading_week_end(date(2025, 6, 15))
+        latest = MarketWeeklyBarCache(
+            ticker="IBM", bar_date=target, close=100.0,
+            retrieved_at=datetime.now(),
+        )
+        assert _weekly_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is False
+
+    def test_refresh_skips_when_no_tickers(self, db):
+        assert refresh_weekly_bar_cache(db, set(), lookback_weeks=10) == []
+
+    def test_refresh_skips_when_lookback_zero(self, db):
+        assert refresh_weekly_bar_cache(db, {"IBM"}, lookback_weeks=0) == []
+
+    def test_refresh_upserts_and_trims(self, db, mocker):
+        """Refresh should write keep-window bars and delete older cached rows."""
+        from app.alpha_vantage_client import WeeklyBar
+        from app.models import MarketWeeklyBarCache
+
+        # Existing old row that should be trimmed.
+        db.add(
+            MarketWeeklyBarCache(
+                ticker="IBM",
+                bar_date=date(2020, 1, 3),
+                open=10.0, high=11.0, low=9.0, close=10.5, volume=1000.0,
+                retrieved_at=datetime.now(),
+            )
+        )
+        db.commit()
+
+        # API returns 3 fresh bars
+        bars = [
+            WeeklyBar(date=date(2025, 6, 13), open=100.0, high=110.0, low=95.0, close=105.0, volume=2000.0),
+            WeeklyBar(date=date(2025, 6, 6), open=98.0, high=105.0, low=92.0, close=100.0, volume=1800.0),
+            WeeklyBar(date=date(2025, 5, 30), open=95.0, high=102.0, low=90.0, close=98.0, volume=1700.0),
+        ]
+        mocker.patch("app.market_data.fetch_weekly_series", return_value=bars)
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch(
+            "app.market_data._last_completed_trading_week_end",
+            return_value=date(2025, 6, 13),
+        )
+
+        errors = refresh_weekly_bar_cache(db, {"IBM"}, lookback_weeks=2, force=True)
+        assert errors == []
+
+        rows = (
+            db.query(MarketWeeklyBarCache)
+            .filter(MarketWeeklyBarCache.ticker == "IBM")
+            .order_by(MarketWeeklyBarCache.bar_date.desc())
+            .all()
+        )
+        # lookback=2 keeps 2 newest, drops the 3rd and prior cached old bar.
+        assert [r.bar_date for r in rows] == [date(2025, 6, 13), date(2025, 6, 6)]
+        assert rows[0].open == 100.0
+        assert rows[0].high == 110.0
+        assert rows[0].low == 95.0
+        assert rows[0].close == 105.0
+        assert rows[0].volume == 2000.0
+
+    def test_refresh_records_error_on_exception(self, db, mocker):
+        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+        mocker.patch(
+            "app.market_data.fetch_weekly_series",
+            side_effect=RuntimeError("boom"),
+        )
+        errors = refresh_weekly_bar_cache(db, {"BAD"}, lookback_weeks=4, force=True)
+        assert len(errors) == 1
+        assert "BAD" in errors[0]
+
+    def test_load_returns_dict_grouped_by_ticker_most_recent_first(self, db):
+        from app.models import MarketWeeklyBarCache
+
+        for d in [date(2025, 6, 6), date(2025, 6, 13)]:
+            db.add(
+                MarketWeeklyBarCache(
+                    ticker="A", bar_date=d, open=1.0, high=1.0, low=1.0, close=1.0,
+                    volume=1.0, retrieved_at=datetime.now(),
+                )
+            )
+        db.add(
+            MarketWeeklyBarCache(
+                ticker="B", bar_date=date(2025, 6, 13), open=1.0, high=1.0, low=1.0,
+                close=1.0, volume=1.0, retrieved_at=datetime.now(),
+            )
+        )
+        db.commit()
+
+        result = load_weekly_bar_cache_for_tickers(db, {"A", "B", "MISSING"})
+        assert set(result.keys()) == {"A", "B"}
+        assert [r.bar_date for r in result["A"]] == [date(2025, 6, 13), date(2025, 6, 6)]
+        assert len(result["B"]) == 1
+
+    def test_load_returns_empty_dict_for_no_tickers(self, db):
+        assert load_weekly_bar_cache_for_tickers(db, set()) == {}

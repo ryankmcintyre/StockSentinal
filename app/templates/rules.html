@@ -112,6 +112,24 @@
                 </td>
             </tr>
             {% endif %}
+            {% if rule.upper_wick_params is defined %}
+            <tr>
+                <td colspan="4" class="ma-conditions-cell">
+                    <div class="ma-conditions">
+                        <p class="text-muted ma-help">
+                            <strong>Weekly upper-wick reversal:</strong>
+                            triggers when a weekly bar near recent highs closes with a long upper wick and small body.
+                        </p>
+                        <p class="text-muted">
+                            Upper-wick ratio ≥ <strong>{{ rule.upper_wick_params.upper_wick_ratio_min }}</strong>,
+                            body ratio ≤ <strong>{{ rule.upper_wick_params.body_ratio_max }}</strong>,
+                            within <strong>{{ rule.upper_wick_params.near_high_pct }}%</strong> of
+                            <strong>{{ rule.upper_wick_params.lookback_high_weeks }}</strong>-week high.
+                        </p>
+                    </div>
+                </td>
+            </tr>
+            {% endif %}
             {% endfor %}
         </tbody>
     </table>

@@ -89,6 +89,32 @@ class MarketAtrCache(Base):
     retrieved_at = Column(DateTime, nullable=True)
 
 
+class MarketWeeklyBarCache(Base):
+    """Cache for weekly OHLCV bars per ticker.
+
+    Used by rules that need historical weekly price action (issue #19
+    upper-wick detection, plus future #20 volume distribution and #21
+    pivot detection).
+    """
+    __tablename__ = "market_weekly_bar_cache"
+    __table_args__ = (
+        UniqueConstraint(
+            "ticker", "bar_date",
+            name="uq_weekly_bar_ticker_date",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ticker = Column(String, nullable=False)
+    bar_date = Column(Date, nullable=False)
+    open = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    low = Column(Float, nullable=True)
+    close = Column(Float, nullable=True)
+    volume = Column(Float, nullable=True)
+    retrieved_at = Column(DateTime, nullable=True)
+
+
 class StrategyRuleConfig(Base):
     __tablename__ = "strategy_rule_configs"
     __table_args__ = (

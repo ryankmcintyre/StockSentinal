@@ -138,6 +138,35 @@ class TestFetchWeeklySeries:
         assert bars[0].date == date(2026, 4, 17)
         assert bars[0].close == 182.00
 
+    def test_parses_ohlcv_fields(self, mocker):
+        """Issue #19: WeeklyBar should expose open/high/low/volume."""
+        fake_data = {
+            "Meta Data": {"2. Symbol": "IBM"},
+            "Weekly Time Series": {
+                "2026-04-17": {
+                    "1. open": "175.00",
+                    "2. high": "185.00",
+                    "3. low": "174.00",
+                    "4. close": "182.00",
+                    "5. volume": "15000000",
+                },
+            },
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        bars = fetch_weekly_series("IBM", "fake_key")
+        assert len(bars) == 1
+        bar = bars[0]
+        assert bar.open == 175.00
+        assert bar.high == 185.00
+        assert bar.low == 174.00
+        assert bar.close == 182.00
+        assert bar.volume == 15000000.0
+
 
 # ---------------------------------------------------------------------------
 # SMA parsing

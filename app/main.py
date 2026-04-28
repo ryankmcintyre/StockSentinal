@@ -22,6 +22,7 @@ from app.market_data import (
     fetch_daily_series,
     load_atr_cache_for_tickers,
     load_indicator_cache_for_tickers,
+    load_weekly_bar_cache_for_tickers,
     refresh_all_positions,
     refresh_position,
 )
@@ -36,6 +37,7 @@ from app.rule_config import (
 from app.rule_engine import (
     MarketSignals,
     StrategyRuleSelection,
+    WeeklyOhlcBar,
     compute_hold_duration_days,
     compute_percent_gain,
     evaluate_position,
@@ -85,6 +87,7 @@ def _enrich_position(
     enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
     indicator_cache: dict[tuple[str, int], tuple[float | None, float | None]] | None = None,
     atr_cache: dict[tuple[str, int], float | None] | None = None,
+    weekly_bars: list | None = None,
 ) -> dict:
     """Run rule engine on a Position and return a dict with all display fields."""
     # Build market signals from cached Alpha Vantage data
@@ -102,6 +105,20 @@ def _enrich_position(
     # Populate atr_signals from ATR cache
     if atr_cache:
         signals.atr_signals = dict(atr_cache)
+
+    # Populate weekly OHLC history from the weekly bar cache
+    if weekly_bars:
+        signals.weekly_ohlc_history = [
+            WeeklyOhlcBar(
+                bar_date=bar.bar_date,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                volume=bar.volume,
+            )
+            for bar in weekly_bars
+        ]
 
     # Use cached daily close as effective price when available, otherwise manual
     effective_price = pos.daily_close if pos.daily_close is not None else pos.current_price
@@ -167,6 +184,7 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
     all_tickers = {p.ticker for p in positions}
     all_indicator_cache = load_indicator_cache_for_tickers(db, all_tickers)
     all_atr_cache = load_atr_cache_for_tickers(db, all_tickers)
+    all_weekly_bars = load_weekly_bar_cache_for_tickers(db, all_tickers)
 
     enriched = [
         _enrich_position(
@@ -174,6 +192,7 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
             enabled_rules_by_type,
             all_indicator_cache.get(p.ticker),
             all_atr_cache.get(p.ticker),
+            all_weekly_bars.get(p.ticker),
         )
         for p in positions
     ]
