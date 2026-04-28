@@ -216,7 +216,9 @@ class TestRulesPage:
 
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "Refresh error: Daily refresh failed: Alpha Vantage API rate limit exceeded" in resp.text
+        assert "Refresh error" in resp.text
+        assert "Daily refresh failed: Alpha Vantage API rate limit exceeded" in resp.text
+        assert 'title="Daily refresh failed: Alpha Vantage API rate limit exceeded"' in resp.text
         assert "rule-tag-error" in resp.text
 
     def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
