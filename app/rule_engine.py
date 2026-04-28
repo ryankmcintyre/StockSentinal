@@ -233,7 +233,7 @@ def _compute_atr_extension_ratio(
     """Compute the ATR extension ratio and return (ratio, resolved_params).
 
     Returns None when any required input is missing or invalid (no rule fires).
-    Formula: (current_price - sma_period) / atr_period
+    Formula: (current_price - sma_value) / atr_value
 
     Guards:
       - current_price <= 0           → None
