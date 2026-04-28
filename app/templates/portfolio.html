@@ -97,7 +97,7 @@
                     <span class="rule-tag">{{ rule.description }}</span>
                 {% endfor %}
                 {% if pos.refresh_error %}
-                    <span class="rule-tag rule-tag-error">{{ pos.refresh_error }}</span>
+                    <span class="rule-tag rule-tag-error" title="{{ pos.refresh_error }}">Refresh failed</span>
                 {% endif %}
                 {% if pos.refresh_in_progress %}
                     <span
