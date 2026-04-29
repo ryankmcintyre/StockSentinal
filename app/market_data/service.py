@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app.alpha_vantage_client import AlphaVantageError, DailyBar
 from app.models import Position
 from app.schemas import InvestmentType
+from app.unit_of_work import as_uow
 
 from .cache_repos import (
     AtrCacheRepository,
@@ -429,28 +430,29 @@ class MarketDataService:
         # Refresh indicator caches for configured rules
         import app.rule_config as rule_config
 
-        required = rule_config.get_required_indicators(db)
+        rule_uow = as_uow(db)
+        required = rule_config.get_required_indicators(rule_uow)
         if required:
             cache_errors = self.refresh_indicator_cache(
                 db, {position.ticker}, required, force=force,
             )
             errors.extend(cache_errors)
 
-        required_atr = rule_config.get_required_atr_indicators(db)
+        required_atr = rule_config.get_required_atr_indicators(rule_uow)
         if required_atr:
             atr_errors = self.refresh_atr_cache(
                 db, {position.ticker}, required_atr, force=force,
             )
             errors.extend(atr_errors)
 
-        weekly_lookback = rule_config.get_required_weekly_bar_lookback(db)
+        weekly_lookback = rule_config.get_required_weekly_bar_lookback(rule_uow)
         if weekly_lookback > 0:
             weekly_bar_errors = self.refresh_weekly_bar_cache(
                 db, {position.ticker}, weekly_lookback, force=force,
             )
             errors.extend(weekly_bar_errors)
 
-        daily_lookback = rule_config.get_required_daily_bar_lookback(db)
+        daily_lookback = rule_config.get_required_daily_bar_lookback(rule_uow)
         if daily_lookback > 0:
             benchmark = getattr(position, "sector_benchmark_ticker", None)
             if benchmark:
@@ -555,7 +557,8 @@ class MarketDataService:
         # Refresh indicator / ATR / bar caches for configured rules
         import app.rule_config as rule_config
 
-        required = rule_config.get_required_indicators(db)
+        rule_uow = as_uow(db)
+        required = rule_config.get_required_indicators(rule_uow)
         if required and ticker_groups:
             all_tickers = set(ticker_groups.keys())
             cache_errors = self.refresh_indicator_cache(
@@ -564,7 +567,7 @@ class MarketDataService:
             if cache_errors:
                 logger.warning("Indicator cache refresh errors: %s", cache_errors)
 
-        required_atr = rule_config.get_required_atr_indicators(db)
+        required_atr = rule_config.get_required_atr_indicators(rule_uow)
         if required_atr and ticker_groups:
             all_tickers = set(ticker_groups.keys())
             atr_errors = self.refresh_atr_cache(
@@ -573,7 +576,7 @@ class MarketDataService:
             if atr_errors:
                 logger.warning("ATR cache refresh errors: %s", atr_errors)
 
-        weekly_lookback = rule_config.get_required_weekly_bar_lookback(db)
+        weekly_lookback = rule_config.get_required_weekly_bar_lookback(rule_uow)
         if weekly_lookback > 0 and ticker_groups:
             all_tickers = set(ticker_groups.keys())
             bar_errors = self.refresh_weekly_bar_cache(
@@ -582,7 +585,7 @@ class MarketDataService:
             if bar_errors:
                 logger.warning("Weekly bar cache refresh errors: %s", bar_errors)
 
-        daily_lookback = rule_config.get_required_daily_bar_lookback(db)
+        daily_lookback = rule_config.get_required_daily_bar_lookback(rule_uow)
         if daily_lookback > 0 and ticker_groups:
             daily_tickers: set[str] = set()
             for pos in positions:

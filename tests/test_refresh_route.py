@@ -8,9 +8,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.database import get_db
+from app.database import get_uow
 from app.main import _market_service, app
 from app.models import Base, Position
+from app.unit_of_work import SqlAlchemyUnitOfWork
 
 
 @pytest.fixture(autouse=True)
@@ -24,14 +25,14 @@ def _setup_db():
     TestingSession = sessionmaker(bind=engine)
     Base.metadata.create_all(bind=engine)
 
-    def override_get_db():
-        db = TestingSession()
+    def override_get_uow():
+        session = TestingSession()
         try:
-            yield db
+            yield SqlAlchemyUnitOfWork(session)
         finally:
-            db.close()
+            session.close()
 
-    app.dependency_overrides[get_db] = override_get_db
+    app.dependency_overrides[get_uow] = override_get_uow
     yield TestingSession
     app.dependency_overrides.clear()
     engine.dispose()
