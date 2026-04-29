@@ -11,8 +11,7 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.alpha_vantage_client import AlphaVantageError, DailyBar, WeeklyBar
-from app.config import require_alpha_vantage_api_key
+from app.alpha_vantage_client import AlphaVantageError, DailyBar
 from app.models import Position
 from app.schemas import InvestmentType
 
@@ -93,8 +92,6 @@ class MarketDataService:
         close_cache: dict[tuple[str, str], tuple[float, "date"]],
     ) -> None:
         """Fetch and upsert one indicator cache entry."""
-        from datetime import date as date_type  # avoid shadowing
-
         close_key = (ticker, interval)
         if close_key not in close_cache:
             if interval == "daily":

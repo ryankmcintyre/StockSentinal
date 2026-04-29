@@ -10,8 +10,6 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from .staleness import last_completed_trading_day, last_completed_trading_week_end
-
 from app.models import (
     MarketAtrCache,
     MarketDailyBarCache,

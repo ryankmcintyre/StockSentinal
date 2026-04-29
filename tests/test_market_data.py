@@ -192,6 +192,24 @@ class TestRefreshPosition:
         assert position.refresh_error is None
         db.commit.assert_called_once()
 
+    def test_skips_weekly_refresh_for_short_term_even_when_weekly_is_stale(
+        self, mocker
+    ):
+        position = FakePosition(investment_type="short-term")
+        db = mocker.Mock()
+
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(self.service, "_refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=True)
+
+        self.service.refresh_position(position, db, force=False)
+
+        self.service._refresh_daily.assert_not_called()
+        self.service._refresh_weekly.assert_not_called()
+        assert position.refresh_error is None
+        db.commit.assert_called_once()
+
     def test_persists_combined_daily_and_weekly_errors(self, mocker):
         position = FakePosition(investment_type="long-term")
         db = mocker.Mock()
