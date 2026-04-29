@@ -16,16 +16,7 @@ from app.alpha_vantage_client import (
 )
 from app.config import get_alpha_vantage_api_key, get_log_level
 from app.database import SessionLocal, get_uow, init_db
-from app.market_data import (
-    fetch_company_name,
-    fetch_daily_series,
-    load_atr_cache_for_tickers,
-    load_daily_bar_cache_for_tickers,
-    load_indicator_cache_for_tickers,
-    load_weekly_bar_cache_for_tickers,
-    refresh_all_positions,
-    refresh_position,
-)
+from app.market_data import AlphaVantageProvider, MarketDataService
 from app.models import Position, PositionKeyLevel
 from app.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWork
 from app.rule_config import (
@@ -62,6 +53,9 @@ for _name in _HTTP_LOGGERS:
 
 BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
+
+_provider = AlphaVantageProvider()
+_market_service = MarketDataService(_provider)
 
 
 @asynccontextmanager
@@ -263,10 +257,16 @@ def portfolio(request: Request, uow: UnitOfWork = Depends(get_uow)):
         for p in positions
         if p.sector_benchmark_ticker
     }
-    all_indicator_cache = load_indicator_cache_for_tickers(uow.session, all_tickers)
-    all_atr_cache = load_atr_cache_for_tickers(uow.session, all_tickers)
-    all_weekly_bars = load_weekly_bar_cache_for_tickers(uow.session, all_tickers)
-    all_daily_bars = load_daily_bar_cache_for_tickers(
+    all_indicator_cache = _market_service.load_indicator_cache_for_tickers(
+        uow.session, all_tickers
+    )
+    all_atr_cache = _market_service.load_atr_cache_for_tickers(
+        uow.session, all_tickers
+    )
+    all_weekly_bars = _market_service.load_weekly_bar_cache_for_tickers(
+        uow.session, all_tickers
+    )
+    all_daily_bars = _market_service.load_daily_bar_cache_for_tickers(
         uow.session, all_tickers | benchmark_tickers
     )
 
@@ -390,7 +390,7 @@ def lookup_ticker(ticker: str):
             content={"error": "Alpha Vantage API key is not configured"},
         )
     try:
-        company_name = fetch_company_name(ticker.strip().upper(), api_key)
+        company_name = _market_service.fetch_company_name(ticker.strip().upper())
         return {"company_name": company_name}
     except AlphaVantageError as exc:
         return JSONResponse(
@@ -432,7 +432,7 @@ def add_position(
     api_key = get_alpha_vantage_api_key()
     if api_key:
         try:
-            bars = fetch_daily_series(clean_ticker, api_key)
+            bars = _market_service.fetch_daily_series(clean_ticker)
             if bars:
                 current_price = bars[0].close
                 daily_close = bars[0].close
@@ -581,7 +581,7 @@ def _refresh_all_positions_task(position_ids: list[int]):
     uow = SqlAlchemyUnitOfWork(SessionLocal())
     try:
         try:
-            refresh_all_positions(uow.session)
+            _market_service.refresh_all_positions(uow.session)
         except Exception as exc:
             logger.warning("Background refresh-all failed", exc_info=True)
             detail = str(exc).strip() or exc.__class__.__name__
@@ -603,7 +603,7 @@ def _refresh_single_position_task(position_id: int):
         try:
             pos = uow.positions.get_by_id(position_id)
             if pos:
-                refresh_position(pos, uow.session)
+                _market_service.refresh_position(pos, uow.session)
         except Exception as exc:
             logger.warning(
                 "Background refresh failed for position id=%d", position_id, exc_info=True
@@ -649,7 +649,7 @@ def refresh_single(
     if pos and not pos.refresh_in_progress:
         _mark_positions_refresh_state(uow, [position_id], in_progress=True)
         try:
-            refresh_position(pos, uow.session)
+            _market_service.refresh_position(pos, uow.session)
         except Exception as exc:
             logger.warning(
                 "Inline refresh failed for position id=%d", position_id, exc_info=True

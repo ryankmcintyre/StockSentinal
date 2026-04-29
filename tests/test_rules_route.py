@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import get_uow
-from app.main import app
+from app.main import _market_service, app
 from app.models import Base, Position, StrategyRuleConfig
 from app.unit_of_work import SqlAlchemyUnitOfWork, as_uow
 from app.rule_engine import list_rule_specs_for_investment_type
@@ -246,8 +246,9 @@ class TestRulesPage:
             return testing_session()
 
         mocker.patch("app.main.SessionLocal", _fake_session_local)
-        mocker.patch(
-            "app.main.refresh_position",
+        mocker.patch.object(
+            _market_service,
+            "refresh_position",
             side_effect=RuntimeError("Alpha Vantage API rate limit exceeded"),
         )
 
@@ -284,7 +285,7 @@ class TestRulesPage:
         def _raise_rate_limit(_pos, _db):
             raise RuntimeError("Alpha Vantage API rate limit exceeded")
 
-        mocker.patch("app.main.refresh_position", side_effect=_raise_rate_limit)
+        mocker.patch.object(_market_service, "refresh_position", side_effect=_raise_rate_limit)
 
         resp = client.post(f"/refresh/{position_id}", follow_redirects=True)
         assert resp.status_code == 200

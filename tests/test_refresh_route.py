@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import get_uow
-from app.main import app
+from app.main import _market_service, app
 from app.models import Base, Position
 from app.unit_of_work import SqlAlchemyUnitOfWork
 
@@ -168,7 +168,7 @@ class TestRefreshLoadingCues:
         finally:
             db.close()
 
-        mock_refresh = mocker.patch("app.main.refresh_position")
+        mock_refresh = mocker.patch.object(_market_service, "refresh_position")
         resp = client.post(f"/refresh/{position_id}", follow_redirects=False)
         assert resp.status_code == 303
         mock_refresh.assert_not_called()

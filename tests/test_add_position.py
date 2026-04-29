@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.alpha_vantage_client import AlphaVantageError, DailyBar
 from app.database import get_uow
-from app.main import app
+from app.main import _market_service, app
 from app.models import Base
 from app.unit_of_work import SqlAlchemyUnitOfWork
 
@@ -69,12 +69,12 @@ class TestAddPositionFetchesPrice:
 
         with (
             patch("app.main.get_alpha_vantage_api_key", return_value="fake_key"),
-            patch("app.main.fetch_daily_series", return_value=fake_bars) as mock_fetch,
+            patch.object(_market_service, "fetch_daily_series", return_value=fake_bars) as mock_fetch,
         ):
             resp = client.post("/add", data=FORM_DATA_BASE, follow_redirects=False)
 
         assert resp.status_code == 303
-        mock_fetch.assert_called_once_with("AAPL", "fake_key")
+        mock_fetch.assert_called_once_with("AAPL")
 
     def test_falls_back_to_zero_when_no_api_key(self, client):
         """When the API key is not configured, current_price should default to 0."""
@@ -88,8 +88,8 @@ class TestAddPositionFetchesPrice:
         should fall back to 0 and the position should still be created."""
         with (
             patch("app.main.get_alpha_vantage_api_key", return_value="fake_key"),
-            patch(
-                "app.main.fetch_daily_series",
+            patch.object(
+                _market_service, "fetch_daily_series",
                 side_effect=AlphaVantageError("boom"),
             ),
         ):

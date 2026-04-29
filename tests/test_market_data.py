@@ -1,23 +1,19 @@
-"""Tests for the market data service staleness helpers."""
+"""Tests for the market data service layer."""
 
 from datetime import date, datetime
+from unittest.mock import Mock
 
 import pytest
 
-from app.market_data import (
-    _daily_bar_cache_is_stale,
-    _last_completed_trading_day,
-    _last_completed_trading_week_end,
-    _weekly_bar_cache_is_stale,
+from app.market_data.staleness import (
+    daily_bar_cache_is_stale,
     daily_data_is_stale,
-    load_daily_bar_cache_for_tickers,
-    load_weekly_bar_cache_for_tickers,
-    refresh_all_positions,
-    refresh_daily_bar_cache,
-    refresh_position,
-    refresh_weekly_bar_cache,
+    last_completed_trading_day,
+    last_completed_trading_week_end,
+    weekly_bar_cache_is_stale,
     weekly_data_is_stale,
 )
+from app.market_data.service import MarketDataService
 
 
 # ---------------------------------------------------------------------------
@@ -39,6 +35,7 @@ class FakePosition:
         weekly_close=None,
         weekly_sma_20=None,
         weekly_retrieved_at=None,
+        sector_benchmark_ticker=None,
     ):
         self.ticker = ticker
         self.investment_type = investment_type
@@ -51,61 +48,60 @@ class FakePosition:
         self.weekly_close = weekly_close
         self.weekly_sma_20 = weekly_sma_20
         self.weekly_retrieved_at = weekly_retrieved_at
+        self.sector_benchmark_ticker = sector_benchmark_ticker
 
 
 # ---------------------------------------------------------------------------
-# _last_completed_trading_day
+# last_completed_trading_day
 # ---------------------------------------------------------------------------
 
 
 class TestLastCompletedTradingDay:
     def test_monday_returns_friday(self):
-        # Monday 2026-04-20 → previous Friday 2026-04-17
-        result = _last_completed_trading_day(date(2026, 4, 20))
+        result = last_completed_trading_day(date(2026, 4, 20))
         assert result == date(2026, 4, 17)
 
     def test_tuesday_returns_monday(self):
-        result = _last_completed_trading_day(date(2026, 4, 21))
+        result = last_completed_trading_day(date(2026, 4, 21))
         assert result == date(2026, 4, 20)
 
     def test_saturday_returns_friday(self):
-        result = _last_completed_trading_day(date(2026, 4, 18))
+        result = last_completed_trading_day(date(2026, 4, 18))
         assert result == date(2026, 4, 17)
 
     def test_sunday_returns_friday(self):
-        result = _last_completed_trading_day(date(2026, 4, 19))
+        result = last_completed_trading_day(date(2026, 4, 19))
         assert result == date(2026, 4, 17)
 
     def test_wednesday_returns_tuesday(self):
-        result = _last_completed_trading_day(date(2026, 4, 22))
+        result = last_completed_trading_day(date(2026, 4, 22))
         assert result == date(2026, 4, 21)
 
 
 # ---------------------------------------------------------------------------
-# _last_completed_trading_week_end
+# last_completed_trading_week_end
 # ---------------------------------------------------------------------------
 
 
 class TestLastCompletedTradingWeekEnd:
     def test_friday_returns_previous_friday(self):
-        # If today is Friday, completed week ended *last* Friday
-        result = _last_completed_trading_week_end(date(2026, 4, 17))  # Friday
+        result = last_completed_trading_week_end(date(2026, 4, 17))  # Friday
         assert result == date(2026, 4, 10)
 
     def test_saturday_returns_same_week_friday(self):
-        result = _last_completed_trading_week_end(date(2026, 4, 18))  # Saturday
+        result = last_completed_trading_week_end(date(2026, 4, 18))  # Saturday
         assert result == date(2026, 4, 17)
 
     def test_sunday_returns_same_week_friday(self):
-        result = _last_completed_trading_week_end(date(2026, 4, 19))  # Sunday
+        result = last_completed_trading_week_end(date(2026, 4, 19))  # Sunday
         assert result == date(2026, 4, 17)
 
     def test_monday_returns_previous_friday(self):
-        result = _last_completed_trading_week_end(date(2026, 4, 20))  # Monday
+        result = last_completed_trading_week_end(date(2026, 4, 20))  # Monday
         assert result == date(2026, 4, 17)
 
     def test_thursday_returns_previous_friday(self):
-        result = _last_completed_trading_week_end(date(2026, 4, 16))  # Thursday
+        result = last_completed_trading_week_end(date(2026, 4, 16))  # Thursday
         assert result == date(2026, 4, 10)
 
 
@@ -120,7 +116,6 @@ class TestDailyDataIsStale:
         assert daily_data_is_stale(pos, today=date(2026, 4, 21)) is True
 
     def test_current_data_is_not_stale(self):
-        # Today is Tuesday 2026-04-21; completed trading day is Monday 2026-04-20
         pos = FakePosition(daily_market_date=date(2026, 4, 20))
         assert daily_data_is_stale(pos, today=date(2026, 4, 21)) is False
 
@@ -140,7 +135,6 @@ class TestWeeklyDataIsStale:
         assert weekly_data_is_stale(pos, today=date(2026, 4, 21)) is True
 
     def test_current_data_is_not_stale(self):
-        # Today is Monday 2026-04-20; completed week ended Friday 2026-04-17
         pos = FakePosition(weekly_market_date=date(2026, 4, 17))
         assert weekly_data_is_stale(pos, today=date(2026, 4, 20)) is False
 
@@ -150,37 +144,35 @@ class TestWeeklyDataIsStale:
 
 
 # ---------------------------------------------------------------------------
-# refresh_position
+# refresh_position (service-level tests with mock provider)
 # ---------------------------------------------------------------------------
 
 
 class TestRefreshPosition:
     @pytest.fixture(autouse=True)
-    def _mock_indicator_cache(self, mocker):
-        """Mock indicator cache operations used by refresh functions."""
+    def _setup_service(self, mocker):
+        """Create a service with a mock provider and mock rule_config."""
+        self.mock_provider = Mock()
+        self.service = MarketDataService(self.mock_provider)
+        # Mock rule_config to avoid DB dependency
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
-        mocker.patch("app.market_data.refresh_indicator_cache", return_value=[])
-        mocker.patch("app.market_data.refresh_atr_cache", return_value=[])
         mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
         mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
-        mocker.patch("app.market_data.refresh_weekly_bar_cache", return_value=[])
-        mocker.patch("app.market_data.refresh_daily_bar_cache", return_value=[])
 
     def test_refreshes_daily_when_daily_is_stale(self, mocker):
         position = FakePosition(investment_type="long-term")
         db = mocker.Mock()
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        daily_refresh = mocker.patch("app.market_data._refresh_daily")
-        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(self.service, "_refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
 
-        refresh_position(position, db, force=False)
+        self.service.refresh_position(position, db, force=False)
 
-        daily_refresh.assert_called_once_with(position, "key")
-        weekly_refresh.assert_not_called()
+        self.service._refresh_daily.assert_called_once_with(position)
+        self.service._refresh_weekly.assert_not_called()
         assert position.refresh_error is None
         db.commit.assert_called_once()
 
@@ -188,46 +180,50 @@ class TestRefreshPosition:
         position = FakePosition(investment_type="long-term")
         db = mocker.Mock()
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        daily_refresh = mocker.patch("app.market_data._refresh_daily")
-        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=False)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(self.service, "_refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=True)
 
-        refresh_position(position, db, force=False)
+        self.service.refresh_position(position, db, force=False)
 
-        daily_refresh.assert_not_called()
-        weekly_refresh.assert_called_once_with(position, "key")
+        self.service._refresh_daily.assert_not_called()
+        self.service._refresh_weekly.assert_called_once_with(position)
         assert position.refresh_error is None
         db.commit.assert_called_once()
 
-    def test_skips_weekly_for_short_term_positions(self, mocker):
+    def test_skips_weekly_refresh_for_short_term_even_when_weekly_is_stale(
+        self, mocker
+    ):
         position = FakePosition(investment_type="short-term")
         db = mocker.Mock()
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        daily_refresh = mocker.patch("app.market_data._refresh_daily")
-        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(self.service, "_refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=True)
 
-        refresh_position(position, db, force=False)
+        self.service.refresh_position(position, db, force=False)
 
-        daily_refresh.assert_called_once_with(position, "key")
-        weekly_refresh.assert_not_called()
+        self.service._refresh_daily.assert_not_called()
+        self.service._refresh_weekly.assert_not_called()
         assert position.refresh_error is None
+        db.commit.assert_called_once()
 
     def test_persists_combined_daily_and_weekly_errors(self, mocker):
         position = FakePosition(investment_type="long-term")
         db = mocker.Mock()
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
-        mocker.patch("app.market_data._refresh_daily", side_effect=RuntimeError("daily boom"))
-        mocker.patch("app.market_data._refresh_weekly", side_effect=RuntimeError("weekly boom"))
+        mocker.patch.object(
+            self.service, "_refresh_daily", side_effect=RuntimeError("daily boom")
+        )
+        mocker.patch.object(
+            self.service, "_refresh_weekly", side_effect=RuntimeError("weekly boom")
+        )
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=True)
 
-        refresh_position(position, db, force=False)
+        self.service.refresh_position(position, db, force=False)
 
         assert "Daily refresh failed: daily boom" in position.refresh_error
         assert "Weekly refresh failed: weekly boom" in position.refresh_error
@@ -235,22 +231,20 @@ class TestRefreshPosition:
 
 
 # ---------------------------------------------------------------------------
-# refresh_all_positions
+# refresh_all_positions (service-level tests)
 # ---------------------------------------------------------------------------
 
 
 class TestRefreshAllPositions:
     @pytest.fixture(autouse=True)
-    def _mock_indicator_cache(self, mocker):
-        """Mock indicator cache operations used by refresh functions."""
+    def _setup_service(self, mocker):
+        """Create a service with mock provider and mock rule_config."""
+        self.mock_provider = Mock()
+        self.service = MarketDataService(self.mock_provider)
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
-        mocker.patch("app.market_data.refresh_indicator_cache", return_value=[])
-        mocker.patch("app.market_data.refresh_atr_cache", return_value=[])
         mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
         mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
-        mocker.patch("app.market_data.refresh_weekly_bar_cache", return_value=[])
-        mocker.patch("app.market_data.refresh_daily_bar_cache", return_value=[])
 
     def test_refreshes_only_stale_positions(self, mocker):
         pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
@@ -259,20 +253,18 @@ class TestRefreshAllPositions:
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos1, pos2, pos3]
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
         mocker.patch(
-            "app.market_data.daily_data_is_stale", side_effect=[True, False, False]
+            "app.market_data.service.daily_data_is_stale", side_effect=[True, False, False]
         )
         mocker.patch(
-            "app.market_data.weekly_data_is_stale", side_effect=[False, True, False]
+            "app.market_data.service.weekly_data_is_stale", side_effect=[False, True, False]
         )
-        daily_refresh = mocker.patch("app.market_data._refresh_daily")
-        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
+        daily_refresh = mocker.patch.object(self.service, "_refresh_daily")
+        weekly_refresh = mocker.patch.object(self.service, "_refresh_weekly")
 
-        refreshed = refresh_all_positions(db, force=False)
+        refreshed = self.service.refresh_all_positions(db, force=False)
 
         assert refreshed == 2
-        # pos1 needs daily, pos2 needs weekly
         daily_refresh.assert_called_once()
         weekly_refresh.assert_called_once()
 
@@ -284,115 +276,100 @@ class TestRefreshAllPositions:
         db = mocker.Mock()
         db.query.return_value.all.return_value = positions
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        daily_refresh = mocker.patch("app.market_data._refresh_daily")
-        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
+        daily_refresh = mocker.patch.object(self.service, "_refresh_daily")
+        weekly_refresh = mocker.patch.object(self.service, "_refresh_weekly")
 
-        refreshed = refresh_all_positions(db, force=True)
+        refreshed = self.service.refresh_all_positions(db, force=True)
 
         assert refreshed == 2
-        # Each unique ticker gets daily refresh; only long-term gets weekly
         assert daily_refresh.call_count == 2
         assert weekly_refresh.call_count == 1
 
     def test_deduplicates_api_calls_for_same_ticker(self, mocker):
-        """Two positions with the same ticker should trigger only one set of API calls."""
         pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
         pos2 = FakePosition(ticker="AAPL", investment_type="long-term")
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos1, pos2]
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
-        daily_refresh = mocker.patch("app.market_data._refresh_daily")
-        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=True)
+        daily_refresh = mocker.patch.object(self.service, "_refresh_daily")
+        weekly_refresh = mocker.patch.object(self.service, "_refresh_weekly")
 
-        refreshed = refresh_all_positions(db, force=False)
+        refreshed = self.service.refresh_all_positions(db, force=False)
 
         assert refreshed == 2
-        # Only 1 API call each despite 2 positions
         daily_refresh.assert_called_once()
         weekly_refresh.assert_called_once()
 
     def test_copies_daily_cache_to_duplicate_tickers(self, mocker):
-        """Cached daily data should be copied from representative to duplicates."""
         pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
         pos2 = FakePosition(ticker="AAPL", investment_type="long-term")
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos1, pos2]
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
 
-        def set_daily(position, api_key):
+        def set_daily(position):
             position.daily_close = 150.0
             position.daily_sma_21 = 148.0
             position.daily_market_date = date(2026, 4, 20)
             position.daily_retrieved_at = datetime(2026, 4, 21, 10, 0)
 
-        mocker.patch("app.market_data._refresh_daily", side_effect=set_daily)
+        mocker.patch.object(self.service, "_refresh_daily", side_effect=set_daily)
 
-        refresh_all_positions(db, force=False)
+        self.service.refresh_all_positions(db, force=False)
 
-        # Both positions should have the same cached daily data
         assert pos2.daily_close == 150.0
         assert pos2.daily_sma_21 == 148.0
 
     def test_mixed_types_same_ticker_fetches_weekly_for_long_term(self, mocker):
-        """When same ticker has both short-term and long-term positions,
-        weekly data should be fetched once (for the long-term one) and
-        not copied to the short-term position."""
         pos_short = FakePosition(ticker="AAPL", investment_type="short-term")
         pos_long = FakePosition(ticker="AAPL", investment_type="long-term")
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos_short, pos_long]
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
-        daily_refresh = mocker.patch("app.market_data._refresh_daily")
-        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=True)
+        daily_refresh = mocker.patch.object(self.service, "_refresh_daily")
+        weekly_refresh = mocker.patch.object(self.service, "_refresh_weekly")
 
-        refreshed = refresh_all_positions(db, force=False)
+        refreshed = self.service.refresh_all_positions(db, force=False)
 
         assert refreshed == 2
         daily_refresh.assert_called_once()
         weekly_refresh.assert_called_once()
-        # Weekly refresh should use the long-term position as representative
-        weekly_refresh.assert_called_with(pos_long, "key")
+        weekly_refresh.assert_called_with(pos_long)
 
     def test_short_term_positions_not_counted_for_weekly(self, mocker):
-        """Short-term positions with missing weekly data should not trigger weekly refresh."""
         pos = FakePosition(ticker="AAPL", investment_type="short-term", weekly_market_date=None)
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos]
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=True)
-        daily_refresh = mocker.patch("app.market_data._refresh_daily")
-        weekly_refresh = mocker.patch("app.market_data._refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=True)
+        daily_refresh = mocker.patch.object(self.service, "_refresh_daily")
+        weekly_refresh = mocker.patch.object(self.service, "_refresh_weekly")
 
-        refresh_all_positions(db, force=False)
+        self.service.refresh_all_positions(db, force=False)
 
         daily_refresh.assert_called_once()
         weekly_refresh.assert_not_called()
 
     def test_duplicate_error_not_propagated(self, mocker):
-        """refresh_error from the representative should not be copied to duplicates."""
         pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
         pos2 = FakePosition(ticker="AAPL", investment_type="long-term")
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos1, pos2]
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
-        mocker.patch("app.market_data._refresh_daily", side_effect=RuntimeError("boom"))
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch.object(
+            self.service, "_refresh_daily", side_effect=RuntimeError("boom")
+        )
 
-        refresh_all_positions(db, force=False)
+        self.service.refresh_all_positions(db, force=False)
 
         assert "boom" in pos1.refresh_error
         assert pos2.refresh_error is None
@@ -408,12 +385,13 @@ class TestRefreshAllPositions:
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos1, pos2]
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
-        mocker.patch("app.market_data._refresh_daily", side_effect=RuntimeError("boom"))
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch.object(
+            self.service, "_refresh_daily", side_effect=RuntimeError("boom")
+        )
 
-        refresh_all_positions(db, force=False)
+        self.service.refresh_all_positions(db, force=False)
 
         assert "boom" in pos1.refresh_error
         assert pos2.refresh_error == "previous error"
@@ -429,19 +407,18 @@ class TestRefreshAllPositions:
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos1, pos2]
 
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        mocker.patch("app.market_data.daily_data_is_stale", return_value=True)
-        mocker.patch("app.market_data.weekly_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
 
-        def set_daily(position, api_key):
+        def set_daily(position):
             position.daily_close = 150.0
             position.daily_sma_21 = 148.0
             position.daily_market_date = date(2026, 4, 20)
             position.daily_retrieved_at = datetime(2026, 4, 21, 10, 0)
 
-        mocker.patch("app.market_data._refresh_daily", side_effect=set_daily)
+        mocker.patch.object(self.service, "_refresh_daily", side_effect=set_daily)
 
-        refresh_all_positions(db, force=False)
+        self.service.refresh_all_positions(db, force=False)
 
         assert pos2.daily_close == 150.0
         assert pos2.refresh_error is None
@@ -475,41 +452,43 @@ class TestWeeklyBarCache:
             session.close()
             engine.dispose()
 
-    def test_is_stale_when_no_rows(self):
-        assert _weekly_bar_cache_is_stale(None) is True
+    @pytest.fixture()
+    def service(self):
+        mock_provider = Mock()
+        return MarketDataService(mock_provider)
 
-    def test_is_stale_when_latest_row_is_old(self, db):
+    def test_is_stale_when_no_rows(self):
+        assert weekly_bar_cache_is_stale(None) is True
+
+    def test_is_stale_when_latest_row_is_old(self):
         from app.models import MarketWeeklyBarCache
 
         latest = MarketWeeklyBarCache(
             ticker="IBM", bar_date=date(2020, 1, 3), close=100.0,
             retrieved_at=datetime.now(),
         )
-        assert _weekly_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is True
+        assert weekly_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is True
 
-    def test_is_fresh_when_latest_row_is_current(self, db):
+    def test_is_fresh_when_latest_row_is_current(self):
         from app.models import MarketWeeklyBarCache
 
-        # Most recently completed trading week ending Friday before today
-        target = _last_completed_trading_week_end(date(2025, 6, 15))
+        target = last_completed_trading_week_end(date(2025, 6, 15))
         latest = MarketWeeklyBarCache(
             ticker="IBM", bar_date=target, close=100.0,
             retrieved_at=datetime.now(),
         )
-        assert _weekly_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is False
+        assert weekly_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is False
 
-    def test_refresh_skips_when_no_tickers(self, db):
-        assert refresh_weekly_bar_cache(db, set(), lookback_weeks=10) == []
+    def test_refresh_skips_when_no_tickers(self, db, service):
+        assert service.refresh_weekly_bar_cache(db, set(), lookback_weeks=10) == []
 
-    def test_refresh_skips_when_lookback_zero(self, db):
-        assert refresh_weekly_bar_cache(db, {"IBM"}, lookback_weeks=0) == []
+    def test_refresh_skips_when_lookback_zero(self, db, service):
+        assert service.refresh_weekly_bar_cache(db, {"IBM"}, lookback_weeks=0) == []
 
     def test_refresh_upserts_and_trims(self, db, mocker):
-        """Refresh should write keep-window bars and delete older cached rows."""
         from app.alpha_vantage_client import WeeklyBar
         from app.models import MarketWeeklyBarCache
 
-        # Existing old row that should be trimmed.
         db.add(
             MarketWeeklyBarCache(
                 ticker="IBM",
@@ -520,20 +499,26 @@ class TestWeeklyBarCache:
         )
         db.commit()
 
-        # API returns 3 fresh bars
         bars = [
             WeeklyBar(date=date(2025, 6, 13), open=100.0, high=110.0, low=95.0, close=105.0, volume=2000.0),
             WeeklyBar(date=date(2025, 6, 6), open=98.0, high=105.0, low=92.0, close=100.0, volume=1800.0),
             WeeklyBar(date=date(2025, 5, 30), open=95.0, high=102.0, low=90.0, close=98.0, volume=1700.0),
         ]
-        mocker.patch("app.market_data.fetch_weekly_series", return_value=bars)
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+
+        mock_provider = Mock()
+        mock_provider.fetch_weekly_bars.return_value = bars
+        service = MarketDataService(mock_provider)
+
         mocker.patch(
-            "app.market_data._last_completed_trading_week_end",
+            "app.market_data.staleness.last_completed_trading_week_end",
+            return_value=date(2025, 6, 13),
+        )
+        mocker.patch(
+            "app.market_data.cache_repos.last_completed_trading_week_end",
             return_value=date(2025, 6, 13),
         )
 
-        errors = refresh_weekly_bar_cache(db, {"IBM"}, lookback_weeks=2, force=True)
+        errors = service.refresh_weekly_bar_cache(db, {"IBM"}, lookback_weeks=2, force=True)
         assert errors == []
 
         rows = (
@@ -542,7 +527,6 @@ class TestWeeklyBarCache:
             .order_by(MarketWeeklyBarCache.bar_date.desc())
             .all()
         )
-        # lookback=2 keeps 2 newest, drops the 3rd and prior cached old bar.
         assert [r.bar_date for r in rows] == [date(2025, 6, 13), date(2025, 6, 6)]
         assert rows[0].open == 100.0
         assert rows[0].high == 110.0
@@ -551,12 +535,11 @@ class TestWeeklyBarCache:
         assert rows[0].volume == 2000.0
 
     def test_refresh_records_error_on_exception(self, db, mocker):
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
-        mocker.patch(
-            "app.market_data.fetch_weekly_series",
-            side_effect=RuntimeError("boom"),
-        )
-        errors = refresh_weekly_bar_cache(db, {"BAD"}, lookback_weeks=4, force=True)
+        mock_provider = Mock()
+        mock_provider.fetch_weekly_bars.side_effect = RuntimeError("boom")
+        service = MarketDataService(mock_provider)
+
+        errors = service.refresh_weekly_bar_cache(db, {"BAD"}, lookback_weeks=4, force=True)
         assert len(errors) == 1
         assert "BAD" in errors[0]
 
@@ -578,13 +561,15 @@ class TestWeeklyBarCache:
         )
         db.commit()
 
-        result = load_weekly_bar_cache_for_tickers(db, {"A", "B", "MISSING"})
+        service = MarketDataService(Mock())
+        result = service.load_weekly_bar_cache_for_tickers(db, {"A", "B", "MISSING"})
         assert set(result.keys()) == {"A", "B"}
         assert [r.bar_date for r in result["A"]] == [date(2025, 6, 13), date(2025, 6, 6)]
         assert len(result["B"]) == 1
 
     def test_load_returns_empty_dict_for_no_tickers(self, db):
-        assert load_weekly_bar_cache_for_tickers(db, set()) == {}
+        service = MarketDataService(Mock())
+        assert service.load_weekly_bar_cache_for_tickers(db, set()) == {}
 
 
 class TestDailyBarCache:
@@ -611,7 +596,7 @@ class TestDailyBarCache:
             engine.dispose()
 
     def test_is_stale_when_no_rows(self):
-        assert _daily_bar_cache_is_stale(None) is True
+        assert daily_bar_cache_is_stale(None) is True
 
     def test_is_stale_when_latest_row_is_old(self):
         from app.models import MarketDailyBarCache
@@ -620,29 +605,30 @@ class TestDailyBarCache:
             ticker="IBM", bar_date=date(2020, 1, 3), close=100.0,
             retrieved_at=datetime.now(),
         )
-        assert _daily_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is True
+        assert daily_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is True
 
     def test_is_fresh_when_latest_row_is_current(self):
         from app.models import MarketDailyBarCache
 
-        target = _last_completed_trading_day(date(2025, 6, 15))
+        target = last_completed_trading_day(date(2025, 6, 15))
         latest = MarketDailyBarCache(
             ticker="IBM", bar_date=target, close=100.0,
             retrieved_at=datetime.now(),
         )
-        assert _daily_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is False
+        assert daily_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is False
 
     def test_refresh_skips_when_no_tickers(self, db):
-        assert refresh_daily_bar_cache(db, set(), lookback_days=10) == []
+        service = MarketDataService(Mock())
+        assert service.refresh_daily_bar_cache(db, set(), lookback_days=10) == []
 
     def test_refresh_skips_when_lookback_zero(self, db):
-        assert refresh_daily_bar_cache(db, {"IBM"}, lookback_days=0) == []
+        service = MarketDataService(Mock())
+        assert service.refresh_daily_bar_cache(db, {"IBM"}, lookback_days=0) == []
 
     def test_refresh_upserts_and_trims(self, db, mocker):
         from app.alpha_vantage_client import DailyBar
         from app.models import MarketDailyBarCache
 
-        # Pre-existing old row that should be trimmed
         db.add(MarketDailyBarCache(
             ticker="IBM", bar_date=date(2020, 1, 3), close=10.0,
             retrieved_at=datetime.now(),
@@ -655,15 +641,21 @@ class TestDailyBarCache:
             DailyBar(date=date(2025, 6, 11), close=98.0),
             DailyBar(date=date(2025, 6, 10), close=95.0),
         ]
-        mocker.patch("app.market_data.fetch_daily_series", return_value=bars)
-        mocker.patch("app.market_data.require_alpha_vantage_api_key", return_value="key")
+
+        mock_provider = Mock()
+        mock_provider.fetch_daily_bars.return_value = bars
+        service = MarketDataService(mock_provider)
+
         mocker.patch(
-            "app.market_data._last_completed_trading_day",
+            "app.market_data.staleness.last_completed_trading_day",
+            return_value=date(2025, 6, 13),
+        )
+        mocker.patch(
+            "app.market_data.cache_repos.last_completed_trading_day",
             return_value=date(2025, 6, 13),
         )
 
-        # lookback_days=2 → keeps lookback+1=3 newest bars
-        errors = refresh_daily_bar_cache(db, {"IBM"}, lookback_days=2, force=True)
+        errors = service.refresh_daily_bar_cache(db, {"IBM"}, lookback_days=2, force=True)
         assert errors == []
 
         rows = (
@@ -690,9 +682,11 @@ class TestDailyBarCache:
         ])
         db.commit()
 
-        result = load_daily_bar_cache_for_tickers(db, {"IBM", "SMH"})
+        service = MarketDataService(Mock())
+        result = service.load_daily_bar_cache_for_tickers(db, {"IBM", "SMH"})
         assert [r.bar_date for r in result["IBM"]] == [date(2025, 1, 3), date(2025, 1, 2)]
         assert [r.bar_date for r in result["SMH"]] == [date(2025, 1, 3)]
 
     def test_load_empty_tickers_returns_empty(self, db):
-        assert load_daily_bar_cache_for_tickers(db, set()) == {}
+        service = MarketDataService(Mock())
+        assert service.load_daily_bar_cache_for_tickers(db, set()) == {}
