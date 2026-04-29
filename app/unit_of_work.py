@@ -29,6 +29,9 @@ class UnitOfWork(Protocol):
     key_levels: KeyLevelRepository
     rule_configs: RuleConfigRepository
 
+    @property
+    def session(self) -> Session: ...
+
     def commit(self) -> None: ...
 
     def rollback(self) -> None: ...
@@ -71,3 +74,8 @@ class SqlAlchemyUnitOfWork:
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:
         self._session.close()
+
+
+def as_uow(session: Session) -> SqlAlchemyUnitOfWork:
+    """Wrap an existing SQLAlchemy session in the default unit-of-work."""
+    return SqlAlchemyUnitOfWork(session)

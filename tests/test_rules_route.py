@@ -11,7 +11,7 @@ from sqlalchemy.pool import StaticPool
 from app.database import get_uow
 from app.main import app
 from app.models import Base, Position, StrategyRuleConfig
-from app.unit_of_work import SqlAlchemyUnitOfWork
+from app.unit_of_work import SqlAlchemyUnitOfWork, as_uow
 from app.rule_engine import list_rule_specs_for_investment_type
 
 
@@ -42,11 +42,6 @@ def _setup_db():
 @pytest.fixture()
 def client():
     return TestClient(app)
-
-
-def as_uow(session):
-    return SqlAlchemyUnitOfWork(session)
-
 
 class TestRulesPage:
     def test_rules_page_renders_default_sections(self, client):
@@ -587,7 +582,7 @@ class TestWeeklyUpperWickRule:
         try:
             ensure_strategy_rule_defaults(as_uow(db))
             update_strategy_rule_config(
-                db, "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
+                as_uow(db), "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
             )
             assert get_required_weekly_bar_lookback(as_uow(db)) == 26
         finally:
@@ -630,7 +625,7 @@ class TestWeeklyUpperWickRule:
             # Disable SELL_MA_ALL to avoid interference; enable upper-wick rule.
             update_strategy_rule_config(as_uow(db), "long-term", "SELL_MA_ALL", enabled=False)
             update_strategy_rule_config(
-                db, "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
+                as_uow(db), "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
             )
         finally:
             db.close()
@@ -683,7 +678,7 @@ class TestDistributionClusterRules:
         try:
             ensure_strategy_rule_defaults(as_uow(db))
             update_strategy_rule_config(
-                db, "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
+                as_uow(db), "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
             )
             # max(baseline=20, cluster_window=8) = 20
             assert get_required_weekly_bar_lookback(as_uow(db)) == 20
@@ -726,7 +721,7 @@ class TestDistributionClusterRules:
             db.commit()
             update_strategy_rule_config(as_uow(db), "long-term", "SELL_MA_ALL", enabled=False)
             update_strategy_rule_config(
-                db, "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
+                as_uow(db), "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
             )
         finally:
             db.close()
@@ -778,7 +773,7 @@ class TestLowerHighLowerLowRules:
         try:
             ensure_strategy_rule_defaults(as_uow(db))
             update_strategy_rule_config(
-                db, "long-term", "TRIM_WEEKLY_FIRST_LOWER_HIGH", enabled=True
+                as_uow(db), "long-term", "TRIM_WEEKLY_FIRST_LOWER_HIGH", enabled=True
             )
             assert get_required_weekly_bar_lookback(as_uow(db)) == 30
         finally:
@@ -823,7 +818,7 @@ class TestLowerHighLowerLowRules:
             ensure_strategy_rule_defaults(as_uow(db))
             assert get_required_daily_bar_lookback(as_uow(db)) == 0
             update_strategy_rule_config(
-                db, "long-term", "TRIM_RELATIVE_WEAKNESS_VS_SECTOR", enabled=True
+                as_uow(db), "long-term", "TRIM_RELATIVE_WEAKNESS_VS_SECTOR", enabled=True
             )
             assert get_required_daily_bar_lookback(as_uow(db)) == 63
         finally:

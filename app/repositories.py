@@ -6,8 +6,8 @@ SQLAlchemy directly.  The Protocol classes define the contract; the
 ``SqlAlchemy*`` classes are the default implementations backed by a
 SQLAlchemy ``Session``.
 
-Market-data cache repositories live in ``app.market_data.cache_repos``
-since they are tightly coupled to the market data service.
+Market-data cache access lives in ``app.market_data`` since it is tightly
+coupled to the market data service.
 """
 
 from __future__ import annotations

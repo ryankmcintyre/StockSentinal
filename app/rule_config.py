@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 
 from app.models import StrategyRuleConfig
-from app.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWork
+from app.unit_of_work import UnitOfWork
 from app.rule_engine import (
     RULE_CATALOG,
     RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
@@ -53,15 +53,8 @@ def _normalize_investment_type(value: str) -> InvestmentType:
 _DEPRECATED_SELL_RULE_KEYS = {"LT-SELL-20W-MA", "ST-SELL-21D-MA"}
 
 
-def _coerce_unit_of_work(uow: UnitOfWork) -> UnitOfWork:
-    if hasattr(uow, "rule_configs"):
-        return uow
-    return SqlAlchemyUnitOfWork(uow)
-
-
 def _migrate_deprecated_sell_rules(uow: UnitOfWork) -> bool:
     """Remove deprecated hardcoded sell rule rows, replaced by SELL_MA_ALL."""
-    uow = _coerce_unit_of_work(uow)
     changed = False
     for old_key in _DEPRECATED_SELL_RULE_KEYS:
         rows = uow.rule_configs.list_by_key(old_key)
@@ -78,7 +71,6 @@ def ensure_strategy_rule_defaults(uow: UnitOfWork) -> None:
     default unless they are part of the strategy defaults. Deprecated sell
     rule keys are cleaned up.
     """
-    uow = _coerce_unit_of_work(uow)
     changed = _migrate_deprecated_sell_rules(uow)
 
     for investment_type in _supported_investment_types():
@@ -164,7 +156,6 @@ def get_enabled_rule_selections_by_investment_type(
     uow: UnitOfWork,
 ) -> dict[str, list[StrategyRuleSelection]]:
     """Return enabled rule selections keyed by investment type value."""
-    uow = _coerce_unit_of_work(uow)
     ensure_strategy_rule_defaults(uow)
 
     selections: dict[str, list[StrategyRuleSelection]] = {}
@@ -182,7 +173,6 @@ def get_enabled_rule_selections_by_investment_type(
 
 def get_rule_management_sections(uow: UnitOfWork) -> list[dict]:
     """Build template-ready rule management sections for long/short strategies."""
-    uow = _coerce_unit_of_work(uow)
     ensure_strategy_rule_defaults(uow)
 
     sections: list[dict] = []
@@ -357,7 +347,6 @@ def update_strategy_rule_config(
     enabled: bool,
 ) -> None:
     """Upsert a strategy-rule selection row."""
-    uow = _coerce_unit_of_work(uow)
     investment_type = _normalize_investment_type(investment_type_value)
     spec = RULE_CATALOG.get(rule_key)
     if spec is None:
@@ -397,7 +386,6 @@ def update_strategy_rule_config(
 
 def get_ma_conditions(uow: UnitOfWork, investment_type_value: str) -> list[dict]:
     """Return the MA conditions for SELL_MA_ALL for a given investment type."""
-    uow = _coerce_unit_of_work(uow)
     ensure_strategy_rule_defaults(uow)
     row = uow.rule_configs.get_by_investment_type_and_key(
         investment_type_value, RULE_KEY_SELL_MA_ALL
@@ -415,7 +403,6 @@ def add_ma_condition(
     time_period: int,
 ) -> list[str]:
     """Add an MA condition.  Returns list of validation errors (empty on success)."""
-    uow = _coerce_unit_of_work(uow)
     _normalize_investment_type(investment_type_value)
     ensure_strategy_rule_defaults(uow)
 
@@ -453,7 +440,6 @@ def remove_ma_condition(
     Returns list of validation errors (empty on success).
     At least one condition must remain when the rule is enabled.
     """
-    uow = _coerce_unit_of_work(uow)
     _normalize_investment_type(investment_type_value)
     ensure_strategy_rule_defaults(uow)
 
@@ -493,7 +479,6 @@ def get_required_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
 
     Used by the market data refresh logic to know which SMA indicators to fetch.
     """
-    uow = _coerce_unit_of_work(uow)
     ensure_strategy_rule_defaults(uow)
     indicators: set[tuple[str, int]] = set()
 
@@ -521,7 +506,6 @@ def get_required_atr_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
 
     Used by the market data refresh logic to know which ATR indicators to fetch.
     """
-    uow = _coerce_unit_of_work(uow)
     ensure_strategy_rule_defaults(uow)
     indicators: set[tuple[str, int]] = set()
 
@@ -543,7 +527,6 @@ def get_required_weekly_bar_lookback(uow: UnitOfWork) -> int:
 
     Returns 0 when no enabled rule needs weekly OHLC history.
     """
-    uow = _coerce_unit_of_work(uow)
     ensure_strategy_rule_defaults(uow)
     max_lookback = 0
     for investment_type in _supported_investment_types():
@@ -579,7 +562,6 @@ def get_required_daily_bar_lookback(uow: UnitOfWork) -> int:
 
     Returns 0 when no enabled rule needs daily close history.
     """
-    uow = _coerce_unit_of_work(uow)
     ensure_strategy_rule_defaults(uow)
     max_lookback = 0
     for investment_type in _supported_investment_types():
