@@ -6,12 +6,19 @@ use for anything market-data related.
 """
 
 import logging
+from datetime import date as date_type
 from datetime import datetime
 from typing import Optional
 
 from sqlalchemy.orm import Session
 
-from app.alpha_vantage_client import AlphaVantageError, DailyBar
+from app.alpha_vantage_client import (
+    ATRPoint,
+    AlphaVantageError,
+    DailyBar,
+    SMAPoint,
+    WeeklyBar,
+)
 from app.models import Position
 from app.schemas import InvestmentType
 from app.unit_of_work import as_uow
@@ -34,6 +41,79 @@ from .staleness import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_sma(closes: list[float], period: int) -> Optional[float]:
+    """Compute a simple moving average from a list of close prices.
+
+    *closes* should be ordered most-recent-first. Returns None if
+    fewer than *period* values are available.
+    """
+    if len(closes) < period:
+        return None
+    return sum(closes[:period]) / period
+
+
+class _FetchCache:
+    """Per-operation cache for API responses.
+
+    Created at the start of a refresh operation and passed to sub-methods
+    so that each API endpoint is called at most once per ticker per
+    operation, regardless of how many sub-steps need the data.
+    """
+
+    def __init__(self, provider: MarketDataProvider) -> None:
+        self._provider = provider
+        self._daily_bars: dict[str, list[DailyBar]] = {}
+        self._weekly_bars: dict[str, list[WeeklyBar]] = {}
+        self._sma: dict[tuple[str, str, int], list[SMAPoint]] = {}
+        self._atr: dict[tuple[str, str, int], list[ATRPoint]] = {}
+
+    def get_daily_bars(self, ticker: str) -> list[DailyBar]:
+        if ticker not in self._daily_bars:
+            self._daily_bars[ticker] = self._provider.fetch_daily_bars(ticker)
+        return self._daily_bars[ticker]
+
+    def get_weekly_bars(self, ticker: str) -> list[WeeklyBar]:
+        if ticker not in self._weekly_bars:
+            self._weekly_bars[ticker] = self._provider.fetch_weekly_bars(ticker)
+        return self._weekly_bars[ticker]
+
+    def get_sma(self, ticker: str, interval: str, time_period: int) -> list[SMAPoint]:
+        key = (ticker, interval, time_period)
+        if key not in self._sma:
+            self._sma[key] = self._provider.fetch_sma(
+                ticker, interval=interval, time_period=time_period,
+            )
+        return self._sma[key]
+
+    def get_atr(self, ticker: str, interval: str, time_period: int) -> list[ATRPoint]:
+        key = (ticker, interval, time_period)
+        if key not in self._atr:
+            self._atr[key] = self._provider.fetch_atr(
+                ticker, interval=interval, time_period=time_period,
+            )
+        return self._atr[key]
+
+    def compute_daily_sma(self, ticker: str, period: int) -> Optional[float]:
+        """Compute SMA from cached daily bars, avoiding an API call."""
+        bars = self.get_daily_bars(ticker)
+        closes = [b.close for b in bars]
+        return _compute_sma(closes, period)
+
+    def compute_weekly_sma(
+        self, ticker: str, period: int, as_of: Optional[date_type] = None,
+    ) -> Optional[float]:
+        """Compute SMA from cached weekly bars, avoiding an API call.
+
+        If *as_of* is provided, only bars on or before that date are
+        considered (used to align with the last completed trading week).
+        """
+        bars = self.get_weekly_bars(ticker)
+        if as_of:
+            bars = [b for b in bars if b.date <= as_of]
+        closes = [b.close for b in bars]
+        return _compute_sma(closes, period)
 
 
 class MarketDataService:
@@ -90,17 +170,30 @@ class MarketDataService:
         ticker: str,
         interval: str,
         time_period: int,
-        close_cache: dict[tuple[str, str], tuple[float, "date"]],
+        close_cache: dict[tuple[str, str], tuple[float, "date_type"]],
+        fetch_cache: Optional["_FetchCache"] = None,
     ) -> None:
-        """Fetch and upsert one indicator cache entry."""
+        """Fetch and upsert one indicator cache entry.
+
+        When *fetch_cache* is provided, bars and SMA are computed locally
+        from already-fetched data, avoiding redundant API calls.
+        """
         close_key = (ticker, interval)
         if close_key not in close_cache:
             if interval == "daily":
-                bars = self._provider.fetch_daily_bars(ticker)
+                bars = (
+                    fetch_cache.get_daily_bars(ticker)
+                    if fetch_cache
+                    else self._provider.fetch_daily_bars(ticker)
+                )
                 if bars:
                     close_cache[close_key] = (bars[0].close, bars[0].date)
             elif interval == "weekly":
-                bars = self._provider.fetch_weekly_bars(ticker)
+                bars = (
+                    fetch_cache.get_weekly_bars(ticker)
+                    if fetch_cache
+                    else self._provider.fetch_weekly_bars(ticker)
+                )
                 if bars:
                     target_friday = last_completed_trading_week_end()
                     bar = bars[0]
@@ -110,25 +203,41 @@ class MarketDataService:
 
         close_val, close_date = close_cache.get(close_key, (None, None))
 
-        sma_val = None
-        sma_date = None
-        sma_points = self._provider.fetch_sma(
-            ticker, interval=interval, time_period=time_period,
-        )
-        if sma_points:
-            if interval == "weekly":
+        sma_val: Optional[float] = None
+        sma_date: Optional[date_type] = None
+
+        if fetch_cache:
+            # Compute SMA locally from cached bars
+            if interval == "daily":
+                sma_val = fetch_cache.compute_daily_sma(ticker, time_period)
+                if sma_val is not None:
+                    bars = fetch_cache.get_daily_bars(ticker)
+                    sma_date = bars[0].date if bars else None
+            else:
                 target_friday = last_completed_trading_week_end()
-                for pt in sma_points:
-                    if pt.date <= target_friday:
-                        sma_val = pt.sma
-                        sma_date = pt.date
-                        break
+                sma_val = fetch_cache.compute_weekly_sma(
+                    ticker, time_period, as_of=target_friday,
+                )
+                if sma_val is not None:
+                    sma_date = target_friday
+        else:
+            sma_points = self._provider.fetch_sma(
+                ticker, interval=interval, time_period=time_period,
+            )
+            if sma_points:
+                if interval == "weekly":
+                    target_friday = last_completed_trading_week_end()
+                    for pt in sma_points:
+                        if pt.date <= target_friday:
+                            sma_val = pt.sma
+                            sma_date = pt.date
+                            break
+                    else:
+                        sma_val = sma_points[0].sma
+                        sma_date = sma_points[0].date
                 else:
                     sma_val = sma_points[0].sma
                     sma_date = sma_points[0].date
-            else:
-                sma_val = sma_points[0].sma
-                sma_date = sma_points[0].date
 
         self._indicator_repo.upsert(
             db, ticker, interval, time_period,
@@ -142,6 +251,7 @@ class MarketDataService:
         tickers: set[str],
         required_indicators: set[tuple[str, int]],
         force: bool = False,
+        fetch_cache: Optional["_FetchCache"] = None,
     ) -> list[str]:
         """Refresh the indicator cache for given tickers and indicators.
 
@@ -151,7 +261,7 @@ class MarketDataService:
             return []
 
         errors: list[str] = []
-        close_cache: dict[tuple[str, str], tuple[float, "date"]] = {}
+        close_cache: dict[tuple[str, str], tuple[float, "date_type"]] = {}
 
         for ticker in sorted(tickers):
             for interval, time_period in sorted(required_indicators):
@@ -164,6 +274,7 @@ class MarketDataService:
                 try:
                     self._refresh_indicator_cache_entry(
                         db, ticker, interval, time_period, close_cache,
+                        fetch_cache=fetch_cache,
                     )
                 except Exception as exc:
                     msg = f"Indicator cache refresh failed for {ticker} {interval} SMA-{time_period}: {exc}"
@@ -177,10 +288,15 @@ class MarketDataService:
 
     def _refresh_atr_cache_entry(
         self, db: Session, ticker: str, interval: str, time_period: int,
+        fetch_cache: Optional["_FetchCache"] = None,
     ) -> None:
         """Fetch and upsert one ATR cache entry."""
-        points = self._provider.fetch_atr(
-            ticker, interval=interval, time_period=time_period,
+        points = (
+            fetch_cache.get_atr(ticker, interval, time_period)
+            if fetch_cache
+            else self._provider.fetch_atr(
+                ticker, interval=interval, time_period=time_period,
+            )
         )
         atr_val: Optional[float] = None
         atr_date = None
@@ -210,6 +326,7 @@ class MarketDataService:
         tickers: set[str],
         required_atr_indicators: set[tuple[str, int]],
         force: bool = False,
+        fetch_cache: Optional["_FetchCache"] = None,
     ) -> list[str]:
         """Refresh the ATR cache. Returns list of error messages."""
         if not tickers or not required_atr_indicators:
@@ -227,6 +344,7 @@ class MarketDataService:
                 try:
                     self._refresh_atr_cache_entry(
                         db, ticker, interval, time_period,
+                        fetch_cache=fetch_cache,
                     )
                 except Exception as exc:
                     msg = f"ATR cache refresh failed for {ticker} {interval} ATR-{time_period}: {exc}"
@@ -244,6 +362,7 @@ class MarketDataService:
         tickers: set[str],
         lookback_weeks: int,
         force: bool = False,
+        fetch_cache: Optional["_FetchCache"] = None,
     ) -> list[str]:
         """Refresh the weekly OHLC bar cache. Returns list of error messages."""
         if not tickers or lookback_weeks <= 0:
@@ -261,7 +380,11 @@ class MarketDataService:
                     continue
 
             try:
-                bars = self._provider.fetch_weekly_bars(ticker)
+                bars = (
+                    fetch_cache.get_weekly_bars(ticker)
+                    if fetch_cache
+                    else self._provider.fetch_weekly_bars(ticker)
+                )
                 if bars:
                     self._weekly_bar_repo.upsert_bars(
                         db, ticker, bars, lookback_weeks,
@@ -282,6 +405,7 @@ class MarketDataService:
         tickers: set[str],
         lookback_days: int,
         force: bool = False,
+        fetch_cache: Optional["_FetchCache"] = None,
     ) -> list[str]:
         """Refresh the daily close bar cache. Returns list of error messages."""
         if not tickers or lookback_days <= 0:
@@ -298,7 +422,11 @@ class MarketDataService:
                     continue
 
             try:
-                bars = self._provider.fetch_daily_bars(ticker)
+                bars = (
+                    fetch_cache.get_daily_bars(ticker)
+                    if fetch_cache
+                    else self._provider.fetch_daily_bars(ticker)
+                )
                 if bars:
                     self._daily_bar_repo.upsert_bars(
                         db, ticker, bars, lookback_days,
@@ -317,12 +445,18 @@ class MarketDataService:
     def _needs_weekly(position: Position) -> bool:
         return position.investment_type == InvestmentType.long_term
 
-    def _refresh_daily(self, position: Position) -> None:
+    def _refresh_daily(
+        self, position: Position, fetch_cache: Optional["_FetchCache"] = None,
+    ) -> None:
         """Fetch and cache daily close + SMA-21 for a position."""
         symbol = position.ticker
         logger.info("Refreshing daily data for %s", symbol)
 
-        bars = self._provider.fetch_daily_bars(symbol)
+        bars = (
+            fetch_cache.get_daily_bars(symbol)
+            if fetch_cache
+            else self._provider.fetch_daily_bars(symbol)
+        )
         if not bars:
             raise AlphaVantageError(f"No daily bars returned for {symbol}")
 
@@ -330,20 +464,33 @@ class MarketDataService:
         position.daily_close = latest_bar.close
         position.daily_market_date = latest_bar.date
 
-        sma_points = self._provider.fetch_sma(
-            symbol, interval="daily", time_period=21,
-        )
-        if sma_points:
-            position.daily_sma_21 = sma_points[0].sma
+        # Compute SMA-21 locally from bars to avoid an extra API call
+        sma_21 = _compute_sma([b.close for b in bars], 21)
+        if sma_21 is not None:
+            position.daily_sma_21 = sma_21
+        elif not fetch_cache:
+            # Fallback to API only if we don't have a cache (shouldn't happen
+            # with compact output returning ~100 bars)
+            sma_points = self._provider.fetch_sma(
+                symbol, interval="daily", time_period=21,
+            )
+            if sma_points:
+                position.daily_sma_21 = sma_points[0].sma
 
         position.daily_retrieved_at = datetime.now()
 
-    def _refresh_weekly(self, position: Position) -> None:
+    def _refresh_weekly(
+        self, position: Position, fetch_cache: Optional["_FetchCache"] = None,
+    ) -> None:
         """Fetch and cache weekly close + SMA-20 for a position."""
         symbol = position.ticker
         logger.info("Refreshing weekly data for %s", symbol)
 
-        bars = self._provider.fetch_weekly_bars(symbol)
+        bars = (
+            fetch_cache.get_weekly_bars(symbol)
+            if fetch_cache
+            else self._provider.fetch_weekly_bars(symbol)
+        )
         if not bars:
             raise AlphaVantageError(f"No weekly bars returned for {symbol}")
 
@@ -355,16 +502,22 @@ class MarketDataService:
         position.weekly_close = latest_bar.close
         position.weekly_market_date = latest_bar.date
 
-        sma_points = self._provider.fetch_sma(
-            symbol, interval="weekly", time_period=20,
-        )
-        if sma_points:
-            for pt in sma_points:
-                if pt.date <= target_friday:
-                    position.weekly_sma_20 = pt.sma
-                    break
-            else:
-                position.weekly_sma_20 = sma_points[0].sma
+        # Compute SMA-20 locally from weekly bars up to the target week
+        completed_bars = [b for b in bars if b.date <= target_friday]
+        sma_20 = _compute_sma([b.close for b in completed_bars], 20)
+        if sma_20 is not None:
+            position.weekly_sma_20 = sma_20
+        elif not fetch_cache:
+            sma_points = self._provider.fetch_sma(
+                symbol, interval="weekly", time_period=20,
+            )
+            if sma_points:
+                for pt in sma_points:
+                    if pt.date <= target_friday:
+                        position.weekly_sma_20 = pt.sma
+                        break
+                else:
+                    position.weekly_sma_20 = sma_points[0].sma
 
         position.weekly_retrieved_at = datetime.now()
 
@@ -394,14 +547,18 @@ class MarketDataService:
         ``position.refresh_error`` so the UI can report them.
 
         Also refreshes the indicator / ATR / bar caches for configured rules.
+
+        Uses a per-operation fetch cache so that each API endpoint is called
+        at most once per ticker, regardless of how many sub-steps need the data.
         """
         errors: list[str] = []
+        cache = _FetchCache(self._provider)
 
         # Daily refresh
         if force or daily_data_is_stale(position):
             logger.debug("%s daily data is stale, refreshing", position.ticker)
             try:
-                self._refresh_daily(position)
+                self._refresh_daily(position, fetch_cache=cache)
             except Exception as exc:
                 logger.exception("Daily refresh failed for %s", position.ticker)
                 errors.append(f"Daily refresh failed: {exc}")
@@ -413,7 +570,7 @@ class MarketDataService:
             if force or weekly_data_is_stale(position):
                 logger.debug("%s weekly data is stale, refreshing", position.ticker)
                 try:
-                    self._refresh_weekly(position)
+                    self._refresh_weekly(position, fetch_cache=cache)
                 except Exception as exc:
                     logger.exception(
                         "Weekly refresh failed for %s: %s", position.ticker, exc,
@@ -435,6 +592,7 @@ class MarketDataService:
         if required:
             cache_errors = self.refresh_indicator_cache(
                 db, {position.ticker}, required, force=force,
+                fetch_cache=cache,
             )
             errors.extend(cache_errors)
 
@@ -442,6 +600,7 @@ class MarketDataService:
         if required_atr:
             atr_errors = self.refresh_atr_cache(
                 db, {position.ticker}, required_atr, force=force,
+                fetch_cache=cache,
             )
             errors.extend(atr_errors)
 
@@ -449,6 +608,7 @@ class MarketDataService:
         if weekly_lookback > 0:
             weekly_bar_errors = self.refresh_weekly_bar_cache(
                 db, {position.ticker}, weekly_lookback, force=force,
+                fetch_cache=cache,
             )
             errors.extend(weekly_bar_errors)
 
@@ -459,6 +619,7 @@ class MarketDataService:
                 daily_tickers: set[str] = {position.ticker, benchmark.upper()}
                 daily_bar_errors = self.refresh_daily_bar_cache(
                     db, daily_tickers, daily_lookback, force=force,
+                    fetch_cache=cache,
                 )
                 errors.extend(daily_bar_errors)
 
@@ -482,6 +643,9 @@ class MarketDataService:
             "Starting refresh for %d positions (force=%s)",
             len(positions), force,
         )
+
+        # Single fetch cache shared across the entire refresh-all operation
+        cache = _FetchCache(self._provider)
 
         # Group positions by ticker
         ticker_groups: dict[str, list[Position]] = {}
@@ -513,7 +677,7 @@ class MarketDataService:
             daily_ok = False
             if group_needs_daily:
                 try:
-                    self._refresh_daily(representative)
+                    self._refresh_daily(representative, fetch_cache=cache)
                     daily_ok = True
                 except Exception as exc:
                     logger.exception("Daily refresh failed for %s", ticker)
@@ -522,7 +686,7 @@ class MarketDataService:
             weekly_ok = False
             if group_needs_weekly:
                 try:
-                    self._refresh_weekly(representative)
+                    self._refresh_weekly(representative, fetch_cache=cache)
                     weekly_ok = True
                 except Exception as exc:
                     logger.exception("Weekly refresh failed for %s", ticker)
@@ -563,6 +727,7 @@ class MarketDataService:
             all_tickers = set(ticker_groups.keys())
             cache_errors = self.refresh_indicator_cache(
                 db, all_tickers, required, force=force,
+                fetch_cache=cache,
             )
             if cache_errors:
                 logger.warning("Indicator cache refresh errors: %s", cache_errors)
@@ -572,6 +737,7 @@ class MarketDataService:
             all_tickers = set(ticker_groups.keys())
             atr_errors = self.refresh_atr_cache(
                 db, all_tickers, required_atr, force=force,
+                fetch_cache=cache,
             )
             if atr_errors:
                 logger.warning("ATR cache refresh errors: %s", atr_errors)
@@ -581,6 +747,7 @@ class MarketDataService:
             all_tickers = set(ticker_groups.keys())
             bar_errors = self.refresh_weekly_bar_cache(
                 db, all_tickers, weekly_lookback, force=force,
+                fetch_cache=cache,
             )
             if bar_errors:
                 logger.warning("Weekly bar cache refresh errors: %s", bar_errors)
@@ -596,6 +763,7 @@ class MarketDataService:
             if daily_tickers:
                 daily_errors = self.refresh_daily_bar_cache(
                     db, daily_tickers, daily_lookback, force=force,
+                    fetch_cache=cache,
                 )
                 if daily_errors:
                     logger.warning("Daily bar cache refresh errors: %s", daily_errors)

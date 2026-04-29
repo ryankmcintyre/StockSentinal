@@ -144,15 +144,6 @@ class WeeklyBarCacheRepository:
             .all()
         )
 
-    def get_all_for_ticker(
-        self, db: Session, ticker: str,
-    ) -> list[MarketWeeklyBarCache]:
-        return (
-            db.query(MarketWeeklyBarCache)
-            .filter(MarketWeeklyBarCache.ticker == ticker)
-            .all()
-        )
-
     def upsert_bars(
         self, db: Session, ticker: str, bars: list, lookback_weeks: int,
     ) -> None:
@@ -162,10 +153,27 @@ class WeeklyBarCacheRepository:
         completed.sort(key=lambda b: b.date, reverse=True)
         keep = completed[:lookback_weeks]
 
-        existing_rows = self.get_all_for_ticker(db, ticker)
+        if not keep:
+            return
+
+        # Batch delete: remove all bars for this ticker older than the cutoff
+        cutoff_date = keep[-1].date
+        db.query(MarketWeeklyBarCache).filter(
+            MarketWeeklyBarCache.ticker == ticker,
+            MarketWeeklyBarCache.bar_date < cutoff_date,
+        ).delete(synchronize_session="fetch")
+
+        # Upsert only the bars we're keeping
+        existing_rows = (
+            db.query(MarketWeeklyBarCache)
+            .filter(
+                MarketWeeklyBarCache.ticker == ticker,
+                MarketWeeklyBarCache.bar_date >= cutoff_date,
+            )
+            .all()
+        )
         rows_by_date = {row.bar_date: row for row in existing_rows}
 
-        keep_dates = {b.date for b in keep}
         now = datetime.now()
         for bar in keep:
             row = rows_by_date.get(bar.date)
@@ -178,10 +186,6 @@ class WeeklyBarCacheRepository:
             row.close = bar.close
             row.volume = bar.volume
             row.retrieved_at = now
-
-        for existing_date, row in rows_by_date.items():
-            if existing_date not in keep_dates:
-                db.delete(row)
 
     def load_for_tickers(
         self, db: Session, tickers: set[str],
@@ -232,13 +236,26 @@ class DailyBarCacheRepository:
         completed.sort(key=lambda b: b.date, reverse=True)
         keep = completed[: lookback_days + 1]
 
+        if not keep:
+            return
+
+        # Batch delete: remove all bars for this ticker older than the cutoff
+        cutoff_date = keep[-1].date
+        db.query(MarketDailyBarCache).filter(
+            MarketDailyBarCache.ticker == ticker,
+            MarketDailyBarCache.bar_date < cutoff_date,
+        ).delete(synchronize_session="fetch")
+
+        # Upsert only the bars we're keeping
         existing_rows = (
             db.query(MarketDailyBarCache)
-            .filter(MarketDailyBarCache.ticker == ticker)
+            .filter(
+                MarketDailyBarCache.ticker == ticker,
+                MarketDailyBarCache.bar_date >= cutoff_date,
+            )
             .all()
         )
         rows_by_date = {row.bar_date: row for row in existing_rows}
-        keep_dates = {b.date for b in keep}
         now = datetime.now()
         for bar in keep:
             row = rows_by_date.get(bar.date)
@@ -247,10 +264,6 @@ class DailyBarCacheRepository:
                 db.add(row)
             row.close = bar.close
             row.retrieved_at = now
-
-        for existing_date, row in rows_by_date.items():
-            if existing_date not in keep_dates:
-                db.delete(row)
 
     def load_for_tickers(
         self, db: Session, tickers: set[str],

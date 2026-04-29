@@ -171,7 +171,9 @@ class TestRefreshPosition:
 
         self.service.refresh_position(position, db, force=False)
 
-        self.service._refresh_daily.assert_called_once_with(position)
+        self.service._refresh_daily.assert_called_once()
+        call_args = self.service._refresh_daily.call_args
+        assert call_args[0][0] is position
         self.service._refresh_weekly.assert_not_called()
         assert position.refresh_error is None
         db.commit.assert_called_once()
@@ -188,7 +190,9 @@ class TestRefreshPosition:
         self.service.refresh_position(position, db, force=False)
 
         self.service._refresh_daily.assert_not_called()
-        self.service._refresh_weekly.assert_called_once_with(position)
+        self.service._refresh_weekly.assert_called_once()
+        call_args = self.service._refresh_weekly.call_args
+        assert call_args[0][0] is position
         assert position.refresh_error is None
         db.commit.assert_called_once()
 
@@ -311,7 +315,7 @@ class TestRefreshAllPositions:
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
 
-        def set_daily(position):
+        def set_daily(position, **kwargs):
             position.daily_close = 150.0
             position.daily_sma_21 = 148.0
             position.daily_market_date = date(2026, 4, 20)
@@ -340,7 +344,6 @@ class TestRefreshAllPositions:
         assert refreshed == 2
         daily_refresh.assert_called_once()
         weekly_refresh.assert_called_once()
-        weekly_refresh.assert_called_with(pos_long)
 
     def test_short_term_positions_not_counted_for_weekly(self, mocker):
         pos = FakePosition(ticker="AAPL", investment_type="short-term", weekly_market_date=None)
@@ -410,7 +413,7 @@ class TestRefreshAllPositions:
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
 
-        def set_daily(position):
+        def set_daily(position, **kwargs):
             position.daily_close = 150.0
             position.daily_sma_21 = 148.0
             position.daily_market_date = date(2026, 4, 20)
