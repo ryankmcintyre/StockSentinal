@@ -8,7 +8,6 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy.orm import Session
 
 load_dotenv()
 
@@ -16,7 +15,7 @@ from app.alpha_vantage_client import (
     AlphaVantageError,
 )
 from app.config import get_alpha_vantage_api_key, get_log_level
-from app.database import SessionLocal, get_db, init_db
+from app.database import SessionLocal, get_uow, init_db
 from app.market_data import (
     fetch_company_name,
     fetch_daily_series,
@@ -28,6 +27,7 @@ from app.market_data import (
     refresh_position,
 )
 from app.models import Position, PositionKeyLevel
+from app.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWork
 from app.rule_config import (
     add_ma_condition,
     get_enabled_rule_selections_by_investment_type,
@@ -68,13 +68,13 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     logger.info("Starting Stock Sentinel — initializing database")
     init_db()
-    db = SessionLocal()
+    uow = SqlAlchemyUnitOfWork(SessionLocal())
     try:
-        cleared = _clear_stale_refresh_flags(db)
+        cleared = _clear_stale_refresh_flags(uow)
         if cleared:
             logger.info("Cleared %d stale refresh-in-progress flags", cleared)
     finally:
-        db.close()
+        uow.session.close()
     logger.info("Database initialized, application ready")
     yield
 
@@ -107,7 +107,7 @@ def _daily_bars_for_position(pos: Position, all_daily_bars: dict[str, list]) -> 
 
 
 def _mark_positions_refresh_state(
-    db: Session,
+    uow: UnitOfWork,
     position_ids: list[int],
     *,
     in_progress: bool,
@@ -116,26 +116,22 @@ def _mark_positions_refresh_state(
     if not position_ids:
         return 0
 
-    positions = db.query(Position).filter(Position.id.in_(position_ids)).all()
+    positions = uow.positions.get_by_ids(position_ids)
     now = datetime.now()
     for pos in positions:
         pos.refresh_in_progress = in_progress
         pos.refresh_started_at = now if in_progress else None
         if in_progress:
             pos.refresh_error = None
-    db.commit()
+    uow.commit()
     return len(positions)
 
 
-def _clear_stale_refresh_flags(db: Session) -> int:
+def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
     """Reset stale in-progress flags left behind by interrupted refreshes."""
     cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
     stale_positions = (
-        db.query(Position)
-        .filter(Position.refresh_in_progress.is_(True))
-        .filter(Position.refresh_started_at.is_not(None))
-        .filter(Position.refresh_started_at < cutoff)
-        .all()
+        uow.positions.list_stale_refreshing(cutoff)
     )
     if not stale_positions:
         return 0
@@ -143,7 +139,7 @@ def _clear_stale_refresh_flags(db: Session) -> int:
     for pos in stale_positions:
         pos.refresh_in_progress = False
         pos.refresh_started_at = None
-    db.commit()
+    uow.commit()
     return len(stale_positions)
 
 
@@ -254,11 +250,11 @@ def _enrich_position(
 
 
 @app.get("/")
-def portfolio(request: Request, db: Session = Depends(get_db)):
+def portfolio(request: Request, uow: UnitOfWork = Depends(get_uow)):
     """Dashboard: list all positions with verdicts, sorted by urgency."""
-    _clear_stale_refresh_flags(db)
-    positions = db.query(Position).all()
-    enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(db)
+    _clear_stale_refresh_flags(uow)
+    positions = uow.positions.list_all()
+    enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(uow)
 
     # Preload indicator cache for all tickers to avoid N+1 queries
     all_tickers = {p.ticker for p in positions}
@@ -267,11 +263,11 @@ def portfolio(request: Request, db: Session = Depends(get_db)):
         for p in positions
         if p.sector_benchmark_ticker
     }
-    all_indicator_cache = load_indicator_cache_for_tickers(db, all_tickers)
-    all_atr_cache = load_atr_cache_for_tickers(db, all_tickers)
-    all_weekly_bars = load_weekly_bar_cache_for_tickers(db, all_tickers)
+    all_indicator_cache = load_indicator_cache_for_tickers(uow.session, all_tickers)
+    all_atr_cache = load_atr_cache_for_tickers(uow.session, all_tickers)
+    all_weekly_bars = load_weekly_bar_cache_for_tickers(uow.session, all_tickers)
     all_daily_bars = load_daily_bar_cache_for_tickers(
-        db, all_tickers | benchmark_tickers
+        uow.session, all_tickers | benchmark_tickers
     )
 
     enriched = [
@@ -318,9 +314,9 @@ def add_position_form(request: Request):
 
 
 @app.get("/rules")
-def rules_page(request: Request, db: Session = Depends(get_db)):
+def rules_page(request: Request, uow: UnitOfWork = Depends(get_uow)):
     """Show rule configuration for long-term and short-term strategies."""
-    sections = get_rule_management_sections(db)
+    sections = get_rule_management_sections(uow)
     return templates.TemplateResponse(
         request,
         "rules.html",
@@ -333,12 +329,12 @@ def update_rule(
     investment_type: str,
     rule_key: str,
     enabled: str | None = Form(None),
-    db: Session = Depends(get_db),
+    uow: UnitOfWork = Depends(get_uow),
 ):
     """Update enablement for a strategy rule."""
     try:
         update_strategy_rule_config(
-            db=db,
+            uow=uow,
             investment_type_value=investment_type,
             rule_key=rule_key,
             enabled=enabled is not None,
@@ -357,10 +353,10 @@ def add_sell_ma_condition(
     investment_type: str,
     interval: str = Form(...),
     time_period: int = Form(...),
-    db: Session = Depends(get_db),
+    uow: UnitOfWork = Depends(get_uow),
 ):
     """Add an MA condition to the SELL_MA_ALL rule for a strategy."""
-    errors = add_ma_condition(db, investment_type, interval, time_period)
+    errors = add_ma_condition(uow, investment_type, interval, time_period)
     if errors:
         logger.warning(
             "Failed to add MA condition for %s: %s", investment_type, errors,
@@ -373,10 +369,10 @@ def delete_sell_ma_condition(
     investment_type: str,
     interval: str = Form(...),
     time_period: int = Form(...),
-    db: Session = Depends(get_db),
+    uow: UnitOfWork = Depends(get_uow),
 ):
     """Remove an MA condition from the SELL_MA_ALL rule for a strategy."""
-    errors = remove_ma_condition(db, investment_type, interval, time_period)
+    errors = remove_ma_condition(uow, investment_type, interval, time_period)
     if errors:
         logger.warning(
             "Failed to remove MA condition for %s: %s", investment_type, errors,
@@ -418,7 +414,7 @@ def add_position(
     investment_type: str = Form(...),
     notes: str = Form(""),
     sector_benchmark_ticker: str = Form(""),
-    db: Session = Depends(get_db),
+    uow: UnitOfWork = Depends(get_uow),
 ):
     """Create a new position and redirect to portfolio.
 
@@ -458,23 +454,23 @@ def add_position(
         notes=notes.strip() or None,
         sector_benchmark_ticker=clean_benchmark,
     )
-    db.add(pos)
-    db.commit()
+    uow.positions.add(pos)
+    uow.commit()
     logger.info("Created position %s (%s) — cost_basis=%.2f, type=%s", clean_ticker, company_name.strip(), cost_basis, investment_type)
 
     # Queue a background refresh to fetch SMA and weekly data
     if api_key:
-        db.refresh(pos)
-        _mark_positions_refresh_state(db, [pos.id], in_progress=True)
+        uow.positions.refresh_instance(pos)
+        _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
         background_tasks.add_task(_refresh_single_position_task, pos.id)
 
     return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/edit/{position_id}")
-def edit_position_form(position_id: int, request: Request, db: Session = Depends(get_db)):
+def edit_position_form(position_id: int, request: Request, uow: UnitOfWork = Depends(get_uow)):
     """Show the edit form for an existing position."""
-    pos = db.query(Position).filter(Position.id == position_id).first()
+    pos = uow.positions.get_by_id(position_id)
     if not pos:
         return RedirectResponse(url="/", status_code=303)
     return templates.TemplateResponse(
@@ -493,14 +489,14 @@ def edit_position(
     current_price: float = Form(...),
     notes: str = Form(""),
     sector_benchmark_ticker: str = Form(""),
-    db: Session = Depends(get_db),
+    uow: UnitOfWork = Depends(get_uow),
 ):
     """Update an existing position and redirect to portfolio.
 
     Ticker and company name are immutable after creation and are not
     accepted from the form.
     """
-    pos = db.query(Position).filter(Position.id == position_id).first()
+    pos = uow.positions.get_by_id(position_id)
     if not pos:
         return RedirectResponse(url="/", status_code=303)
     pos.cost_basis = cost_basis
@@ -509,7 +505,7 @@ def edit_position(
     pos.current_price = current_price
     pos.notes = notes.strip() or None
     pos.sector_benchmark_ticker = sector_benchmark_ticker.strip().upper() or None
-    db.commit()
+    uow.commit()
     logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, current_price)
     return RedirectResponse(url="/", status_code=303)
 
@@ -520,10 +516,10 @@ def add_key_level(
     level_price: float = Form(...),
     label: str = Form(""),
     notes: str = Form(""),
-    db: Session = Depends(get_db),
+    uow: UnitOfWork = Depends(get_uow),
 ):
     """Add a manually-identified key level to a position (issue #23)."""
-    pos = db.query(Position).filter(Position.id == position_id).first()
+    pos = uow.positions.get_by_id(position_id)
     if not pos:
         return RedirectResponse(url="/", status_code=303)
     if level_price > 0:
@@ -534,8 +530,8 @@ def add_key_level(
             notes=notes.strip() or None,
             is_active=True,
         )
-        db.add(kl)
-        db.commit()
+        uow.key_levels.add(kl)
+        uow.commit()
         logger.info(
             "Added key level $%.2f for position id=%d %s",
             level_price, position_id, pos.ticker,
@@ -544,44 +540,34 @@ def add_key_level(
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/delete")
-def delete_key_level(position_id: int, level_id: int, db: Session = Depends(get_db)):
+def delete_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(get_uow)):
     """Delete a key level from a position."""
-    kl = (
-        db.query(PositionKeyLevel)
-        .filter(PositionKeyLevel.id == level_id)
-        .filter(PositionKeyLevel.position_id == position_id)
-        .first()
-    )
+    kl = uow.key_levels.get_by_position_and_id(position_id, level_id)
     if kl:
-        db.delete(kl)
-        db.commit()
+        uow.key_levels.delete(kl)
+        uow.commit()
         logger.info("Deleted key level id=%d for position id=%d", level_id, position_id)
     return RedirectResponse(url=f"/edit/{position_id}", status_code=303)
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/toggle")
-def toggle_key_level(position_id: int, level_id: int, db: Session = Depends(get_db)):
+def toggle_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(get_uow)):
     """Toggle the is_active flag on a key level."""
-    kl = (
-        db.query(PositionKeyLevel)
-        .filter(PositionKeyLevel.id == level_id)
-        .filter(PositionKeyLevel.position_id == position_id)
-        .first()
-    )
+    kl = uow.key_levels.get_by_position_and_id(position_id, level_id)
     if kl:
         kl.is_active = not kl.is_active
-        db.commit()
+        uow.commit()
     return RedirectResponse(url=f"/edit/{position_id}", status_code=303)
 
 
 @app.post("/delete/{position_id}")
-def delete_position(position_id: int, db: Session = Depends(get_db)):
+def delete_position(position_id: int, uow: UnitOfWork = Depends(get_uow)):
     """Delete a position and redirect to portfolio."""
-    pos = db.query(Position).filter(Position.id == position_id).first()
+    pos = uow.positions.get_by_id(position_id)
     if pos:
         logger.info("Deleted position id=%d %s", position_id, pos.ticker)
-        db.delete(pos)
-        db.commit()
+        uow.positions.delete(pos)
+        uow.commit()
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -592,60 +578,58 @@ def delete_position(position_id: int, db: Session = Depends(get_db)):
 
 def _refresh_all_positions_task(position_ids: list[int]):
     """Run a full market data refresh in the background with its own DB session."""
-    db_generator = get_db()
-    db = next(db_generator)
+    uow = SqlAlchemyUnitOfWork(SessionLocal())
     try:
         try:
-            refresh_all_positions(db)
+            refresh_all_positions(uow.session)
         except Exception as exc:
             logger.warning("Background refresh-all failed", exc_info=True)
             detail = str(exc).strip() or exc.__class__.__name__
-            db.rollback()
-            for pos in db.query(Position).filter(Position.id.in_(position_ids)).all():
+            uow.rollback()
+            for pos in uow.positions.get_by_ids(position_ids):
                 pos.refresh_error = f"Refresh failed: {detail}"
-            db.commit()
+            uow.commit()
     finally:
-        _mark_positions_refresh_state(db, position_ids, in_progress=False)
-        db_generator.close()
+        _mark_positions_refresh_state(uow, position_ids, in_progress=False)
+        uow.session.close()
 
 
 def _refresh_single_position_task(position_id: int):
     """Run a single-position market data refresh in the background with its own DB session."""
-    db_generator = get_db()
-    db = next(db_generator)
+    uow = SqlAlchemyUnitOfWork(SessionLocal())
     pos = None
     try:
-        _mark_positions_refresh_state(db, [position_id], in_progress=True)
+        _mark_positions_refresh_state(uow, [position_id], in_progress=True)
         try:
-            pos = db.query(Position).filter(Position.id == position_id).first()
+            pos = uow.positions.get_by_id(position_id)
             if pos:
-                refresh_position(pos, db)
+                refresh_position(pos, uow.session)
         except Exception as exc:
             logger.warning(
                 "Background refresh failed for position id=%d", position_id, exc_info=True
             )
             if pos is not None:
                 detail = str(exc).strip() or exc.__class__.__name__
-                db.rollback()
-                pos = db.query(Position).filter(Position.id == position_id).first()
+                uow.rollback()
+                pos = uow.positions.get_by_id(position_id)
                 if pos is not None:
                     pos.refresh_error = f"Refresh failed: {detail}"
-                    db.commit()
+                    uow.commit()
     finally:
-        _mark_positions_refresh_state(db, [position_id], in_progress=False)
-        db_generator.close()
+        _mark_positions_refresh_state(uow, [position_id], in_progress=False)
+        uow.session.close()
 
 
 @app.post("/refresh")
-def refresh_all(background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+def refresh_all(background_tasks: BackgroundTasks, uow: UnitOfWork = Depends(get_uow)):
     """Refresh cached market data for all positions (respects staleness checks)."""
-    _clear_stale_refresh_flags(db)
-    if db.query(Position).filter(Position.refresh_in_progress.is_(True)).first():
+    _clear_stale_refresh_flags(uow)
+    if uow.positions.has_any_refresh_in_progress():
         return RedirectResponse(url="/", status_code=303)
 
-    position_ids = [pos_id for (pos_id,) in db.query(Position.id).all()]
+    position_ids = uow.positions.list_all_ids()
     if position_ids:
-        _mark_positions_refresh_state(db, position_ids, in_progress=True)
+        _mark_positions_refresh_state(uow, position_ids, in_progress=True)
         background_tasks.add_task(_refresh_all_positions_task, position_ids)
     return RedirectResponse(url="/", status_code=303)
 
@@ -653,39 +637,39 @@ def refresh_all(background_tasks: BackgroundTasks, db: Session = Depends(get_db)
 @app.post("/refresh/{position_id}")
 def refresh_single(
     position_id: int,
-    db: Session = Depends(get_db),
+    uow: UnitOfWork = Depends(get_uow),
 ):
     """Refresh cached market data for a single position inline.
 
     Running this inline avoids a race where the redirect can render before
     background work writes refresh_error.
     """
-    _clear_stale_refresh_flags(db)
-    pos = db.query(Position).filter(Position.id == position_id).first()
+    _clear_stale_refresh_flags(uow)
+    pos = uow.positions.get_by_id(position_id)
     if pos and not pos.refresh_in_progress:
-        _mark_positions_refresh_state(db, [position_id], in_progress=True)
+        _mark_positions_refresh_state(uow, [position_id], in_progress=True)
         try:
-            refresh_position(pos, db)
+            refresh_position(pos, uow.session)
         except Exception as exc:
             logger.warning(
                 "Inline refresh failed for position id=%d", position_id, exc_info=True
             )
             detail = str(exc).strip() or exc.__class__.__name__
-            db.rollback()
-            pos = db.query(Position).filter(Position.id == position_id).first()
+            uow.rollback()
+            pos = uow.positions.get_by_id(position_id)
             if pos is not None:
                 pos.refresh_error = f"Refresh failed: {detail}"
-                db.commit()
+                uow.commit()
         finally:
-            _mark_positions_refresh_state(db, [position_id], in_progress=False)
+            _mark_positions_refresh_state(uow, [position_id], in_progress=False)
     return RedirectResponse(url="/", status_code=303)
 
 
 @app.get("/api/refresh-status")
-def refresh_status(db: Session = Depends(get_db)):
+def refresh_status(uow: UnitOfWork = Depends(get_uow)):
     """Expose lightweight in-progress refresh state for client-side polling."""
-    _clear_stale_refresh_flags(db)
-    positions = db.query(Position).all()
+    _clear_stale_refresh_flags(uow)
+    positions = uow.positions.list_all()
     return {
         "any_in_progress": any(bool(pos.refresh_in_progress) for pos in positions),
         "positions": [

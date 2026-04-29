@@ -3,9 +3,8 @@
 import json
 from datetime import datetime
 
-from sqlalchemy.orm import Session
-
 from app.models import StrategyRuleConfig
+from app.unit_of_work import UnitOfWork
 from app.rule_engine import (
     RULE_CATALOG,
     RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
@@ -54,36 +53,28 @@ def _normalize_investment_type(value: str) -> InvestmentType:
 _DEPRECATED_SELL_RULE_KEYS = {"LT-SELL-20W-MA", "ST-SELL-21D-MA"}
 
 
-def _migrate_deprecated_sell_rules(db: Session) -> bool:
+def _migrate_deprecated_sell_rules(uow: UnitOfWork) -> bool:
     """Remove deprecated hardcoded sell rule rows, replaced by SELL_MA_ALL."""
     changed = False
     for old_key in _DEPRECATED_SELL_RULE_KEYS:
-        rows = (
-            db.query(StrategyRuleConfig)
-            .filter(StrategyRuleConfig.rule_key == old_key)
-            .all()
-        )
+        rows = uow.rule_configs.list_by_key(old_key)
         for row in rows:
-            db.delete(row)
+            uow.rule_configs.delete(row)
             changed = True
     return changed
 
 
-def ensure_strategy_rule_defaults(db: Session) -> None:
+def ensure_strategy_rule_defaults(uow: UnitOfWork) -> None:
     """Seed missing rule configuration rows for each investment type.
 
     Existing rows are preserved. New catalog rules are added as disabled by
     default unless they are part of the strategy defaults. Deprecated sell
     rule keys are cleaned up.
     """
-    changed = _migrate_deprecated_sell_rules(db)
+    changed = _migrate_deprecated_sell_rules(uow)
 
     for investment_type in _supported_investment_types():
-        existing_rows = (
-            db.query(StrategyRuleConfig)
-            .filter(StrategyRuleConfig.investment_type == investment_type.value)
-            .all()
-        )
+        existing_rows = uow.rule_configs.list_by_investment_type(investment_type.value)
         existing_by_key = {row.rule_key: row for row in existing_rows}
 
         # Derive defaults from the rule engine's single source of truth.
@@ -146,7 +137,7 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
                 # immediately on first run.
                 params_json = json.dumps(default_failed_breakout_params())
 
-            db.add(
+            uow.rule_configs.add(
                 StrategyRuleConfig(
                     investment_type=investment_type.value,
                     rule_key=spec.key,
@@ -158,23 +149,18 @@ def ensure_strategy_rule_defaults(db: Session) -> None:
             changed = True
 
     if changed:
-        db.commit()
+        uow.commit()
 
 
 def get_enabled_rule_selections_by_investment_type(
-    db: Session,
+    uow: UnitOfWork,
 ) -> dict[str, list[StrategyRuleSelection]]:
     """Return enabled rule selections keyed by investment type value."""
-    ensure_strategy_rule_defaults(db)
+    ensure_strategy_rule_defaults(uow)
 
     selections: dict[str, list[StrategyRuleSelection]] = {}
     for investment_type in _supported_investment_types():
-        rows = (
-            db.query(StrategyRuleConfig)
-            .filter(StrategyRuleConfig.investment_type == investment_type.value)
-            .filter(StrategyRuleConfig.enabled.is_(True))
-            .all()
-        )
+        rows = uow.rule_configs.list_enabled_by_investment_type(investment_type.value)
         selections[investment_type.value] = [
             StrategyRuleSelection(
                 rule_key=row.rule_key,
@@ -185,17 +171,13 @@ def get_enabled_rule_selections_by_investment_type(
     return selections
 
 
-def get_rule_management_sections(db: Session) -> list[dict]:
+def get_rule_management_sections(uow: UnitOfWork) -> list[dict]:
     """Build template-ready rule management sections for long/short strategies."""
-    ensure_strategy_rule_defaults(db)
+    ensure_strategy_rule_defaults(uow)
 
     sections: list[dict] = []
     for investment_type in _supported_investment_types():
-        rows = (
-            db.query(StrategyRuleConfig)
-            .filter(StrategyRuleConfig.investment_type == investment_type.value)
-            .all()
-        )
+        rows = uow.rule_configs.list_by_investment_type(investment_type.value)
         rows_by_key = {row.rule_key: row for row in rows}
 
         rules = []
@@ -359,7 +341,7 @@ def get_rule_management_sections(db: Session) -> list[dict]:
 
 
 def update_strategy_rule_config(
-    db: Session,
+    uow: UnitOfWork,
     investment_type_value: str,
     rule_key: str,
     enabled: bool,
@@ -372,20 +354,15 @@ def update_strategy_rule_config(
     if investment_type not in spec.supported_investment_types:
         raise ValueError(f"Rule '{rule_key}' is not valid for {investment_type.value}")
 
-    ensure_strategy_rule_defaults(db)
-    row = (
-        db.query(StrategyRuleConfig)
-        .filter(StrategyRuleConfig.investment_type == investment_type.value)
-        .filter(StrategyRuleConfig.rule_key == rule_key)
-        .first()
-    )
+    ensure_strategy_rule_defaults(uow)
+    row = uow.rule_configs.get_by_investment_type_and_key(investment_type.value, rule_key)
     if row is None:
         row = StrategyRuleConfig(
             investment_type=investment_type.value,
             rule_key=rule_key,
             sort_order=spec.default_sort_order,
         )
-        db.add(row)
+        uow.rule_configs.add(row)
 
     # SELL_MA_ALL requires at least one condition to be enabled.
     if enabled and rule_key == RULE_KEY_SELL_MA_ALL:
@@ -399,7 +376,7 @@ def update_strategy_rule_config(
 
     row.enabled = enabled
     row.updated_at = datetime.now()
-    db.commit()
+    uow.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -407,14 +384,11 @@ def update_strategy_rule_config(
 # ---------------------------------------------------------------------------
 
 
-def get_ma_conditions(db: Session, investment_type_value: str) -> list[dict]:
+def get_ma_conditions(uow: UnitOfWork, investment_type_value: str) -> list[dict]:
     """Return the MA conditions for SELL_MA_ALL for a given investment type."""
-    ensure_strategy_rule_defaults(db)
-    row = (
-        db.query(StrategyRuleConfig)
-        .filter(StrategyRuleConfig.investment_type == investment_type_value)
-        .filter(StrategyRuleConfig.rule_key == RULE_KEY_SELL_MA_ALL)
-        .first()
+    ensure_strategy_rule_defaults(uow)
+    row = uow.rule_configs.get_by_investment_type_and_key(
+        investment_type_value, RULE_KEY_SELL_MA_ALL
     )
     if row is None or row.params_json is None:
         return []
@@ -423,20 +397,17 @@ def get_ma_conditions(db: Session, investment_type_value: str) -> list[dict]:
 
 
 def add_ma_condition(
-    db: Session,
+    uow: UnitOfWork,
     investment_type_value: str,
     interval: str,
     time_period: int,
 ) -> list[str]:
     """Add an MA condition.  Returns list of validation errors (empty on success)."""
     _normalize_investment_type(investment_type_value)
-    ensure_strategy_rule_defaults(db)
+    ensure_strategy_rule_defaults(uow)
 
-    row = (
-        db.query(StrategyRuleConfig)
-        .filter(StrategyRuleConfig.investment_type == investment_type_value)
-        .filter(StrategyRuleConfig.rule_key == RULE_KEY_SELL_MA_ALL)
-        .first()
+    row = uow.rule_configs.get_by_investment_type_and_key(
+        investment_type_value, RULE_KEY_SELL_MA_ALL
     )
     if row is None:
         return ["SELL_MA_ALL rule not found"]
@@ -454,12 +425,12 @@ def add_ma_condition(
     params["conditions"] = conditions
     row.params_json = json.dumps(params)
     row.updated_at = datetime.now()
-    db.commit()
+    uow.commit()
     return []
 
 
 def remove_ma_condition(
-    db: Session,
+    uow: UnitOfWork,
     investment_type_value: str,
     interval: str,
     time_period: int,
@@ -470,13 +441,10 @@ def remove_ma_condition(
     At least one condition must remain when the rule is enabled.
     """
     _normalize_investment_type(investment_type_value)
-    ensure_strategy_rule_defaults(db)
+    ensure_strategy_rule_defaults(uow)
 
-    row = (
-        db.query(StrategyRuleConfig)
-        .filter(StrategyRuleConfig.investment_type == investment_type_value)
-        .filter(StrategyRuleConfig.rule_key == RULE_KEY_SELL_MA_ALL)
-        .first()
+    row = uow.rule_configs.get_by_investment_type_and_key(
+        investment_type_value, RULE_KEY_SELL_MA_ALL
     )
     if row is None:
         return ["SELL_MA_ALL rule not found"]
@@ -498,11 +466,11 @@ def remove_ma_condition(
     params["conditions"] = new_conditions
     row.params_json = json.dumps(params)
     row.updated_at = datetime.now()
-    db.commit()
+    uow.commit()
     return []
 
 
-def get_required_indicators(db: Session) -> set[tuple[str, int]]:
+def get_required_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
     """Return the set of (interval, time_period) tuples required by enabled rules.
 
     Includes indicators required by:
@@ -511,16 +479,11 @@ def get_required_indicators(db: Session) -> set[tuple[str, int]]:
 
     Used by the market data refresh logic to know which SMA indicators to fetch.
     """
-    ensure_strategy_rule_defaults(db)
+    ensure_strategy_rule_defaults(uow)
     indicators: set[tuple[str, int]] = set()
 
     for investment_type in _supported_investment_types():
-        rows = (
-            db.query(StrategyRuleConfig)
-            .filter(StrategyRuleConfig.investment_type == investment_type.value)
-            .filter(StrategyRuleConfig.enabled.is_(True))
-            .all()
-        )
+        rows = uow.rule_configs.list_enabled_by_investment_type(investment_type.value)
         for row in rows:
             params = parse_params_json(row.params_json)
             if row.rule_key == RULE_KEY_SELL_MA_ALL:
@@ -538,25 +501,18 @@ def get_required_indicators(db: Session) -> set[tuple[str, int]]:
     return indicators
 
 
-def get_required_atr_indicators(db: Session) -> set[tuple[str, int]]:
+def get_required_atr_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
     """Return the set of (interval, time_period) tuples required for ATR data.
 
     Used by the market data refresh logic to know which ATR indicators to fetch.
     """
-    ensure_strategy_rule_defaults(db)
+    ensure_strategy_rule_defaults(uow)
     indicators: set[tuple[str, int]] = set()
 
     for investment_type in _supported_investment_types():
-        rows = (
-            db.query(StrategyRuleConfig)
-            .filter(StrategyRuleConfig.investment_type == investment_type.value)
-            .filter(StrategyRuleConfig.enabled.is_(True))
-            .filter(
-                StrategyRuleConfig.rule_key.in_(
-                    (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR)
-                )
-            )
-            .all()
+        rows = uow.rule_configs.list_enabled_by_investment_type_and_keys(
+            investment_type.value,
+            [RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR],
         )
         for row in rows:
             params = parse_params_json(row.params_json)
@@ -566,31 +522,24 @@ def get_required_atr_indicators(db: Session) -> set[tuple[str, int]]:
     return indicators
 
 
-def get_required_weekly_bar_lookback(db: Session) -> int:
+def get_required_weekly_bar_lookback(uow: UnitOfWork) -> int:
     """Return the largest weekly-OHLC lookback window required by enabled rules.
 
     Returns 0 when no enabled rule needs weekly OHLC history.
     """
-    ensure_strategy_rule_defaults(db)
+    ensure_strategy_rule_defaults(uow)
     max_lookback = 0
     for investment_type in _supported_investment_types():
-        rows = (
-            db.query(StrategyRuleConfig)
-            .filter(StrategyRuleConfig.investment_type == investment_type.value)
-            .filter(StrategyRuleConfig.enabled.is_(True))
-            .filter(
-                StrategyRuleConfig.rule_key.in_(
-                    (
-                        RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
-                        RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
-                        RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
-                        RULE_KEY_TRIM_FIRST_LOWER_HIGH,
-                        RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
-                        RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
-                    )
-                )
-            )
-            .all()
+        rows = uow.rule_configs.list_enabled_by_investment_type_and_keys(
+            investment_type.value,
+            [
+                RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
+                RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+                RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+                RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+                RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
+                RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
+            ],
         )
         for row in rows:
             params = parse_params_json(row.params_json)
@@ -608,20 +557,17 @@ def get_required_weekly_bar_lookback(db: Session) -> int:
     return max_lookback
 
 
-def get_required_daily_bar_lookback(db: Session) -> int:
+def get_required_daily_bar_lookback(uow: UnitOfWork) -> int:
     """Return the largest daily-close lookback (in trading days) required by enabled rules.
 
     Returns 0 when no enabled rule needs daily close history.
     """
-    ensure_strategy_rule_defaults(db)
+    ensure_strategy_rule_defaults(uow)
     max_lookback = 0
     for investment_type in _supported_investment_types():
-        rows = (
-            db.query(StrategyRuleConfig)
-            .filter(StrategyRuleConfig.investment_type == investment_type.value)
-            .filter(StrategyRuleConfig.enabled.is_(True))
-            .filter(StrategyRuleConfig.rule_key == RULE_KEY_TRIM_RELATIVE_WEAKNESS)
-            .all()
+        rows = uow.rule_configs.list_enabled_by_investment_type_and_keys(
+            investment_type.value,
+            [RULE_KEY_TRIM_RELATIVE_WEAKNESS],
         )
         for row in rows:
             params = parse_params_json(row.params_json)

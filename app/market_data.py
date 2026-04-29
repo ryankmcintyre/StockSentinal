@@ -25,6 +25,7 @@ from app.alpha_vantage_client import (
 from app.config import require_alpha_vantage_api_key
 from app.models import MarketAtrCache, MarketDailyBarCache, MarketIndicatorCache, MarketWeeklyBarCache, Position
 from app.schemas import InvestmentType
+from app.unit_of_work import as_uow
 
 logger = logging.getLogger(__name__)
 
@@ -837,28 +838,29 @@ def refresh_position(position: Position, db: Session, force: bool = False) -> No
         get_required_indicators,
         get_required_weekly_bar_lookback,
     )
-    required = get_required_indicators(db)
+    rule_uow = as_uow(db)
+    required = get_required_indicators(rule_uow)
     if required:
         cache_errors = refresh_indicator_cache(
             db, {position.ticker}, required, force=force,
         )
         errors.extend(cache_errors)
 
-    required_atr = get_required_atr_indicators(db)
+    required_atr = get_required_atr_indicators(rule_uow)
     if required_atr:
         atr_errors = refresh_atr_cache(
             db, {position.ticker}, required_atr, force=force,
         )
         errors.extend(atr_errors)
 
-    weekly_lookback = get_required_weekly_bar_lookback(db)
+    weekly_lookback = get_required_weekly_bar_lookback(rule_uow)
     if weekly_lookback > 0:
         weekly_bar_errors = refresh_weekly_bar_cache(
             db, {position.ticker}, weekly_lookback, force=force,
         )
         errors.extend(weekly_bar_errors)
 
-    daily_lookback = get_required_daily_bar_lookback(db)
+    daily_lookback = get_required_daily_bar_lookback(rule_uow)
     if daily_lookback > 0:
         benchmark = getattr(position, "sector_benchmark_ticker", None)
         if benchmark:
@@ -970,21 +972,22 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
         get_required_indicators,
         get_required_weekly_bar_lookback,
     )
-    required = get_required_indicators(db)
+    rule_uow = as_uow(db)
+    required = get_required_indicators(rule_uow)
     if required and ticker_groups:
         all_tickers = set(ticker_groups.keys())
         cache_errors = refresh_indicator_cache(db, all_tickers, required, force=force)
         if cache_errors:
             logger.warning("Indicator cache refresh errors: %s", cache_errors)
 
-    required_atr = get_required_atr_indicators(db)
+    required_atr = get_required_atr_indicators(rule_uow)
     if required_atr and ticker_groups:
         all_tickers = set(ticker_groups.keys())
         atr_errors = refresh_atr_cache(db, all_tickers, required_atr, force=force)
         if atr_errors:
             logger.warning("ATR cache refresh errors: %s", atr_errors)
 
-    weekly_lookback = get_required_weekly_bar_lookback(db)
+    weekly_lookback = get_required_weekly_bar_lookback(rule_uow)
     if weekly_lookback > 0 and ticker_groups:
         all_tickers = set(ticker_groups.keys())
         bar_errors = refresh_weekly_bar_cache(
@@ -993,7 +996,7 @@ def refresh_all_positions(db: Session, force: bool = False) -> int:
         if bar_errors:
             logger.warning("Weekly bar cache refresh errors: %s", bar_errors)
 
-    daily_lookback = get_required_daily_bar_lookback(db)
+    daily_lookback = get_required_daily_bar_lookback(rule_uow)
     if daily_lookback > 0 and ticker_groups:
         daily_tickers: set[str] = set()
         for pos in positions:

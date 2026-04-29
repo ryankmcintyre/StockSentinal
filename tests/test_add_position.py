@@ -10,9 +10,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.alpha_vantage_client import AlphaVantageError, DailyBar
-from app.database import get_db
+from app.database import get_uow
 from app.main import app
 from app.models import Base
+from app.unit_of_work import SqlAlchemyUnitOfWork
 
 
 @pytest.fixture(autouse=True)
@@ -26,16 +27,17 @@ def _setup_db():
     TestingSession = sessionmaker(bind=engine)
     Base.metadata.create_all(bind=engine)
 
-    def override_get_db():
-        db = TestingSession()
+    def override_get_uow():
+        session = TestingSession()
         try:
-            yield db
+            yield SqlAlchemyUnitOfWork(session)
         finally:
-            db.close()
+            session.close()
 
-    app.dependency_overrides[get_db] = override_get_db
-    yield
-    app.dependency_overrides.clear()
+    with patch("app.main._refresh_single_position_task", return_value=None):
+        app.dependency_overrides[get_uow] = override_get_uow
+        yield
+        app.dependency_overrides.clear()
     engine.dispose()
 
 

@@ -4,6 +4,7 @@ from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker
 
 from app.models import Base
+from app.unit_of_work import SqlAlchemyUnitOfWork
 
 logger = logging.getLogger(__name__)
 
@@ -53,9 +54,26 @@ def init_db() -> None:
 
 
 def get_db():
-    """Yield a database session, ensuring it is closed after use."""
+    """Yield a database session, ensuring it is closed after use.
+
+    .. deprecated::
+        Prefer :func:`get_uow` for new code.
+    """
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+
+def get_uow():
+    """Yield a :class:`SqlAlchemyUnitOfWork` wrapping a fresh session.
+
+    This is the preferred FastAPI dependency for route handlers.
+    """
+    session = SessionLocal()
+    uow = SqlAlchemyUnitOfWork(session)
+    try:
+        yield uow
+    finally:
+        session.close()
