@@ -1,8 +1,6 @@
 """Tests for the database module engine creation logic."""
 
-from unittest.mock import patch
-
-from sqlalchemy.pool import NullPool, StaticPool
+from sqlalchemy.pool import NullPool
 
 from app.database import _create_engine
 

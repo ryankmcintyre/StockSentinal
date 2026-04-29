@@ -72,12 +72,19 @@ def _add_missing_columns() -> None:
 
 
 def init_db() -> None:
-    """Create all database tables and add any missing columns.
+    """Initialize the database schema.
 
     For SQLite: creates tables via metadata and patches missing columns.
-    For PostgreSQL: creates tables if they don't exist. Schema evolution
-    should be managed via Alembic (``alembic upgrade head``).
+    For PostgreSQL: schema is managed exclusively by Alembic. Logs a
+    reminder if Alembic has not been run.
     """
+    if is_postgres():
+        logger.info(
+            "PostgreSQL detected — schema managed by Alembic. "
+            "Run 'alembic upgrade head' to apply migrations."
+        )
+        return
+
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
 

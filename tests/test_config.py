@@ -62,6 +62,14 @@ class TestGetDatabaseUrl:
         monkeypatch.setenv("DATABASE_URL", url)
         assert get_database_url() == url
 
+    def test_empty_string_falls_back_to_sqlite(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "")
+        assert get_database_url() == "sqlite:///./stocksentinal.db"
+
+    def test_whitespace_only_falls_back_to_sqlite(self, monkeypatch):
+        monkeypatch.setenv("DATABASE_URL", "   ")
+        assert get_database_url() == "sqlite:///./stocksentinal.db"
+
 
 class TestIsPostgres:
     def test_sqlite_url(self):

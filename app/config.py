@@ -12,9 +12,10 @@ _DEFAULT_SQLITE_URL = "sqlite:///./stocksentinal.db"
 def get_database_url() -> str:
     """Return the database URL from DATABASE_URL env var.
 
-    If not set, falls back to the default local SQLite file.
+    If not set or empty, falls back to the default local SQLite file.
     """
-    return os.environ.get("DATABASE_URL", _DEFAULT_SQLITE_URL)
+    url = os.environ.get("DATABASE_URL", "").strip()
+    return url if url else _DEFAULT_SQLITE_URL
 
 
 def is_postgres(url: str | None = None) -> bool:
