@@ -3,7 +3,7 @@
 import pytest
 from fastapi.testclient import TestClient
 
-from app.main import app
+from app.main import _market_service, app
 
 
 client = TestClient(app)
@@ -12,7 +12,7 @@ client = TestClient(app)
 class TestLookupRoute:
     def test_returns_company_name(self, mocker):
         mocker.patch("app.main.get_alpha_vantage_api_key", return_value="fake_key")
-        mocker.patch("app.main.fetch_company_name", return_value="Apple Inc")
+        mocker.patch.object(_market_service, "fetch_company_name", return_value="Apple Inc")
 
         resp = client.get("/api/lookup/AAPL")
         assert resp.status_code == 200
@@ -29,8 +29,8 @@ class TestLookupRoute:
         from app.alpha_vantage_client import AlphaVantageSymbolNotFound
 
         mocker.patch("app.main.get_alpha_vantage_api_key", return_value="fake_key")
-        mocker.patch(
-            "app.main.fetch_company_name",
+        mocker.patch.object(
+            _market_service, "fetch_company_name",
             side_effect=AlphaVantageSymbolNotFound("No matching company"),
         )
 
@@ -40,15 +40,17 @@ class TestLookupRoute:
 
     def test_ticker_is_uppercased_and_stripped(self, mocker):
         mocker.patch("app.main.get_alpha_vantage_api_key", return_value="fake_key")
-        mock_fetch = mocker.patch("app.main.fetch_company_name", return_value="Apple Inc")
+        mock_fetch = mocker.patch.object(
+            _market_service, "fetch_company_name", return_value="Apple Inc"
+        )
 
         client.get("/api/lookup/ aapl ")
-        mock_fetch.assert_called_once_with("AAPL", "fake_key")
+        mock_fetch.assert_called_once_with("AAPL")
 
     def test_returns_502_on_connection_error(self, mocker):
         mocker.patch("app.main.get_alpha_vantage_api_key", return_value="fake_key")
-        mocker.patch(
-            "app.main.fetch_company_name",
+        mocker.patch.object(
+            _market_service, "fetch_company_name",
             side_effect=ConnectionError("Failed to resolve host"),
         )
 
