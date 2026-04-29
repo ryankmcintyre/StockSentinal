@@ -16,7 +16,6 @@ from app.alpha_vantage_client import (
     ATRPoint,
     AlphaVantageError,
     DailyBar,
-    SMAPoint,
     WeeklyBar,
 )
 from app.models import Position
@@ -66,7 +65,6 @@ class _FetchCache:
         self._provider = provider
         self._daily_bars: dict[str, list[DailyBar]] = {}
         self._weekly_bars: dict[str, list[WeeklyBar]] = {}
-        self._sma: dict[tuple[str, str, int], list[SMAPoint]] = {}
         self._atr: dict[tuple[str, str, int], list[ATRPoint]] = {}
 
     def get_daily_bars(self, ticker: str) -> list[DailyBar]:
@@ -78,14 +76,6 @@ class _FetchCache:
         if ticker not in self._weekly_bars:
             self._weekly_bars[ticker] = self._provider.fetch_weekly_bars(ticker)
         return self._weekly_bars[ticker]
-
-    def get_sma(self, ticker: str, interval: str, time_period: int) -> list[SMAPoint]:
-        key = (ticker, interval, time_period)
-        if key not in self._sma:
-            self._sma[key] = self._provider.fetch_sma(
-                ticker, interval=interval, time_period=time_period,
-            )
-        return self._sma[key]
 
     def get_atr(self, ticker: str, interval: str, time_period: int) -> list[ATRPoint]:
         key = (ticker, interval, time_period)
@@ -170,7 +160,7 @@ class MarketDataService:
         ticker: str,
         interval: str,
         time_period: int,
-        close_cache: dict[tuple[str, str], tuple[float, "date_type"]],
+        close_cache: dict[tuple[str, str], tuple[Optional[float], Optional[date_type]]],
         fetch_cache: Optional["_FetchCache"] = None,
     ) -> None:
         """Fetch and upsert one indicator cache entry.
@@ -261,7 +251,7 @@ class MarketDataService:
             return []
 
         errors: list[str] = []
-        close_cache: dict[tuple[str, str], tuple[float, "date_type"]] = {}
+        close_cache: dict[tuple[str, str], tuple[Optional[float], Optional[date_type]]] = {}
 
         for ticker in sorted(tickers):
             for interval, time_period in sorted(required_indicators):

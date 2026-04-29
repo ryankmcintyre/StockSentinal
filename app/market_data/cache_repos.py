@@ -156,12 +156,13 @@ class WeeklyBarCacheRepository:
         if not keep:
             return
 
-        # Batch delete: remove all bars for this ticker older than the cutoff
+        # Batch delete: remove all bars for this ticker older than the cutoff.
+        # No session sync needed — deleted rows are not referenced afterward.
         cutoff_date = keep[-1].date
         db.query(MarketWeeklyBarCache).filter(
             MarketWeeklyBarCache.ticker == ticker,
             MarketWeeklyBarCache.bar_date < cutoff_date,
-        ).delete(synchronize_session="fetch")
+        ).delete(synchronize_session=False)
 
         # Upsert only the bars we're keeping
         existing_rows = (
@@ -239,12 +240,13 @@ class DailyBarCacheRepository:
         if not keep:
             return
 
-        # Batch delete: remove all bars for this ticker older than the cutoff
+        # Batch delete: remove all bars for this ticker older than the cutoff.
+        # No session sync needed — deleted rows are not referenced afterward.
         cutoff_date = keep[-1].date
         db.query(MarketDailyBarCache).filter(
             MarketDailyBarCache.ticker == ticker,
             MarketDailyBarCache.bar_date < cutoff_date,
-        ).delete(synchronize_session="fetch")
+        ).delete(synchronize_session=False)
 
         # Upsert only the bars we're keeping
         existing_rows = (

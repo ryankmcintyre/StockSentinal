@@ -174,6 +174,7 @@ class TestRefreshPosition:
         self.service._refresh_daily.assert_called_once()
         call_args = self.service._refresh_daily.call_args
         assert call_args[0][0] is position
+        assert call_args[1].get("fetch_cache") is not None
         self.service._refresh_weekly.assert_not_called()
         assert position.refresh_error is None
         db.commit.assert_called_once()
@@ -193,6 +194,7 @@ class TestRefreshPosition:
         self.service._refresh_weekly.assert_called_once()
         call_args = self.service._refresh_weekly.call_args
         assert call_args[0][0] is position
+        assert call_args[1].get("fetch_cache") is not None
         assert position.refresh_error is None
         db.commit.assert_called_once()
 
@@ -232,6 +234,88 @@ class TestRefreshPosition:
         assert "Daily refresh failed: daily boom" in position.refresh_error
         assert "Weekly refresh failed: weekly boom" in position.refresh_error
         db.commit.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Local SMA computation tests (_refresh_daily / _refresh_weekly with cache)
+# ---------------------------------------------------------------------------
+
+
+class TestLocalSmaComputation:
+    """Verify that _refresh_daily and _refresh_weekly compute SMA locally
+    from fetched bars and do NOT call provider.fetch_sma."""
+
+    @pytest.fixture(autouse=True)
+    def _setup_service(self):
+        self.mock_provider = Mock()
+        self.service = MarketDataService(self.mock_provider)
+
+    def test_refresh_daily_computes_sma_locally(self):
+        from app.alpha_vantage_client import DailyBar as DB
+        from app.market_data.service import _FetchCache
+
+        # 25 daily bars with close prices 100..124
+        bars = [DB(date=date(2026, 4, d + 1), close=100.0 + d) for d in range(25)]
+        bars.sort(key=lambda b: b.date, reverse=True)  # most recent first
+
+        self.mock_provider.fetch_daily_bars.return_value = bars
+
+        cache = _FetchCache(self.mock_provider)
+        position = FakePosition(investment_type="short-term")
+
+        self.service._refresh_daily(position, fetch_cache=cache)
+
+        # fetch_sma should NOT be called
+        self.mock_provider.fetch_sma.assert_not_called()
+        # SMA-21 should be computed from the 21 most recent closes
+        expected_sma = sum(b.close for b in bars[:21]) / 21
+        assert position.daily_sma_21 == pytest.approx(expected_sma)
+        assert position.daily_close == bars[0].close
+
+    def test_refresh_weekly_computes_sma_locally(self):
+        from datetime import timedelta
+
+        from app.alpha_vantage_client import WeeklyBar as WB
+        from app.market_data.service import _FetchCache
+
+        # 25 weekly bars ending before today
+        base = date(2025, 7, 4)  # a Friday
+        bars = [
+            WB(date=base + timedelta(weeks=i), close=200.0 + i)
+            for i in range(25)
+        ]
+        bars.sort(key=lambda b: b.date, reverse=True)
+
+        self.mock_provider.fetch_weekly_bars.return_value = bars
+
+        cache = _FetchCache(self.mock_provider)
+        position = FakePosition(investment_type="long-term")
+
+        self.service._refresh_weekly(position, fetch_cache=cache)
+
+        # fetch_sma should NOT be called
+        self.mock_provider.fetch_sma.assert_not_called()
+        # SMA-20 should be computed from completed bars
+        assert position.weekly_sma_20 is not None
+        assert position.weekly_close is not None
+
+    def test_refresh_daily_fetches_bars_only_once_with_cache(self):
+        from app.alpha_vantage_client import DailyBar as DB
+        from app.market_data.service import _FetchCache
+
+        bars = [DB(date=date(2026, 4, d + 1), close=100.0 + d) for d in range(25)]
+        bars.sort(key=lambda b: b.date, reverse=True)
+        self.mock_provider.fetch_daily_bars.return_value = bars
+
+        cache = _FetchCache(self.mock_provider)
+        pos1 = FakePosition(investment_type="short-term")
+        pos2 = FakePosition(investment_type="short-term")
+
+        self.service._refresh_daily(pos1, fetch_cache=cache)
+        self.service._refresh_daily(pos2, fetch_cache=cache)
+
+        # Only one API call despite two refresh calls
+        assert self.mock_provider.fetch_daily_bars.call_count == 1
 
 
 # ---------------------------------------------------------------------------
@@ -344,6 +428,9 @@ class TestRefreshAllPositions:
         assert refreshed == 2
         daily_refresh.assert_called_once()
         weekly_refresh.assert_called_once()
+        weekly_args, weekly_kwargs = weekly_refresh.call_args
+        assert weekly_args[0] is pos_long
+        assert "fetch_cache" in weekly_kwargs
 
     def test_short_term_positions_not_counted_for_weekly(self, mocker):
         pos = FakePosition(ticker="AAPL", investment_type="short-term", weekly_market_date=None)
