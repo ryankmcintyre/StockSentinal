@@ -1,16 +1,34 @@
 import logging
 
 from sqlalchemy import create_engine, inspect, text
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
+from app.config import get_database_url, is_postgres
 from app.models import Base
 from app.unit_of_work import SqlAlchemyUnitOfWork
 
 logger = logging.getLogger(__name__)
 
-DATABASE_URL = "sqlite:///./stocksentinal.db"
 
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+def _create_engine(url: str | None = None) -> Engine:
+    """Create a SQLAlchemy engine configured for the given database URL.
+
+    - SQLite: uses check_same_thread=False for FastAPI compatibility.
+    - PostgreSQL: uses NullPool so Supabase's Supavisor handles pooling.
+    """
+    if url is None:
+        url = get_database_url()
+
+    if is_postgres(url):
+        return create_engine(url, poolclass=NullPool)
+
+    # SQLite
+    return create_engine(url, connect_args={"check_same_thread": False})
+
+
+engine = _create_engine()
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -21,7 +39,13 @@ def _add_missing_columns() -> None:
     model after the database has already been created. Only nullable columns
     with no server default are handled (safe for ALTER TABLE ADD COLUMN in
     SQLite).
+
+    This helper is SQLite-only. PostgreSQL schemas should be managed
+    exclusively through Alembic migrations.
     """
+    if is_postgres():
+        return
+
     inspector = inspect(engine)
     with engine.begin() as conn:
         for table in Base.metadata.sorted_tables:
@@ -48,7 +72,19 @@ def _add_missing_columns() -> None:
 
 
 def init_db() -> None:
-    """Create all database tables and add any missing columns."""
+    """Initialize the database schema.
+
+    For SQLite: creates tables via metadata and patches missing columns.
+    For PostgreSQL: schema is managed exclusively by Alembic. Logs a
+    reminder if Alembic has not been run.
+    """
+    if is_postgres():
+        logger.info(
+            "PostgreSQL detected — schema managed by Alembic. "
+            "Run 'alembic upgrade head' to apply migrations."
+        )
+        return
+
     Base.metadata.create_all(bind=engine)
     _add_missing_columns()
 
