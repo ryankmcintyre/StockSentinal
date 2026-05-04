@@ -10,12 +10,12 @@ WORKDIR /app
 
 RUN adduser --disabled-password --gecos "" appuser \
     && mkdir -p /data \
-    && chown -R appuser:appuser /app /data
+    && chown appuser:appuser /app /data
 
-COPY pyproject.toml README.md ./
-COPY app ./app
-COPY alembic ./alembic
-COPY alembic.ini ./
+COPY --chown=appuser:appuser pyproject.toml README.md ./
+COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser alembic ./alembic
+COPY --chown=appuser:appuser alembic.ini ./
 
 RUN python -m pip install --upgrade pip \
     && python -m pip install --no-cache-dir .
