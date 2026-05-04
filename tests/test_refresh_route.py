@@ -45,7 +45,7 @@ def client():
 
 class TestRefreshLoadingCues:
     def test_portfolio_shows_refreshing_badge_and_banner(self, client, _setup_db, mocker):
-        mocker.patch("app.main.get_alpha_vantage_api_key", return_value="fake_key")
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         db = _setup_db()
         try:
             db.add(

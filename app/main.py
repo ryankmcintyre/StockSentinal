@@ -14,9 +14,15 @@ load_dotenv()
 from app.alpha_vantage_client import (
     AlphaVantageError,
 )
-from app.config import get_alpha_vantage_api_key, get_log_level
+from app.config import (
+    get_log_level,
+    get_market_data_api_key,
+    get_market_data_api_key_env_var,
+    get_market_data_provider,
+    get_market_data_provider_display_name,
+)
 from app.database import SessionLocal, get_uow, init_db
-from app.market_data import AlphaVantageProvider, MarketDataService
+from app.market_data import AlphaVantageProvider, MarketDataService, TwelveDataProvider
 from app.models import Position, PositionKeyLevel
 from app.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWork
 from app.rule_config import (
@@ -46,7 +52,7 @@ logging.basicConfig(
 logging.getLogger().setLevel(log_level)
 
 # Suppress third-party HTTP loggers that leak sensitive query parameters
-# (e.g. urllib3 logs full request URLs including the Alpha Vantage API key)
+# (e.g. urllib3 logs full request URLs including market-data API keys)
 _HTTP_LOGGERS = ("urllib3", "requests", "httpcore", "httpx", "http.client")
 for _name in _HTTP_LOGGERS:
     logging.getLogger(_name).setLevel(logging.WARNING)
@@ -54,7 +60,14 @@ for _name in _HTTP_LOGGERS:
 BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
 
-_provider = AlphaVantageProvider()
+
+def _create_market_data_provider():
+    if get_market_data_provider() == "twelvedata":
+        return TwelveDataProvider()
+    return AlphaVantageProvider()
+
+
+_provider = _create_market_data_provider()
 _market_service = MarketDataService(_provider)
 
 
@@ -146,7 +159,7 @@ def _enrich_position(
     daily_bars_by_ticker: dict[str, list] | None = None,
 ) -> dict:
     """Run rule engine on a Position and return a dict with all display fields."""
-    # Build market signals from cached Alpha Vantage data
+    # Build market signals from cached market data
     signals = MarketSignals(
         daily_close=pos.daily_close,
         daily_sma_21=pos.daily_sma_21,
@@ -297,7 +310,9 @@ def portfolio(request: Request, uow: UnitOfWork = Depends(get_uow)):
         {
             "positions": enriched,
             "summary": summary,
-            "api_configured": get_alpha_vantage_api_key() is not None,
+            "api_configured": get_market_data_api_key() is not None,
+            "market_data_api_key_env_var": get_market_data_api_key_env_var(),
+            "market_data_provider_name": get_market_data_provider_display_name(),
             "any_refresh_in_progress": any_refresh_in_progress,
         },
     )
@@ -382,12 +397,12 @@ def delete_sell_ma_condition(
 
 @app.get("/api/lookup/{ticker}")
 def lookup_ticker(ticker: str):
-    """Look up the company name for a ticker symbol via Alpha Vantage."""
-    api_key = get_alpha_vantage_api_key()
+    """Look up the company name for a ticker symbol via the configured provider."""
+    api_key = get_market_data_api_key()
     if not api_key:
         return JSONResponse(
             status_code=503,
-            content={"error": "Alpha Vantage API key is not configured"},
+            content={"error": "Market data API key is not configured"},
         )
     try:
         company_name = _market_service.fetch_company_name(ticker.strip().upper())
@@ -418,7 +433,7 @@ def add_position(
 ):
     """Create a new position and redirect to portfolio.
 
-    The latest closing price is fetched synchronously from Alpha Vantage.
+    The latest closing price is fetched synchronously from the configured provider.
     A background task is then queued to fetch the remaining market data
     (SMA values and weekly data for long-term positions).
     """
@@ -429,7 +444,7 @@ def add_position(
     daily_market_date = None
     daily_retrieved_at = None
 
-    api_key = get_alpha_vantage_api_key()
+    api_key = get_market_data_api_key()
     if api_key:
         try:
             bars = _market_service.fetch_daily_series(clean_ticker)
@@ -439,7 +454,12 @@ def add_position(
                 daily_market_date = bars[0].date
                 daily_retrieved_at = datetime.now()
         except Exception:
-            logger.warning("Failed to fetch price for %s from Alpha Vantage", clean_ticker, exc_info=True)
+            logger.warning(
+                "Failed to fetch price for %s from %s",
+                clean_ticker,
+                get_market_data_provider_display_name(),
+                exc_info=True,
+            )
 
     pos = Position(
         ticker=clean_ticker,

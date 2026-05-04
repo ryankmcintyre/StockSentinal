@@ -20,7 +20,7 @@ class Position(Base):
     current_price = Column(Float, nullable=False)
     notes = Column(String, nullable=True)
 
-    # --- Cached market data from Alpha Vantage ---
+    # --- Cached market data from the configured provider ---
     # Daily data (used by short-term sell rule and trim/hold)
     daily_close = Column(Float, nullable=True)
     daily_sma_21 = Column(Float, nullable=True)
@@ -73,7 +73,7 @@ class PositionKeyLevel(Base):
 
 
 class MarketIndicatorCache(Base):
-    """Cache for arbitrary SMA indicators fetched from Alpha Vantage.
+    """Cache for arbitrary SMA indicators fetched from the market data provider.
 
     Each row stores a close price and SMA value for a specific
     (ticker, interval, time_period) combination.  The close and SMA
@@ -100,7 +100,7 @@ class MarketIndicatorCache(Base):
 
 
 class MarketAtrCache(Base):
-    """Cache for ATR (Average True Range) indicator values fetched from Alpha Vantage.
+    """Cache for ATR (Average True Range) indicator values fetched from the market data provider.
 
     Each row stores the latest ATR value for a specific
     (ticker, interval, time_period) combination.  Used by the extension

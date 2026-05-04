@@ -1,6 +1,6 @@
 """Market data package — provider, staleness, cache repos, and service layers."""
 
-from app.market_data.provider import AlphaVantageProvider, MarketDataProvider  # noqa: F401
+from app.market_data.provider import AlphaVantageProvider, MarketDataProvider, TwelveDataProvider  # noqa: F401
 from app.market_data.service import MarketDataService  # noqa: F401
 from app.market_data.staleness import (  # noqa: F401
     atr_cache_is_stale,

@@ -1,0 +1,221 @@
+"""Tests for the Twelve Data client response parsing."""
+
+from datetime import date
+
+import pytest
+
+from app.alpha_vantage_client import (
+    ATRPoint,
+    AlphaVantageError,
+    AlphaVantageSymbolNotFound,
+    AlphaVantageThrottled,
+    DailyBar,
+    SMAPoint,
+    WeeklyBar,
+)
+from app.twelve_data_client import (
+    _get,
+    fetch_atr,
+    fetch_company_name,
+    fetch_daily_series,
+    fetch_sma,
+    fetch_weekly_series,
+)
+
+
+class TestGetErrorHandling:
+    def test_throttle_detection(self, mocker):
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "status": "error",
+            "code": 429,
+            "message": "API credits exhausted for the minute",
+        }
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageThrottled):
+            _get("/time_series", {"symbol": "IBM", "interval": "1day"}, "fake_key")
+
+    def test_symbol_not_found(self, mocker):
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {
+            "status": "error",
+            "code": 400,
+            "message": "Symbol not found: INVALID",
+        }
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageSymbolNotFound):
+            _get("/time_series", {"symbol": "INVALID", "interval": "1day"}, "fake_key")
+
+
+class TestFetchDailySeries:
+    def test_parses_bars(self, mocker):
+        fake_data = {
+            "meta": {"symbol": "IBM"},
+            "values": [
+                {"datetime": "2026-04-16", "close": "179.00"},
+                {"datetime": "2026-04-17", "close": "181.50"},
+            ],
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        bars = fetch_daily_series("IBM", "fake_key")
+        assert bars == [
+            DailyBar(date=date(2026, 4, 17), close=181.50),
+            DailyBar(date=date(2026, 4, 16), close=179.00),
+        ]
+
+    def test_raises_on_missing_values(self, mocker):
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"meta": {"symbol": "IBM"}}
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageSymbolNotFound, match="No time series data"):
+            fetch_daily_series("IBM", "fake_key")
+
+
+class TestFetchWeeklySeries:
+    def test_parses_bars(self, mocker):
+        fake_data = {
+            "meta": {"symbol": "IBM"},
+            "values": [
+                {
+                    "datetime": "2026-04-10",
+                    "open": "170.00",
+                    "high": "178.00",
+                    "low": "169.00",
+                    "close": "176.00",
+                    "volume": "14000000",
+                },
+                {
+                    "datetime": "2026-04-17",
+                    "open": "175.00",
+                    "high": "185.00",
+                    "low": "174.00",
+                    "close": "182.00",
+                    "volume": "15000000",
+                },
+            ],
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        bars = fetch_weekly_series("IBM", "fake_key")
+        assert bars == [
+            WeeklyBar(
+                date=date(2026, 4, 17),
+                open=175.00,
+                high=185.00,
+                low=174.00,
+                close=182.00,
+                volume=15000000.0,
+            ),
+            WeeklyBar(
+                date=date(2026, 4, 10),
+                open=170.00,
+                high=178.00,
+                low=169.00,
+                close=176.00,
+                volume=14000000.0,
+            ),
+        ]
+
+
+class TestFetchSma:
+    def test_parses_points_and_maps_interval(self, mocker):
+        fake_data = {
+            "meta": {"symbol": "IBM"},
+            "values": [
+                {"datetime": "2026-04-16", "sma": "177.80"},
+                {"datetime": "2026-04-17", "sma": "178.25"},
+            ],
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mock_get = mocker.patch(
+            "app.twelve_data_client.requests.get", return_value=mock_resp
+        )
+
+        points = fetch_sma("IBM", "daily", 21, "fake_key")
+        assert points == [
+            SMAPoint(date=date(2026, 4, 17), sma=178.25),
+            SMAPoint(date=date(2026, 4, 16), sma=177.80),
+        ]
+        assert mock_get.call_args.kwargs["params"]["interval"] == "1day"
+
+    def test_raises_on_missing_values(self, mocker):
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"meta": {"symbol": "IBM"}}
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageError, match="missing 'values'"):
+            fetch_sma("IBM", "daily", 21, "fake_key")
+
+
+class TestFetchAtr:
+    def test_parses_points_sorted_most_recent_first(self, mocker):
+        fake_data = {
+            "meta": {"symbol": "IBM"},
+            "values": [
+                {"datetime": "2026-04-15", "atr": "2.10"},
+                {"datetime": "2026-04-17", "atr": "2.50"},
+                {"datetime": "2026-04-16", "atr": "2.30"},
+            ],
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        points = fetch_atr("IBM", "weekly", 14, "fake_key")
+        assert points == [
+            ATRPoint(date=date(2026, 4, 17), atr=2.50),
+            ATRPoint(date=date(2026, 4, 16), atr=2.30),
+            ATRPoint(date=date(2026, 4, 15), atr=2.10),
+        ]
+
+
+class TestFetchCompanyName:
+    def test_returns_exact_symbol_match_name(self, mocker):
+        fake_data = {
+            "data": [
+                {"symbol": "AAPL.LON", "name": "Apple Inc (London)"},
+                {"symbol": "AAPL", "name": "Apple Inc"},
+            ]
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        assert fetch_company_name("AAPL", "fake_key") == "Apple Inc"
+
+    def test_raises_on_empty_matches(self, mocker):
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"data": []}
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageSymbolNotFound, match="No matching company"):
+            fetch_company_name("ZZZZZZ", "fake_key")

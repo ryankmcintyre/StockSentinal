@@ -36,7 +36,7 @@
 </section>
 {% elif not api_configured %}
 <section class="refresh-controls">
-    <p class="text-muted">Set <code>ALPHA_VANTAGE_API_KEY</code> to enable automated market data.</p>
+    <p class="text-muted">Set <code>{{ market_data_api_key_env_var }}</code> to enable automated market data.</p>
 </section>
 {% endif %}
 
@@ -85,7 +85,7 @@
             <td>
                 ${{ "%.2f" | format(pos.effective_price) }}
                 {% if pos.has_market_data %}
-                    <span class="market-source" title="From Alpha Vantage{% if pos.daily_market_date %} ({{ pos.daily_market_date }}){% endif %}">&#9679;</span>
+                    <span class="market-source" title="From {{ market_data_provider_name }}{% if pos.daily_market_date %} ({{ pos.daily_market_date }}){% endif %}">&#9679;</span>
                 {% endif %}
             </td>
             <td class="{% if pos.percent_gain >= 0 %}gain-positive{% else %}gain-negative{% endif %}">

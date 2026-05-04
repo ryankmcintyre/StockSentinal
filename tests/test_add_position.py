@@ -68,7 +68,7 @@ class TestAddPositionFetchesPrice:
         ]
 
         with (
-            patch("app.main.get_alpha_vantage_api_key", return_value="fake_key"),
+            patch("app.main.get_market_data_api_key", return_value="fake_key"),
             patch.object(_market_service, "fetch_daily_series", return_value=fake_bars) as mock_fetch,
         ):
             resp = client.post("/add", data=FORM_DATA_BASE, follow_redirects=False)
@@ -78,7 +78,7 @@ class TestAddPositionFetchesPrice:
 
     def test_falls_back_to_zero_when_no_api_key(self, client):
         """When the API key is not configured, current_price should default to 0."""
-        with patch("app.main.get_alpha_vantage_api_key", return_value=None):
+        with patch("app.main.get_market_data_api_key", return_value=None):
             resp = client.post("/add", data=FORM_DATA_BASE, follow_redirects=False)
 
         assert resp.status_code == 303
@@ -87,7 +87,7 @@ class TestAddPositionFetchesPrice:
         """When the Alpha Vantage fetch raises an error, current_price
         should fall back to 0 and the position should still be created."""
         with (
-            patch("app.main.get_alpha_vantage_api_key", return_value="fake_key"),
+            patch("app.main.get_market_data_api_key", return_value="fake_key"),
             patch.object(
                 _market_service, "fetch_daily_series",
                 side_effect=AlphaVantageError("boom"),
@@ -113,7 +113,7 @@ class TestAddPositionFormRemoved:
         """If somehow current_price is submitted in the form, it should be
         ignored — the price comes from Alpha Vantage, not the user."""
         data = {**FORM_DATA_BASE, "current_price": "999.99"}
-        with patch("app.main.get_alpha_vantage_api_key", return_value=None):
+        with patch("app.main.get_market_data_api_key", return_value=None):
             resp = client.post("/add", data=data, follow_redirects=False)
 
         # Should still succeed (extra form fields are ignored by FastAPI)
