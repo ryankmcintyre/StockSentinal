@@ -4,7 +4,7 @@ services:
     env: python
     region: oregon
     plan: free
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt && alembic upgrade head
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     envVars:
       - key: PYTHON_VERSION
@@ -14,8 +14,7 @@ services:
       - key: ALPHA_VANTAGE_API_KEY
         scope: run
       - key: DATABASE_URL
-        value: sqlite:////var/data/stocksentinal.db
-    disk:
-      - name: data
-        mountPath: /var/data
-        sizeGB: 1
+        scope: run
+        # Set this in Render dashboard to your Supabase pooled connection
+        # postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
+
