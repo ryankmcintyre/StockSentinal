@@ -1,0 +1,40 @@
+name: Docker Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: docker build -t stocksentinal:test .
+
+      - name: Test image startup
+        run: |
+          docker run -d \
+            -p 8000:8000 \
+            -e ALPHA_VANTAGE_API_KEY=test_key \
+            -e LOG_LEVEL=INFO \
+            --name stocksentinal-test \
+            stocksentinal:test
+
+          # Wait for app to start and check health
+          sleep 3
+          if ! curl -f http://localhost:8000/api/positions 2>/dev/null; then
+            echo "App failed to start or respond"
+            docker logs stocksentinal-test
+            exit 1
+          fi
+
+          docker stop stocksentinal-test
+
+      - name: Verify image layers
+        run: |
+          docker inspect stocksentinal:test | grep -E "Architecture|Os"

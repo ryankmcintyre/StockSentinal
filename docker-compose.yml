@@ -1,0 +1,19 @@
+services:
+  web:
+    build:
+      context: .
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    environment:
+      PORT: ${PORT:-8000}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      ALPHA_VANTAGE_API_KEY: ${ALPHA_VANTAGE_API_KEY:-}
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////data/stocksentinal.db}
+    volumes:
+      - .:/app
+      - stocksentinal-data:/data
+    command: >
+      sh -c "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000} --reload"
+
+volumes:
+  stocksentinal-data:
