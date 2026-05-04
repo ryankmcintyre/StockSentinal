@@ -1,15 +1,19 @@
 """Tests for the config module."""
 
-import os
-
 import pytest
 
 from app.config import (
     get_alpha_vantage_api_key,
     get_database_url,
     get_log_level,
+    get_market_data_api_key,
+    get_market_data_api_key_env_var,
+    get_market_data_provider,
+    get_market_data_provider_display_name,
+    get_twelve_data_api_key,
     is_postgres,
     require_alpha_vantage_api_key,
+    require_twelve_data_api_key,
 )
 
 
@@ -88,3 +92,54 @@ class TestIsPostgres:
     def test_uses_env_postgres(self, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", "postgresql://u:p@h/d")
         assert is_postgres() is True
+
+
+class TestGetTwelveDataApiKey:
+    def test_returns_key_when_set(self, monkeypatch):
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "test_key_123")
+        assert get_twelve_data_api_key() == "test_key_123"
+
+    def test_returns_none_when_not_set(self, monkeypatch):
+        monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
+        assert get_twelve_data_api_key() is None
+
+
+class TestRequireTwelveDataApiKey:
+    def test_returns_key_when_set(self, monkeypatch):
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "test_key_456")
+        assert require_twelve_data_api_key() == "test_key_456"
+
+    def test_raises_when_not_set(self, monkeypatch):
+        monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
+        with pytest.raises(RuntimeError, match="TWELVE_DATA_API_KEY"):
+            require_twelve_data_api_key()
+
+
+class TestGetMarketDataProvider:
+    def test_defaults_to_alphavantage(self, monkeypatch):
+        monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        assert get_market_data_provider() == "alphavantage"
+
+    def test_normalizes_configured_provider(self, monkeypatch):
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "TwelveData")
+        assert get_market_data_provider() == "twelvedata"
+
+    def test_invalid_provider_falls_back_to_alphavantage(self, monkeypatch):
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "bloomberg")
+        assert get_market_data_provider() == "alphavantage"
+
+
+class TestMarketDataProviderHelpers:
+    def test_returns_alpha_vantage_api_key_for_default_provider(self, monkeypatch):
+        monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "av-key")
+        assert get_market_data_api_key() == "av-key"
+        assert get_market_data_api_key_env_var() == "ALPHA_VANTAGE_API_KEY"
+        assert get_market_data_provider_display_name() == "Alpha Vantage"
+
+    def test_returns_twelve_data_api_key_for_twelvedata_provider(self, monkeypatch):
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "twelvedata")
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "td-key")
+        assert get_market_data_api_key() == "td-key"
+        assert get_market_data_api_key_env_var() == "TWELVE_DATA_API_KEY"
+        assert get_market_data_provider_display_name() == "Twelve Data"

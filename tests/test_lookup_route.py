@@ -11,7 +11,7 @@ client = TestClient(app)
 
 class TestLookupRoute:
     def test_returns_company_name(self, mocker):
-        mocker.patch("app.main.get_alpha_vantage_api_key", return_value="fake_key")
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         mocker.patch.object(_market_service, "fetch_company_name", return_value="Apple Inc")
 
         resp = client.get("/api/lookup/AAPL")
@@ -19,7 +19,7 @@ class TestLookupRoute:
         assert resp.json() == {"company_name": "Apple Inc"}
 
     def test_returns_503_when_no_api_key(self, mocker):
-        mocker.patch("app.main.get_alpha_vantage_api_key", return_value=None)
+        mocker.patch("app.main.get_market_data_api_key", return_value=None)
 
         resp = client.get("/api/lookup/AAPL")
         assert resp.status_code == 503
@@ -28,7 +28,7 @@ class TestLookupRoute:
     def test_returns_502_on_alpha_vantage_error(self, mocker):
         from app.alpha_vantage_client import AlphaVantageSymbolNotFound
 
-        mocker.patch("app.main.get_alpha_vantage_api_key", return_value="fake_key")
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         mocker.patch.object(
             _market_service, "fetch_company_name",
             side_effect=AlphaVantageSymbolNotFound("No matching company"),
@@ -39,7 +39,7 @@ class TestLookupRoute:
         assert "error" in resp.json()
 
     def test_ticker_is_uppercased_and_stripped(self, mocker):
-        mocker.patch("app.main.get_alpha_vantage_api_key", return_value="fake_key")
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         mock_fetch = mocker.patch.object(
             _market_service, "fetch_company_name", return_value="Apple Inc"
         )
@@ -48,7 +48,7 @@ class TestLookupRoute:
         mock_fetch.assert_called_once_with("AAPL")
 
     def test_returns_502_on_connection_error(self, mocker):
-        mocker.patch("app.main.get_alpha_vantage_api_key", return_value="fake_key")
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         mocker.patch.object(
             _market_service, "fetch_company_name",
             side_effect=ConnectionError("Failed to resolve host"),

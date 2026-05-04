@@ -22,6 +22,7 @@ docker run --rm \
   -v stocksentinal-data:/data \
   -e PORT=8000 \
   -e LOG_LEVEL=INFO \
+  -e MARKET_DATA_PROVIDER=alphavantage \
   -e ALPHA_VANTAGE_API_KEY=your-key \
   stocksentinal
 ```
@@ -47,7 +48,9 @@ Compose reads values from your shell environment or a local `.env` file automati
 
 - `PORT` — Uvicorn listen port (defaults to `8000`)
 - `LOG_LEVEL` — Python logging level (defaults to `INFO`)
-- `ALPHA_VANTAGE_API_KEY` — optional API key for market data refreshes
+- `MARKET_DATA_PROVIDER` — `alphavantage` (default) or `twelvedata`
+- `ALPHA_VANTAGE_API_KEY` — optional API key when `MARKET_DATA_PROVIDER=alphavantage`
+- `TWELVE_DATA_API_KEY` — optional API key when `MARKET_DATA_PROVIDER=twelvedata`
 - `DATABASE_URL` — database connection string (defaults to `sqlite:////data/stocksentinal.db`)
 
 To stop the development stack:

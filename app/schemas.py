@@ -52,7 +52,7 @@ class PositionCreate(PositionBase):
     """Schema for creating a new position.
 
     current_price is optional because it is fetched automatically from
-    Alpha Vantage when a position is added.
+    the configured market data provider when a position is added.
     """
     current_price: Optional[float] = Field(None, gt=0)
 
