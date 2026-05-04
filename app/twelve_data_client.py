@@ -64,13 +64,13 @@ def _raise_api_error(data: dict[str, Any]) -> None:
 
 def _get(path: str, params: dict[str, Any], api_key: str) -> Any:
     """Make a GET request to Twelve Data and return parsed JSON."""
-    params["apikey"] = api_key
-    safe_params = {k: v for k, v in params.items() if k != "apikey"}
+    safe_params = dict(params)
+    request_params = {**safe_params, "apikey": api_key}
     url = f"{BASE_URL}{path}"
     logger.debug("Twelve Data request: %s params=%s", url, safe_params)
 
     start = _time.monotonic()
-    resp = requests.get(url, params=params, timeout=REQUEST_TIMEOUT)
+    resp = requests.get(url, params=request_params, timeout=REQUEST_TIMEOUT)
     elapsed_ms = (_time.monotonic() - start) * 1000
     logger.debug("Twelve Data response: status=%d elapsed=%.0fms", resp.status_code, elapsed_ms)
 
