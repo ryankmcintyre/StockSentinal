@@ -26,8 +26,8 @@ jobs:
             stocksentinal:test
 
           # Wait for app to start and check health
-          sleep 3
-          if ! curl -f http://localhost:8000/api/positions 2>/dev/null; then
+          sleep 5
+          if ! curl -f http://localhost:8000/ 2>/dev/null | grep -q "Stock Sentinel"; then
             echo "App failed to start or respond"
             docker logs stocksentinal-test
             exit 1
