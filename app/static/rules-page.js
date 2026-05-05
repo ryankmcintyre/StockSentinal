@@ -2,9 +2,9 @@
     function setExpanded(toggle, content, expanded) {
         toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
         content.hidden = !expanded;
-        var chevron = toggle.querySelector(".rules-section-chevron");
-        if (chevron) {
-            chevron.textContent = expanded ? "▼" : "▶";
+        var chevronElement = toggle.querySelector(".rules-section-chevron");
+        if (chevronElement) {
+            chevronElement.textContent = expanded ? "▼" : "▶";
         }
     }
 
