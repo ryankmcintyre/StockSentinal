@@ -1,5 +1,6 @@
 """Tests for strategy rule configuration routes and integration."""
 
+import re
 from datetime import date
 
 import pytest
@@ -52,6 +53,20 @@ class TestRulesPage:
         assert "SELL_MA_ALL" in resp.text
         assert "Moving average conditions" in resp.text
         assert "Order" not in resp.text
+
+    def test_rules_page_sections_are_collapsed_by_default(self, client):
+        resp = client.get("/rules")
+        assert resp.status_code == 200
+        assert resp.text.count('data-rules-section-toggle="true"') == 2
+        assert resp.text.count('aria-expanded="false"') == 2
+        assert "/static/rules-page.js" in resp.text
+        for investment_type in ("long-term", "short-term"):
+            assert re.search(
+                rf'<div\s+id="rules-section-{investment_type}-content"[^>]*'
+                r'class="rules-section-content"[^>]*'
+                r'data-rules-section-content="true"[^>]*\bhidden\b',
+                resp.text,
+            )
 
     def test_rules_page_shows_default_ma_conditions(self, client):
         resp = client.get("/rules")
