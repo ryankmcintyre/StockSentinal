@@ -19,6 +19,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 _TABLES = [
+    "alembic_version",
     "market_atr_cache",
     "market_daily_bar_cache",
     "market_indicator_cache",
