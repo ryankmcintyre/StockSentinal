@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from datetime import date
 
 import requests
+from app.market_data.exceptions import (
+    MarketDataError,
+    MarketDataSymbolNotFound,
+    MarketDataThrottled,
+)
 
 BASE_URL = "https://www.alphavantage.co/query"
 REQUEST_TIMEOUT = 30  # seconds
@@ -17,16 +22,10 @@ REQUEST_TIMEOUT = 30  # seconds
 logger = logging.getLogger(__name__)
 
 
-class AlphaVantageError(Exception):
-    """Base exception for Alpha Vantage API errors."""
-
-
-class AlphaVantageThrottled(AlphaVantageError):
-    """Raised when the API returns a rate-limit / throttle note."""
-
-
-class AlphaVantageSymbolNotFound(AlphaVantageError):
-    """Raised when the API has no data for the requested symbol."""
+# Backward-compatible aliases — prefer MarketDataError etc. for new code.
+AlphaVantageError = MarketDataError
+AlphaVantageThrottled = MarketDataThrottled
+AlphaVantageSymbolNotFound = MarketDataSymbolNotFound
 
 
 @dataclass
@@ -99,18 +98,18 @@ def _get(params: dict, api_key: str) -> dict:
     # Alpha Vantage returns throttle messages as a "Note" key
     if "Note" in data:
         logger.warning("Alpha Vantage throttled: %s", data["Note"])
-        raise AlphaVantageThrottled(data["Note"])
+        raise MarketDataThrottled(data["Note"])
 
     # Error responses use "Error Message"
     if "Error Message" in data:
         logger.warning("Alpha Vantage error: %s", data["Error Message"])
-        raise AlphaVantageSymbolNotFound(data["Error Message"])
+        raise MarketDataSymbolNotFound(data["Error Message"])
 
     # Some error states use "Information" — treat any such response as
     # a throttle / error since valid responses never contain this key.
     if "Information" in data:
         logger.warning("Alpha Vantage throttled: %s", data["Information"])
-        raise AlphaVantageThrottled(data["Information"])
+        raise MarketDataThrottled(data["Information"])
 
     return data
 
@@ -135,7 +134,7 @@ def fetch_ticker_matches(symbol: str, api_key: str) -> list[SymbolSearchMatch]:
 
     raw_matches = data.get("bestMatches", [])
     if not raw_matches:
-        raise AlphaVantageSymbolNotFound(
+        raise MarketDataSymbolNotFound(
             f"No matching company found for symbol '{symbol}'"
         )
 
@@ -156,7 +155,7 @@ def fetch_ticker_matches(symbol: str, api_key: str) -> list[SymbolSearchMatch]:
         )
 
     if not matches:
-        raise AlphaVantageSymbolNotFound(
+        raise MarketDataSymbolNotFound(
             f"No matching company found for symbol '{symbol}'"
         )
 
@@ -167,7 +166,7 @@ def fetch_company_name(symbol: str, api_key: str) -> str:
     """Look up the company name for a ticker symbol via SYMBOL_SEARCH.
 
     Returns the best-match company name, or raises
-    AlphaVantageSymbolNotFound if no matches are found.
+    MarketDataSymbolNotFound if no matches are found.
     """
     matches = fetch_ticker_matches(symbol, api_key)
     symbol_upper = symbol.upper()
@@ -192,7 +191,7 @@ def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:
 
     ts_key = "Time Series (Daily)"
     if ts_key not in data:
-        raise AlphaVantageError(
+        raise MarketDataError(
             f"Unexpected response structure: missing '{ts_key}' key"
         )
 
@@ -221,7 +220,7 @@ def fetch_weekly_series(symbol: str, api_key: str) -> list[WeeklyBar]:
 
     ts_key = "Weekly Time Series"
     if ts_key not in data:
-        raise AlphaVantageError(
+        raise MarketDataError(
             f"Unexpected response structure: missing '{ts_key}' key"
         )
 
@@ -268,7 +267,7 @@ def fetch_sma(
 
     analysis_key = "Technical Analysis: SMA"
     if analysis_key not in data:
-        raise AlphaVantageError(
+        raise MarketDataError(
             f"Unexpected response structure: missing '{analysis_key}' key"
         )
 
@@ -310,7 +309,7 @@ def fetch_atr(
 
     analysis_key = "Technical Analysis: ATR"
     if analysis_key not in data:
-        raise AlphaVantageError(
+        raise MarketDataError(
             f"Unexpected response structure: missing '{analysis_key}' key"
         )
 
