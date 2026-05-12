@@ -229,7 +229,7 @@ class TestKeyLevelRoutes:
                 resp.text,
             )
 
-    def test_edit_position_renders_editable_ticker_lookup_fields(self, _setup_db, client):
+    def test_edit_position_shows_ticker_lookup_fields(self, _setup_db, client):
         pos_id = _seed_position(_setup_db)
 
         resp = client.get(f"/edit/{pos_id}")

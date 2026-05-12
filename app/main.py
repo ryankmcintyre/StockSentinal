@@ -152,7 +152,10 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
 
 
 def _clear_position_market_data(position: Position) -> None:
-    """Remove cached market-data fields from a position."""
+    """Clear cached market-data fields from a position in memory.
+
+    Caller must commit the session for the change to persist.
+    """
     position.daily_close = None
     position.daily_sma_21 = None
     position.daily_market_date = None
