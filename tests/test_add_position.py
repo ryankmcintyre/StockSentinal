@@ -105,8 +105,14 @@ class TestAddPositionFetchesPrice:
         assert 'name="current_price"' not in resp.text
         assert 'data-api-submit="true"' in resp.text
         assert "/static/refresh-status.js" in resp.text
+        assert "/static/ticker-lookup.js" in resp.text
         assert 'class="form-legend"' in resp.text
         assert "Required field" in resp.text
+        assert "Auto-filled from ticker lookup — edit if needed." in resp.text
+        assert 'id="ticker_lookup_price"' in resp.text
+        assert 'id="ticker_lookup_picker"' in resp.text
+        assert 'id="add-position-submit"' in resp.text
+        assert 'readonly' not in resp.text
         for label in (
             "Ticker",
             "Company Name",

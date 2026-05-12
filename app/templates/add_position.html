@@ -10,12 +10,18 @@
     <div class="form-group">
         <label for="ticker">Ticker <span class="required-indicator" aria-hidden="true">*</span></label>
         <input type="text" id="ticker" name="ticker" required maxlength="10" placeholder="AAPL">
+        <small id="ticker_lookup_status" class="form-hint" aria-live="polite"></small>
+        <small id="ticker_lookup_price" class="form-hint ticker-lookup-price" aria-live="polite" hidden></small>
+        <div id="ticker_lookup_picker" class="ticker-lookup-picker" hidden>
+            <p class="ticker-lookup-picker-title">Which stock did you mean?</p>
+            <div id="ticker_lookup_options" class="ticker-lookup-options"></div>
+        </div>
     </div>
 
     <div class="form-group">
         <label for="company_name">Company Name <span class="required-indicator" aria-hidden="true">*</span></label>
-        <input type="text" id="company_name" name="company_name" required placeholder="Apple Inc." readonly>
-        <small id="company_name_status" class="form-hint"></small>
+        <input type="text" id="company_name" name="company_name" required placeholder="Apple Inc." aria-describedby="company_name_status">
+        <small id="company_name_status" class="form-hint">Auto-filled from ticker lookup — edit if needed.</small>
     </div>
 
     <div class="form-group">
@@ -49,48 +55,11 @@
     </div>
 
     <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Add Position</button>
+        <button type="submit" class="btn btn-primary" id="add-position-submit">Add Position</button>
         <a href="/" class="btn">Cancel</a>
     </div>
 </form>
 
-<script>
-(function () {
-    var tickerInput = document.getElementById("ticker");
-    var companyInput = document.getElementById("company_name");
-    var statusHint = document.getElementById("company_name_status");
-
-    tickerInput.addEventListener("blur", function () {
-        var ticker = tickerInput.value.trim();
-        if (!ticker) {
-            companyInput.value = "";
-            statusHint.textContent = "";
-            return;
-        }
-
-        companyInput.value = "";
-        statusHint.textContent = "Looking up company name…";
-
-        fetch("/api/lookup/" + encodeURIComponent(ticker))
-            .then(function (resp) {
-                if (!resp.ok) {
-                    return resp.json().then(function (d) {
-                        throw new Error(d.error || "Lookup failed");
-                    });
-                }
-                return resp.json();
-            })
-            .then(function (data) {
-                companyInput.value = data.company_name;
-                statusHint.textContent = "";
-            })
-            .catch(function (err) {
-                console.warn("Company lookup failed:", err);
-                companyInput.removeAttribute("readonly");
-                statusHint.textContent = "Could not auto-detect company name. Please enter it manually.";
-            });
-    });
-})();
-</script>
+<script src="/static/ticker-lookup.js"></script>
 
 {% endblock %}

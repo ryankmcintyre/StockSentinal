@@ -18,6 +18,7 @@ from app.alpha_vantage_client import (
     AlphaVantageThrottled,
     DailyBar,
     SMAPoint,
+    SymbolSearchMatch,
     WeeklyBar,
 )
 
@@ -85,6 +86,17 @@ def _get(path: str, params: dict[str, Any], api_key: str) -> Any:
 
 def fetch_company_name(symbol: str, api_key: str) -> str:
     """Look up the company name for a ticker symbol via Twelve Data."""
+    matches = fetch_ticker_matches(symbol, api_key)
+    symbol_upper = symbol.upper()
+    best = next(
+        (item for item in matches if item.symbol.upper() == symbol_upper),
+        matches[0],
+    )
+    return best.name
+
+
+def fetch_ticker_matches(symbol: str, api_key: str) -> list[SymbolSearchMatch]:
+    """Look up available ticker matches via Twelve Data."""
     data = _get("/stocks", {"symbol": symbol}, api_key)
     if isinstance(data, dict):
         matches = data.get("data", [])
@@ -98,17 +110,27 @@ def fetch_company_name(symbol: str, api_key: str) -> str:
             f"No matching company found for symbol '{symbol}'"
         )
 
-    symbol_upper = symbol.upper()
-    best = next(
-        (item for item in matches if str(item.get("symbol", "")).upper() == symbol_upper),
-        matches[0],
-    )
-    name = best.get("name") or best.get("instrument_name")
-    if not name:
+    parsed_matches: list[SymbolSearchMatch] = []
+    for match in matches:
+        match_symbol = match.get("symbol")
+        match_name = match.get("name") or match.get("instrument_name")
+        if not match_symbol or not match_name:
+            continue
+        parsed_matches.append(
+            SymbolSearchMatch(
+                symbol=match_symbol,
+                name=match_name,
+                region=match.get("country"),
+                type=match.get("type"),
+            )
+        )
+
+    if not parsed_matches:
         raise AlphaVantageError(
             "Incomplete company information received from Twelve Data"
         )
-    return name
+
+    return parsed_matches
 
 
 def _parse_bars(data: dict[str, Any], symbol: str) -> list[dict[str, Any]]:

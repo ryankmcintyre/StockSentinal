@@ -66,15 +66,27 @@ class ATRPoint:
     atr: float
 
 
+@dataclass
+class SymbolSearchMatch:
+    """A single symbol-search match returned by a market data provider."""
+    symbol: str
+    name: str
+    region: str | None = None
+    type: str | None = None
+    match_score: float | None = None
+
+
 def _get(params: dict, api_key: str) -> dict:
     """Make a GET request to Alpha Vantage and return parsed JSON.
 
     Raises on HTTP errors, throttling notes, and error messages.
     """
     params["apikey"] = api_key
-    # Log the request with the API key redacted
-    safe_params = {k: v for k, v in params.items() if k != "apikey"}
-    logger.debug("Alpha Vantage request: %s params=%s", BASE_URL, safe_params)
+    logger.debug(
+        "Alpha Vantage request: %s function=%s",
+        BASE_URL,
+        params.get("function"),
+    )
 
     start = _time.monotonic()
     resp = requests.get(BASE_URL, params=params, timeout=REQUEST_TIMEOUT)
@@ -103,31 +115,67 @@ def _get(params: dict, api_key: str) -> dict:
     return data
 
 
-def fetch_company_name(symbol: str, api_key: str) -> str:
-    """Look up the company name for a ticker symbol via SYMBOL_SEARCH.
+def _parse_match_score(value: str | None) -> float | None:
+    """Parse an Alpha Vantage match score string into a float."""
+    if value in (None, ""):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
-    Returns the best-match company name, or raises
-    AlphaVantageSymbolNotFound if no matches are found.
-    """
+
+def fetch_ticker_matches(symbol: str, api_key: str) -> list[SymbolSearchMatch]:
+    """Look up all available symbol matches for a ticker symbol."""
     params = {
         "function": "SYMBOL_SEARCH",
         "keywords": symbol,
     }
     data = _get(params, api_key)
 
-    matches = data.get("bestMatches", [])
+    raw_matches = data.get("bestMatches", [])
+    if not raw_matches:
+        raise AlphaVantageSymbolNotFound(
+            f"No matching company found for symbol '{symbol}'"
+        )
+
+    matches: list[SymbolSearchMatch] = []
+    for raw_match in raw_matches:
+        match_symbol = raw_match.get("1. symbol")
+        match_name = raw_match.get("2. name")
+        if not match_symbol or not match_name:
+            continue
+        matches.append(
+            SymbolSearchMatch(
+                symbol=match_symbol,
+                name=match_name,
+                type=raw_match.get("3. type"),
+                region=raw_match.get("4. region"),
+                match_score=_parse_match_score(raw_match.get("9. matchScore")),
+            )
+        )
+
     if not matches:
         raise AlphaVantageSymbolNotFound(
             f"No matching company found for symbol '{symbol}'"
         )
 
-    best = matches[0]
-    if "2. name" not in best:
-        raise AlphaVantageError(
-            "Incomplete company information received from Alpha Vantage"
-        )
+    return matches
 
-    return best["2. name"]
+
+def fetch_company_name(symbol: str, api_key: str) -> str:
+    """Look up the company name for a ticker symbol via SYMBOL_SEARCH.
+
+    Returns the best-match company name, or raises
+    AlphaVantageSymbolNotFound if no matches are found.
+    """
+    matches = fetch_ticker_matches(symbol, api_key)
+    symbol_upper = symbol.upper()
+    best = next(
+        (match for match in matches if match.symbol.upper() == symbol_upper),
+        matches[0],
+    )
+    return best.name
 
 
 def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:

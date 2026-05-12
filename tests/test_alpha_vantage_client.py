@@ -15,6 +15,7 @@ from app.alpha_vantage_client import (
     _get,
     fetch_atr,
     fetch_company_name,
+    fetch_ticker_matches,
     fetch_daily_series,
     fetch_sma,
     fetch_weekly_series,
@@ -258,6 +259,40 @@ class TestFetchATR:
 
 
 class TestFetchCompanyName:
+    def test_returns_all_ticker_matches(self, mocker):
+        fake_data = {
+            "bestMatches": [
+                {
+                    "1. symbol": "PEP",
+                    "2. name": "PepsiCo, Inc.",
+                    "3. type": "Equity",
+                    "4. region": "United States",
+                    "9. matchScore": "1.0000",
+                },
+                {
+                    "1. symbol": "PEP",
+                    "2. name": "Polenergia S.A.",
+                    "3. type": "Equity",
+                    "4. region": "Poland",
+                    "9. matchScore": "0.9000",
+                },
+            ]
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        matches = fetch_ticker_matches("PEP", "fake_key")
+
+        assert len(matches) == 2
+        assert matches[0].symbol == "PEP"
+        assert matches[0].name == "PepsiCo, Inc."
+        assert matches[0].region == "United States"
+        assert matches[0].type == "Equity"
+        assert matches[0].match_score == 1.0
+
     def test_returns_best_match_name(self, mocker):
         fake_data = {
             "bestMatches": [
@@ -283,6 +318,48 @@ class TestFetchCompanyName:
 
         name = fetch_company_name("AAPL", "fake_key")
         assert name == "Apple Inc"
+
+    def test_fetch_company_name_prefers_exact_symbol_match(self, mocker):
+        fake_data = {
+            "bestMatches": [
+                {
+                    "1. symbol": "AAPL.LON",
+                    "2. name": "Apple Inc (London)",
+                },
+                {
+                    "1. symbol": "AAPL",
+                    "2. name": "Apple Inc",
+                },
+            ]
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        assert fetch_company_name("AAPL", "fake_key") == "Apple Inc"
+
+    def test_raises_not_found_when_all_matches_are_unparseable(self, mocker):
+        fake_data = {
+            "bestMatches": [
+                {
+                    "1. symbol": "",
+                    "2. name": "Missing Symbol Co",
+                },
+                {
+                    "1. symbol": "AAPL",
+                },
+            ]
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageSymbolNotFound, match="No matching company"):
+            fetch_ticker_matches("AAPL", "fake_key")
 
     def test_raises_on_empty_matches(self, mocker):
         fake_data = {"bestMatches": []}

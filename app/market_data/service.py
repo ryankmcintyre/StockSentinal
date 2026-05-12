@@ -16,6 +16,7 @@ from app.alpha_vantage_client import (
     ATRPoint,
     AlphaVantageError,
     DailyBar,
+    SymbolSearchMatch,
     WeeklyBar,
 )
 from app.models import Position
@@ -133,6 +134,10 @@ class MarketDataService:
     def fetch_company_name(self, symbol: str) -> str:
         """Rate-limited company name lookup via the provider."""
         return self._provider.fetch_company_name(symbol)
+
+    def fetch_ticker_matches(self, symbol: str) -> list[SymbolSearchMatch]:
+        """Rate-limited ticker match lookup via the provider."""
+        return self._provider.fetch_ticker_matches(symbol)
 
     def fetch_daily_series(self, symbol: str) -> list[DailyBar]:
         """Rate-limited daily bar fetch via the provider."""

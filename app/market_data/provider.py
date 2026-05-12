@@ -14,9 +14,11 @@ from app.alpha_vantage_client import (
     ATRPoint,
     DailyBar,
     SMAPoint,
+    SymbolSearchMatch,
     WeeklyBar,
     fetch_atr as _av_fetch_atr,
     fetch_company_name as _av_fetch_company_name,
+    fetch_ticker_matches as _av_fetch_ticker_matches,
     fetch_daily_series as _av_fetch_daily_series,
     fetch_sma as _av_fetch_sma,
     fetch_weekly_series as _av_fetch_weekly_series,
@@ -25,6 +27,7 @@ from app.config import require_alpha_vantage_api_key, require_twelve_data_api_ke
 from app.twelve_data_client import (
     fetch_atr as _td_fetch_atr,
     fetch_company_name as _td_fetch_company_name,
+    fetch_ticker_matches as _td_fetch_ticker_matches,
     fetch_daily_series as _td_fetch_daily_series,
     fetch_sma as _td_fetch_sma,
     fetch_weekly_series as _td_fetch_weekly_series,
@@ -38,6 +41,8 @@ class MarketDataProvider(Protocol):
     """Contract for any market data source."""
 
     def fetch_company_name(self, symbol: str) -> str: ...
+
+    def fetch_ticker_matches(self, symbol: str) -> list[SymbolSearchMatch]: ...
 
     def fetch_daily_bars(self, symbol: str) -> list[DailyBar]: ...
 
@@ -95,6 +100,10 @@ class AlphaVantageProvider:
     def fetch_company_name(self, symbol: str) -> str:
         self._wait_for_slot()
         return _av_fetch_company_name(symbol, self._get_api_key())
+
+    def fetch_ticker_matches(self, symbol: str) -> list[SymbolSearchMatch]:
+        self._wait_for_slot()
+        return _av_fetch_ticker_matches(symbol, self._get_api_key())
 
     def fetch_daily_bars(self, symbol: str) -> list[DailyBar]:
         self._wait_for_slot()
@@ -154,6 +163,10 @@ class TwelveDataProvider:
     def fetch_company_name(self, symbol: str) -> str:
         self._wait_for_slot()
         return _td_fetch_company_name(symbol, self._get_api_key())
+
+    def fetch_ticker_matches(self, symbol: str) -> list[SymbolSearchMatch]:
+        self._wait_for_slot()
+        return _td_fetch_ticker_matches(symbol, self._get_api_key())
 
     def fetch_daily_bars(self, symbol: str) -> list[DailyBar]:
         self._wait_for_slot()

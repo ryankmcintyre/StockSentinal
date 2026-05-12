@@ -17,6 +17,7 @@ from app.twelve_data_client import (
     _get,
     fetch_atr,
     fetch_company_name,
+    fetch_ticker_matches,
     fetch_daily_series,
     fetch_sma,
     fetch_weekly_series,
@@ -192,6 +193,32 @@ class TestFetchAtr:
             ATRPoint(date=date(2026, 4, 16), atr=2.30),
             ATRPoint(date=date(2026, 4, 15), atr=2.10),
         ]
+
+
+class TestFetchTickerMatches:
+    def test_returns_ticker_matches(self, mocker):
+        fake_data = {
+            "data": [
+                {
+                    "symbol": "AAPL",
+                    "name": "Apple Inc",
+                    "country": "United States",
+                    "type": "Common Stock",
+                },
+            ]
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        matches = fetch_ticker_matches("AAPL", "fake_key")
+
+        assert len(matches) == 1
+        assert matches[0].symbol == "AAPL"
+        assert matches[0].name == "Apple Inc"
+        assert matches[0].region == "United States"
 
 
 class TestFetchCompanyName:
