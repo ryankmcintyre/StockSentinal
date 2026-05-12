@@ -1,7 +1,7 @@
 """Tests for the key-level CRUD routes (issue #23)."""
 
 import re
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -254,8 +254,12 @@ class TestKeyLevelRoutes:
             _setup_db,
             daily_close=151.0,
             daily_sma_21=149.5,
+            daily_market_date=date(2024, 3, 1),
+            daily_retrieved_at=datetime(2024, 3, 1, 10, 30),
             weekly_close=148.0,
             weekly_sma_20=145.0,
+            weekly_market_date=date(2024, 2, 23),
+            weekly_retrieved_at=datetime(2024, 2, 23, 16, 0),
             refresh_error="old error",
         )
 
@@ -290,8 +294,12 @@ class TestKeyLevelRoutes:
             assert pos.sector_benchmark_ticker == "XLK"
             assert pos.daily_close is None
             assert pos.daily_sma_21 is None
+            assert pos.daily_market_date is None
+            assert pos.daily_retrieved_at is None
             assert pos.weekly_close is None
             assert pos.weekly_sma_20 is None
+            assert pos.weekly_market_date is None
+            assert pos.weekly_retrieved_at is None
             assert pos.refresh_error is None
         finally:
             db.close()

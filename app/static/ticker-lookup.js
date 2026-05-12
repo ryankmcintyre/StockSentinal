@@ -14,7 +14,7 @@
         return;
     }
 
-    var lastResolvedTicker = "";
+    var lastResolvedTicker = tickerInput.value.trim().toUpperCase();
     var requestCounter = 0;
 
     function setPickerVisible(visible) {
