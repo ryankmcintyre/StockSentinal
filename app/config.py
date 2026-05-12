@@ -76,13 +76,18 @@ def require_twelve_data_api_key() -> str:
 def get_market_data_provider() -> str:
     """Return the configured market data provider name.
 
-    Defaults to Alpha Vantage. Unknown values fall back to Alpha Vantage
-    so the application remains backward-compatible with older deployments.
+    If MARKET_DATA_PROVIDER is explicitly set to a valid value, that provider
+    is used. Otherwise the provider is auto-detected from whichever API key is
+    present: Twelve Data takes precedence if TWELVE_DATA_API_KEY is set,
+    otherwise Alpha Vantage is used as the default.
     """
-    provider = os.environ.get("MARKET_DATA_PROVIDER", "alphavantage").strip().lower()
-    if provider not in _VALID_MARKET_DATA_PROVIDERS:
-        return "alphavantage"
-    return provider
+    provider = os.environ.get("MARKET_DATA_PROVIDER", "").strip().lower()
+    if provider in _VALID_MARKET_DATA_PROVIDERS:
+        return provider
+    # Auto-detect from available keys.
+    if os.environ.get("TWELVE_DATA_API_KEY"):
+        return "twelvedata"
+    return "alphavantage"
 
 
 def get_market_data_api_key() -> str | None:
