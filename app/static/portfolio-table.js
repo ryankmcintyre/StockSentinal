@@ -35,6 +35,9 @@
             table.querySelectorAll("[data-sort-header='true']")
         );
         var originalRows = Array.from(tbody.rows);
+        originalRows.forEach(function (row, index) {
+            row.dataset.originalIndex = String(index);
+        });
 
         headers.forEach(function (header) {
             header.addEventListener("click", function () {
@@ -67,7 +70,7 @@
                     if (leftValue > rightValue) {
                         return nextDirection === "asc" ? 1 : -1;
                     }
-                    return originalRows.indexOf(left) - originalRows.indexOf(right);
+                    return Number(left.dataset.originalIndex) - Number(right.dataset.originalIndex);
                 });
 
                 sortedRows.forEach(function (row) {
