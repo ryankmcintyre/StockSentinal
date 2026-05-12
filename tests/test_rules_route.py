@@ -235,6 +235,44 @@ class TestRulesPage:
         assert 'title="Daily refresh failed: Alpha Vantage API rate limit exceeded"' in resp.text
         assert "rule-tag-error" in resp.text
 
+    def test_portfolio_renders_sortable_column_headers(self, client, _setup_db):
+        db = _setup_db()
+        try:
+            db.add_all(
+                [
+                    Position(
+                        ticker="AAPL",
+                        company_name="Apple Inc.",
+                        cost_basis=100.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=115.0,
+                        notes=None,
+                    ),
+                    Position(
+                        ticker="MSFT",
+                        company_name="Microsoft Corp.",
+                        cost_basis=200.0,
+                        initial_purchase_date=date(2025, 1, 2),
+                        investment_type="short-term",
+                        current_price=190.0,
+                        notes=None,
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert 'data-sortable-table="true"' in resp.text
+        assert resp.text.count('data-sort-header="true"') == 10
+        assert resp.text.count('aria-sort="none"') == 10
+        assert 'data-sort-value="100.0"' in resp.text
+        assert 'data-sort-value="190.0"' in resp.text
+        assert "/static/portfolio-table.js" in resp.text
+
     def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
         from app.main import _refresh_single_position_task
 
