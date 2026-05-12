@@ -72,7 +72,7 @@ _market_service = MarketDataService(_provider)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Starting StockSentinal — initializing database")
+    logger.info("Starting Stock Sentinel — initializing database")
     init_db()
     uow = SqlAlchemyUnitOfWork(SessionLocal())
     try:
@@ -85,7 +85,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="StockSentinal", lifespan=lifespan)
+app = FastAPI(title="Stock Sentinel", lifespan=lifespan)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 

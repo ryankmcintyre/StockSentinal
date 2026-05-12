@@ -276,9 +276,9 @@ class TestRulesPage:
     def test_portfolio_renders_branding_and_empty_state(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "<title>Portfolio — StockSentinal</title>" in resp.text
+        assert "<title>Portfolio — Stock Sentinel</title>" in resp.text
         assert 'rel="icon" href="/static/favicon.svg"' in resp.text
-        assert 'aria-label="StockSentinal home"' in resp.text
+        assert 'aria-label="Stock Sentinel home"' in resp.text
         assert "Sell · Trim · Hold" in resp.text
         assert "<h1>Portfolio</h1>" in resp.text
         assert "Your portfolio is ready for its first position." in resp.text
