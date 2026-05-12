@@ -273,6 +273,17 @@ class TestRulesPage:
         assert 'data-sort-value="190.0"' in resp.text
         assert "/static/portfolio-table.js" in resp.text
 
+    def test_portfolio_renders_branding_and_empty_state(self, client):
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "<title>Portfolio — StockSentinal</title>" in resp.text
+        assert 'rel="icon" href="/static/favicon.svg"' in resp.text
+        assert 'aria-label="StockSentinal home"' in resp.text
+        assert "Sell · Trim · Hold" in resp.text
+        assert "<h1>Portfolio</h1>" in resp.text
+        assert "Your portfolio is ready for its first position." in resp.text
+        assert "Add a stock to start getting clear Sell, Trim, or Hold guidance." in resp.text
+
     def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
         from app.main import _refresh_single_position_task
 

@@ -1,8 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Portfolio — Stock Sentinel{% endblock %}
+{% block title %}Portfolio — StockSentinal{% endblock %}
 {% block content %}
 
-<!-- Summary cards -->
+<section class="page-header">
+    <div>
+        <p class="page-eyebrow">Dashboard</p>
+        <h1>Portfolio</h1>
+    </div>
+    <p class="page-subtitle">Monitor your current positions, verdicts, and next actions in one place.</p>
+</section>
+
 <section class="summary">
     <div class="summary-card summary-total">
         <span class="summary-count">{{ summary.total }}</span>
@@ -183,7 +190,9 @@
 </table>
 {% else %}
 <div class="empty-state">
-    <p>No positions yet.</p>
+    <span class="empty-state-mark" aria-hidden="true">↗</span>
+    <h2>Your portfolio is ready for its first position.</h2>
+    <p>Add a stock to start getting clear Sell, Trim, or Hold guidance.</p>
     <a href="/add" class="btn btn-primary">Add your first position</a>
 </div>
 {% endif %}

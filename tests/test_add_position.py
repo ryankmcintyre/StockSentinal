@@ -103,6 +103,12 @@ class TestAddPositionFetchesPrice:
         """The GET /add form should not contain a current_price input."""
         resp = client.get("/add")
         assert resp.status_code == 200
+        assert "<title>Add Position — StockSentinal</title>" in resp.text
+        assert 'rel="icon" href="/static/favicon.svg"' in resp.text
+        assert 'aria-label="StockSentinal home"' in resp.text
+        assert "Sell · Trim · Hold" in resp.text
+        assert "<h1>Add Position</h1>" in resp.text
+        assert "Capture a holding with the details needed to evaluate it against your rules." in resp.text
         assert 'name="current_price"' not in resp.text
         assert 'data-api-submit="true"' in resp.text
         assert "/static/refresh-status.js" in resp.text
