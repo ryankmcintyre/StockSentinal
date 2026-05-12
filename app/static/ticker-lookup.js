@@ -20,7 +20,7 @@
     }
 
     function setPrice(price) {
-        if (typeof price === "number") {
+        if (typeof price === "number" && !isNaN(price) && isFinite(price)) {
             priceStatus.textContent = "Current price: $" + price.toFixed(2);
             priceStatus.hidden = false;
             return;
