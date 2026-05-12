@@ -1,1 +1,1 @@
-"""Market data package."""
+"""Market data package — shared exceptions, providers, staleness, and services."""
