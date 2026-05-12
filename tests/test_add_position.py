@@ -104,6 +104,16 @@ class TestAddPositionFetchesPrice:
         assert 'name="current_price"' not in resp.text
         assert 'data-api-submit="true"' in resp.text
         assert "/static/refresh-status.js" in resp.text
+        assert 'class="form-legend"' in resp.text
+        assert "Required field" in resp.text
+        for label in (
+            "Ticker",
+            "Company Name",
+            "Cost Basis ($)",
+            "Purchase Date",
+            "Investment Type",
+        ):
+            assert f'{label} <span class="required-indicator"' in resp.text
 
 
 class TestAddPositionFormRemoved:
