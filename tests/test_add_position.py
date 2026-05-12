@@ -10,9 +10,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.alpha_vantage_client import AlphaVantageError, DailyBar
+from app.alpha_vantage_client import DailyBar
 from app.database import get_uow
 from app.main import _market_service, app
+from app.market_data.exceptions import MarketDataError
 from app.models import Base
 from app.unit_of_work import SqlAlchemyUnitOfWork
 
@@ -91,7 +92,7 @@ class TestAddPositionFetchesPrice:
             patch("app.main.get_market_data_api_key", return_value="fake_key"),
             patch.object(
                 _market_service, "fetch_daily_series",
-                side_effect=AlphaVantageError("boom"),
+                side_effect=MarketDataError("boom"),
             ),
         ):
             resp = client.post("/add", data=FORM_DATA_BASE, follow_redirects=False)

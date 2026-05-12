@@ -10,16 +10,11 @@ from datetime import date
 from typing import Any
 
 import requests
-
-from app.alpha_vantage_client import (
-    ATRPoint,
-    AlphaVantageError,
-    AlphaVantageSymbolNotFound,
-    AlphaVantageThrottled,
-    DailyBar,
-    SMAPoint,
-    SymbolSearchMatch,
-    WeeklyBar,
+from app.alpha_vantage_client import ATRPoint, DailyBar, SMAPoint, SymbolSearchMatch, WeeklyBar
+from app.market_data.exceptions import (
+    MarketDataError,
+    MarketDataSymbolNotFound,
+    MarketDataThrottled,
 )
 
 BASE_URL = "https://api.twelvedata.com"
@@ -53,14 +48,14 @@ def _raise_api_error(data: dict[str, Any]) -> None:
 
     if code == "429" or "rate limit" in lowered or "api credits" in lowered:
         logger.warning("Twelve Data throttled: %s", message)
-        raise AlphaVantageThrottled(message)
+        raise MarketDataThrottled(message)
 
     if "symbol" in lowered and any(term in lowered for term in ("not found", "invalid", "missing")):
         logger.warning("Twelve Data symbol error: %s", message)
-        raise AlphaVantageSymbolNotFound(message)
+        raise MarketDataSymbolNotFound(message)
 
     logger.warning("Twelve Data error: %s", message)
-    raise AlphaVantageError(message)
+    raise MarketDataError(message)
 
 
 def _get(path: str, params: dict[str, Any], api_key: str) -> Any:
@@ -106,7 +101,7 @@ def fetch_ticker_matches(symbol: str, api_key: str) -> list[SymbolSearchMatch]:
         matches = []
 
     if not matches:
-        raise AlphaVantageSymbolNotFound(
+        raise MarketDataSymbolNotFound(
             f"No matching company found for symbol '{symbol}'"
         )
 
@@ -126,7 +121,7 @@ def fetch_ticker_matches(symbol: str, api_key: str) -> list[SymbolSearchMatch]:
         )
 
     if not parsed_matches:
-        raise AlphaVantageError(
+        raise MarketDataError(
             "Incomplete company information received from Twelve Data"
         )
 
@@ -137,7 +132,7 @@ def _parse_bars(data: dict[str, Any], symbol: str) -> list[dict[str, Any]]:
     """Return sorted raw time-series bars from a Twelve Data response."""
     values = data.get("values", [])
     if not values:
-        raise AlphaVantageSymbolNotFound(
+        raise MarketDataSymbolNotFound(
             f"No time series data found for symbol '{symbol}'"
         )
 
@@ -195,7 +190,7 @@ def fetch_sma(
 
     values = data.get("values", [])
     if not values:
-        raise AlphaVantageError("Unexpected response structure: missing 'values' key")
+        raise MarketDataError("Unexpected response structure: missing 'values' key")
 
     points = [
         SMAPoint(
@@ -231,7 +226,7 @@ def fetch_atr(
 
     values = data.get("values", [])
     if not values:
-        raise AlphaVantageError("Unexpected response structure: missing 'values' key")
+        raise MarketDataError("Unexpected response structure: missing 'values' key")
 
     points = [
         ATRPoint(

@@ -5,9 +5,6 @@ from datetime import date
 import pytest
 
 from app.alpha_vantage_client import (
-    AlphaVantageError,
-    AlphaVantageSymbolNotFound,
-    AlphaVantageThrottled,
     ATRPoint,
     DailyBar,
     SMAPoint,
@@ -19,6 +16,11 @@ from app.alpha_vantage_client import (
     fetch_daily_series,
     fetch_sma,
     fetch_weekly_series,
+)
+from app.market_data.exceptions import (
+    MarketDataError,
+    MarketDataSymbolNotFound,
+    MarketDataThrottled,
 )
 
 
@@ -37,7 +39,7 @@ class TestGetErrorHandling:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageThrottled):
+        with pytest.raises(MarketDataThrottled):
             _get({"function": "TIME_SERIES_DAILY", "symbol": "IBM"}, "fake_key")
 
     def test_symbol_not_found(self, mocker):
@@ -49,7 +51,7 @@ class TestGetErrorHandling:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageSymbolNotFound):
+        with pytest.raises(MarketDataSymbolNotFound):
             _get({"function": "TIME_SERIES_DAILY", "symbol": "INVALID"}, "fake_key")
 
 
@@ -98,7 +100,7 @@ class TestFetchDailySeries:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageError, match="missing"):
+        with pytest.raises(MarketDataError, match="missing"):
             fetch_daily_series("IBM", "fake_key")
 
 
@@ -201,7 +203,7 @@ class TestFetchSMA:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageError, match="missing"):
+        with pytest.raises(MarketDataError, match="missing"):
             fetch_sma("IBM", "daily", 21, "fake_key")
 
 
@@ -239,7 +241,7 @@ class TestFetchATR:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageError, match="missing"):
+        with pytest.raises(MarketDataError, match="missing"):
             fetch_atr("IBM", "daily", 14, "fake_key")
 
     def test_throttle_note_raises_throttled(self, mocker):
@@ -249,7 +251,7 @@ class TestFetchATR:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageThrottled):
+        with pytest.raises(MarketDataThrottled):
             fetch_atr("IBM", "daily", 14, "fake_key")
 
 
@@ -358,7 +360,7 @@ class TestFetchCompanyName:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageSymbolNotFound, match="No matching company"):
+        with pytest.raises(MarketDataSymbolNotFound, match="No matching company"):
             fetch_ticker_matches("AAPL", "fake_key")
 
     def test_raises_on_empty_matches(self, mocker):
@@ -369,7 +371,7 @@ class TestFetchCompanyName:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageSymbolNotFound, match="No matching company"):
+        with pytest.raises(MarketDataSymbolNotFound, match="No matching company"):
             fetch_company_name("ZZZZZZ", "fake_key")
 
     def test_raises_on_missing_best_matches_key(self, mocker):
@@ -380,5 +382,5 @@ class TestFetchCompanyName:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageSymbolNotFound, match="No matching company"):
+        with pytest.raises(MarketDataSymbolNotFound, match="No matching company"):
             fetch_company_name("XYZ", "fake_key")

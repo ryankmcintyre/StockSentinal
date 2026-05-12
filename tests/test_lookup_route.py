@@ -4,8 +4,9 @@ from datetime import date
 
 from fastapi.testclient import TestClient
 
-from app.alpha_vantage_client import AlphaVantageError, DailyBar, SymbolSearchMatch
+from app.alpha_vantage_client import DailyBar, SymbolSearchMatch
 from app.main import _market_service, app
+from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 
 
 client = TestClient(app)
@@ -59,13 +60,11 @@ class TestLookupRoute:
         assert "error" in resp.json()
 
     def test_returns_404_when_no_matches_found(self, mocker):
-        from app.alpha_vantage_client import AlphaVantageSymbolNotFound
-
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         mocker.patch.object(
             _market_service,
             "fetch_ticker_matches",
-            side_effect=AlphaVantageSymbolNotFound("No matching company"),
+            side_effect=MarketDataSymbolNotFound("No matching company"),
         )
 
         resp = client.get("/api/lookup/INVALID")
@@ -114,7 +113,7 @@ class TestLookupRoute:
         mocker.patch.object(
             _market_service,
             "fetch_daily_series",
-            side_effect=AlphaVantageError("price unavailable"),
+            side_effect=MarketDataError("price unavailable"),
         )
 
         resp = client.get("/api/lookup/AAPL")

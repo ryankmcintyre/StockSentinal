@@ -4,14 +4,11 @@ from datetime import date
 
 import pytest
 
-from app.alpha_vantage_client import (
-    ATRPoint,
-    AlphaVantageError,
-    AlphaVantageSymbolNotFound,
-    AlphaVantageThrottled,
-    DailyBar,
-    SMAPoint,
-    WeeklyBar,
+from app.alpha_vantage_client import ATRPoint, DailyBar, SMAPoint, WeeklyBar
+from app.market_data.exceptions import (
+    MarketDataError,
+    MarketDataSymbolNotFound,
+    MarketDataThrottled,
 )
 from app.twelve_data_client import (
     _get,
@@ -36,7 +33,7 @@ class TestGetErrorHandling:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageThrottled):
+        with pytest.raises(MarketDataThrottled):
             _get("/time_series", {"symbol": "IBM", "interval": "1day"}, "fake_key")
 
     def test_symbol_not_found(self, mocker):
@@ -50,7 +47,7 @@ class TestGetErrorHandling:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageSymbolNotFound):
+        with pytest.raises(MarketDataSymbolNotFound):
             _get("/time_series", {"symbol": "INVALID", "interval": "1day"}, "fake_key")
 
 
@@ -82,7 +79,7 @@ class TestFetchDailySeries:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageSymbolNotFound, match="No time series data"):
+        with pytest.raises(MarketDataSymbolNotFound, match="No time series data"):
             fetch_daily_series("IBM", "fake_key")
 
 
@@ -167,7 +164,7 @@ class TestFetchSma:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageError, match="missing 'values'"):
+        with pytest.raises(MarketDataError, match="missing 'values'"):
             fetch_sma("IBM", "daily", 21, "fake_key")
 
 
@@ -244,5 +241,5 @@ class TestFetchCompanyName:
         mock_resp.raise_for_status = mocker.Mock()
         mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
 
-        with pytest.raises(AlphaVantageSymbolNotFound, match="No matching company"):
+        with pytest.raises(MarketDataSymbolNotFound, match="No matching company"):
             fetch_company_name("ZZZZZZ", "fake_key")

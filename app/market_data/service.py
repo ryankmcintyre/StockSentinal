@@ -14,11 +14,11 @@ from sqlalchemy.orm import Session
 
 from app.alpha_vantage_client import (
     ATRPoint,
-    AlphaVantageError,
     DailyBar,
     SymbolSearchMatch,
     WeeklyBar,
 )
+from app.market_data.exceptions import MarketDataError
 from app.models import Position
 from app.schemas import InvestmentType
 from app.unit_of_work import as_uow
@@ -453,7 +453,7 @@ class MarketDataService:
             else self._provider.fetch_daily_bars(symbol)
         )
         if not bars:
-            raise AlphaVantageError(f"No daily bars returned for {symbol}")
+            raise MarketDataError(f"No daily bars returned for {symbol}")
 
         latest_bar = bars[0]
         position.daily_close = latest_bar.close
@@ -487,7 +487,7 @@ class MarketDataService:
             else self._provider.fetch_weekly_bars(symbol)
         )
         if not bars:
-            raise AlphaVantageError(f"No weekly bars returned for {symbol}")
+            raise MarketDataError(f"No weekly bars returned for {symbol}")
 
         target_friday = last_completed_trading_week_end()
         latest_bar = bars[0]

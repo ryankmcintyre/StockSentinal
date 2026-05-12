@@ -11,10 +11,6 @@ from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
-from app.alpha_vantage_client import (
-    AlphaVantageError,
-    AlphaVantageSymbolNotFound,
-)
 from app.config import (
     get_log_level,
     get_market_data_api_key,
@@ -23,7 +19,9 @@ from app.config import (
     get_market_data_provider_display_name,
 )
 from app.database import SessionLocal, get_uow, init_db
-from app.market_data import AlphaVantageProvider, MarketDataService, TwelveDataProvider
+from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
+from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
+from app.market_data.service import MarketDataService
 from app.models import Position, PositionKeyLevel
 from app.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWork
 from app.rule_config import (
@@ -437,12 +435,12 @@ def lookup_ticker(ticker: str):
                 for match in matches
             ],
         }
-    except AlphaVantageSymbolNotFound:
+    except MarketDataSymbolNotFound:
         return JSONResponse(
             status_code=404,
             content={"error": f"No results found for {clean_ticker}"},
         )
-    except AlphaVantageError as exc:
+    except MarketDataError as exc:
         return JSONResponse(
             status_code=502,
             content={"error": "Company name lookup failed"},
