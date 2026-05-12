@@ -43,7 +43,10 @@
 </section>
 {% elif not api_configured %}
 <section class="refresh-controls">
-    <p class="text-muted">Set <code>ALPHA_VANTAGE_API_KEY</code> or <code>TWELVE_DATA_API_KEY</code> to enable automated market data.</p>
+    <p class="text-muted">
+        Set <code>ALPHA_VANTAGE_API_KEY</code> or <code>TWELVE_DATA_API_KEY</code> to enable automated market data via auto-detection.
+        If <code>MARKET_DATA_PROVIDER</code> is set, it overrides auto-detection and requires the matching provider API key.
+    </p>
 </section>
 {% endif %}
 
