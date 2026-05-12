@@ -7,9 +7,22 @@
 <form method="post" action="/edit/{{ position.id }}" class="position-form">
     {# Keep the asterisk visual-only because required inputs are already announced accessibly. #}
     <p class="form-legend"><span class="required-indicator" aria-hidden="true">*</span> Required field</p>
-    <div class="position-identity">
-        <span class="ticker">{{ position.ticker }}</span>
-        <span class="company-name">{{ position.company_name }}</span>
+
+    <div class="form-group">
+        <label for="ticker">Ticker <span class="required-indicator" aria-hidden="true">*</span></label>
+        <input type="text" id="ticker" name="ticker" required maxlength="10" value="{{ position.ticker }}">
+        <small id="ticker_lookup_status" class="form-hint" aria-live="polite"></small>
+        <small id="ticker_lookup_price" class="form-hint ticker-lookup-price" aria-live="polite" hidden></small>
+        <div id="ticker_lookup_picker" class="ticker-lookup-picker" hidden>
+            <p class="ticker-lookup-picker-title">Which stock did you mean?</p>
+            <div id="ticker_lookup_options" class="ticker-lookup-options"></div>
+        </div>
+    </div>
+
+    <div class="form-group">
+        <label for="company_name">Company Name <span class="required-indicator" aria-hidden="true">*</span></label>
+        <input type="text" id="company_name" name="company_name" required value="{{ position.company_name }}" aria-describedby="company_name_status">
+        <small id="company_name_status" class="form-hint">Auto-filled from ticker lookup — edit if needed.</small>
     </div>
 
     <div class="form-group">
@@ -50,7 +63,7 @@
     </div>
 
     <div class="form-actions">
-        <button type="submit" class="btn btn-primary">Save Changes</button>
+        <button type="submit" class="btn btn-primary" id="edit-position-submit">Save Changes</button>
         <a href="/" class="btn">Cancel</a>
     </div>
 </form>
@@ -117,5 +130,7 @@
         </div>
     </form>
 </section>
+
+<script src="/static/ticker-lookup.js"></script>
 
 {% endblock %}

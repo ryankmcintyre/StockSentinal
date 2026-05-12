@@ -1,7 +1,7 @@
 """Tests for the key-level CRUD routes (issue #23)."""
 
 import re
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -43,16 +43,20 @@ def client():
     return TestClient(app)
 
 
-def _seed_position(SessionMaker) -> int:
+def _seed_position(SessionMaker, **overrides) -> int:
     db = SessionMaker()
     try:
+        values = {
+            "ticker": "NVDA",
+            "company_name": "NVIDIA Corp",
+            "cost_basis": 100.0,
+            "initial_purchase_date": date(2024, 1, 1),
+            "investment_type": "long-term",
+            "current_price": 150.0,
+        }
+        values.update(overrides)
         pos = Position(
-            ticker="NVDA",
-            company_name="NVIDIA Corp",
-            cost_basis=100.0,
-            initial_purchase_date=date(2024, 1, 1),
-            investment_type="long-term",
-            current_price=150.0,
+            **values,
         )
         db.add(pos)
         db.commit()
@@ -224,3 +228,103 @@ class TestKeyLevelRoutes:
                 rf"{re.escape(label)}\s*<span class=\"required-indicator\"",
                 resp.text,
             )
+
+    def test_edit_position_shows_ticker_lookup_fields(self, _setup_db, client):
+        pos_id = _seed_position(_setup_db)
+
+        resp = client.get(f"/edit/{pos_id}")
+
+        assert resp.status_code == 200
+        assert 'name="ticker"' in resp.text
+        assert 'value="NVDA"' in resp.text
+        assert 'name="company_name"' in resp.text
+        assert 'value="NVIDIA Corp"' in resp.text
+        assert 'id="ticker_lookup_status"' in resp.text
+        assert 'id="ticker_lookup_price"' in resp.text
+        assert 'id="ticker_lookup_picker"' in resp.text
+        assert "/static/ticker-lookup.js" in resp.text
+        assert "Auto-filled from ticker lookup — edit if needed." in resp.text
+        assert 'id="edit-position-submit"' in resp.text
+
+    def test_edit_position_clears_cached_data_on_ticker_change(
+        self, _setup_db, client, mocker
+    ):
+        mocker.patch("app.main.get_market_data_api_key", return_value=None)
+        pos_id = _seed_position(
+            _setup_db,
+            daily_close=151.0,
+            daily_sma_21=149.5,
+            daily_market_date=date(2024, 3, 1),
+            daily_retrieved_at=datetime(2024, 3, 1, 10, 30),
+            weekly_close=148.0,
+            weekly_sma_20=145.0,
+            weekly_market_date=date(2024, 2, 23),
+            weekly_retrieved_at=datetime(2024, 2, 23, 16, 0),
+            refresh_error="old error",
+        )
+
+        resp = client.post(
+            f"/edit/{pos_id}",
+            data={
+                "ticker": " msft ",
+                "company_name": " Microsoft Corporation ",
+                "cost_basis": "110.00",
+                "initial_purchase_date": "2024-02-01",
+                "investment_type": "short-term",
+                "current_price": "125.50",
+                "notes": " updated notes ",
+                "sector_benchmark_ticker": " xlk ",
+            },
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/"
+
+        db = _setup_db()
+        try:
+            pos = db.query(Position).filter(Position.id == pos_id).first()
+            assert pos.ticker == "MSFT"
+            assert pos.company_name == "Microsoft Corporation"
+            assert pos.cost_basis == 110.0
+            assert pos.initial_purchase_date == date(2024, 2, 1)
+            assert pos.investment_type == "short-term"
+            assert pos.current_price == 125.5
+            assert pos.notes == "updated notes"
+            assert pos.sector_benchmark_ticker == "XLK"
+            assert pos.daily_close is None
+            assert pos.daily_sma_21 is None
+            assert pos.daily_market_date is None
+            assert pos.daily_retrieved_at is None
+            assert pos.weekly_close is None
+            assert pos.weekly_sma_20 is None
+            assert pos.weekly_market_date is None
+            assert pos.weekly_retrieved_at is None
+            assert pos.refresh_error is None
+        finally:
+            db.close()
+
+    def test_edit_position_schedules_refresh_when_ticker_changes_with_api_key(
+        self, _setup_db, client, mocker
+    ):
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
+        mock_refresh = mocker.patch("app.main._refresh_single_position_task", return_value=None)
+        pos_id = _seed_position(_setup_db)
+
+        resp = client.post(
+            f"/edit/{pos_id}",
+            data={
+                "ticker": "msft",
+                "company_name": "Microsoft Corporation",
+                "cost_basis": "100.00",
+                "initial_purchase_date": "2024-01-01",
+                "investment_type": "long-term",
+                "current_price": "150.00",
+                "notes": "",
+                "sector_benchmark_ticker": "",
+            },
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        mock_refresh.assert_called_once_with(pos_id)
