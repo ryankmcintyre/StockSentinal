@@ -395,6 +395,60 @@ h2 {
     color: #888;
 }
 
+.ticker-lookup-price {
+    color: #445;
+    font-weight: 600;
+}
+
+.ticker-lookup-picker {
+    margin-top: 0.75rem;
+    padding: 0.75rem;
+    border: 1px solid #d5dde8;
+    border-radius: 4px;
+    background: #f8fafc;
+}
+
+.ticker-lookup-picker[hidden] {
+    display: none;
+}
+
+.ticker-lookup-picker-title {
+    margin-bottom: 0.5rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #334155;
+}
+
+.ticker-lookup-options {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+}
+
+.ticker-lookup-option {
+    width: 100%;
+    padding: 0.65rem 0.75rem;
+    border: 1px solid #cbd5e1;
+    border-radius: 4px;
+    background: #fff;
+    text-align: left;
+    cursor: pointer;
+}
+
+.ticker-lookup-option:hover,
+.ticker-lookup-option:focus-visible {
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.12);
+    outline: none;
+}
+
+.ticker-lookup-option-meta {
+    display: block;
+    margin-top: 0.15rem;
+    font-size: 0.8rem;
+    color: #64748b;
+}
+
 /* --- Read-only inputs --- */
 
 .form-group input[readonly] {

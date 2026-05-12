@@ -13,6 +13,7 @@ load_dotenv()
 
 from app.alpha_vantage_client import (
     AlphaVantageError,
+    AlphaVantageSymbolNotFound,
 )
 from app.config import (
     get_log_level,
@@ -404,16 +405,43 @@ def delete_sell_ma_condition(
 
 @app.get("/api/lookup/{ticker}")
 def lookup_ticker(ticker: str):
-    """Look up the company name for a ticker symbol via the configured provider."""
+    """Look up ticker matches and the latest price via the configured provider."""
     api_key = get_market_data_api_key()
     if not api_key:
         return JSONResponse(
             status_code=503,
             content={"error": "Market data API key is not configured"},
         )
+    clean_ticker = ticker.strip().upper()
     try:
-        company_name = _market_service.fetch_company_name(ticker.strip().upper())
-        return {"company_name": company_name}
+        matches = _market_service.fetch_ticker_matches(clean_ticker)
+        current_price = None
+        try:
+            bars = _market_service.fetch_daily_series(clean_ticker)
+            if bars:
+                current_price = bars[0].close
+        except Exception:
+            logger.info("Price lookup unavailable for %s", clean_ticker, exc_info=True)
+
+        return {
+            "company_name": matches[0].name,
+            "current_price": current_price,
+            "matches": [
+                {
+                    "symbol": match.symbol,
+                    "name": match.name,
+                    "region": match.region,
+                    "type": match.type,
+                    "match_score": match.match_score,
+                }
+                for match in matches
+            ],
+        }
+    except AlphaVantageSymbolNotFound:
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"No results found for {clean_ticker}"},
+        )
     except AlphaVantageError as exc:
         return JSONResponse(
             status_code=502,
