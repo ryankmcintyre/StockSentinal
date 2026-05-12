@@ -284,6 +284,17 @@ h2 {
     font-size: 0.85rem;
 }
 
+.form-legend {
+    margin-bottom: 1rem;
+    font-size: 0.8rem;
+    color: #666;
+}
+
+.required-indicator {
+    color: #d32f2f;
+    font-weight: 700;
+}
+
 .form-group input,
 .form-group select,
 .form-group textarea {

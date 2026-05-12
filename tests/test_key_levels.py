@@ -1,5 +1,6 @@
 """Tests for the key-level CRUD routes (issue #23)."""
 
+import re
 from datetime import date
 
 import pytest
@@ -204,3 +205,22 @@ class TestKeyLevelRoutes:
         assert "Key Levels" in resp.text
         assert "120.00" in resp.text
         assert "LTH" in resp.text
+
+    def test_edit_position_marks_required_fields(self, _setup_db, client):
+        pos_id = _seed_position(_setup_db)
+
+        resp = client.get(f"/edit/{pos_id}")
+
+        assert resp.status_code == 200
+        assert 'class="form-legend"' in resp.text
+        assert "Required field" in resp.text
+        for label in (
+            "Cost Basis ($)",
+            "Current Price ($)",
+            "Purchase Date",
+            "Investment Type",
+        ):
+            assert re.search(
+                rf"{re.escape(label)}\s*<span class=\"required-indicator\"",
+                resp.text,
+            )

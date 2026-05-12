@@ -1,5 +1,6 @@
 """Tests for the POST /add route — automatic price fetching from Alpha Vantage."""
 
+import re
 from datetime import date
 from unittest.mock import patch
 
@@ -104,6 +105,19 @@ class TestAddPositionFetchesPrice:
         assert 'name="current_price"' not in resp.text
         assert 'data-api-submit="true"' in resp.text
         assert "/static/refresh-status.js" in resp.text
+        assert 'class="form-legend"' in resp.text
+        assert "Required field" in resp.text
+        for label in (
+            "Ticker",
+            "Company Name",
+            "Cost Basis ($)",
+            "Purchase Date",
+            "Investment Type",
+        ):
+            assert re.search(
+                rf"{re.escape(label)}\s*<span class=\"required-indicator\"",
+                resp.text,
+            )
 
 
 class TestAddPositionFormRemoved:
