@@ -103,6 +103,10 @@ class TestGetTwelveDataApiKey:
         monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
         assert get_twelve_data_api_key() is None
 
+    def test_returns_none_when_whitespace_only(self, monkeypatch):
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "  \n\t ")
+        assert get_twelve_data_api_key() is None
+
 
 class TestRequireTwelveDataApiKey:
     def test_returns_key_when_set(self, monkeypatch):
@@ -125,6 +129,11 @@ class TestGetMarketDataProvider:
         monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
         monkeypatch.setenv("TWELVE_DATA_API_KEY", "td-key")
         assert get_market_data_provider() == "twelvedata"
+
+    def test_does_not_auto_detect_twelvedata_from_whitespace_key(self, monkeypatch):
+        monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "   ")
+        assert get_market_data_provider() == "alphavantage"
 
     def test_explicit_provider_overrides_auto_detection(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "alphavantage")
