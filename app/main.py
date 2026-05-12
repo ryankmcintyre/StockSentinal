@@ -14,7 +14,6 @@ load_dotenv()
 from app.config import (
     get_log_level,
     get_market_data_api_key,
-    get_market_data_api_key_env_var,
     get_market_data_provider,
     get_market_data_provider_display_name,
 )
@@ -333,7 +332,6 @@ def portfolio(request: Request, uow: UnitOfWork = Depends(get_uow)):
             "positions": enriched,
             "summary": summary,
             "api_configured": get_market_data_api_key() is not None,
-            "market_data_api_key_env_var": get_market_data_api_key_env_var(),
             "market_data_provider_name": get_market_data_provider_display_name(),
             "any_refresh_in_progress": any_refresh_in_progress,
         },

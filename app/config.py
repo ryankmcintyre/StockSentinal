@@ -10,6 +10,15 @@ _VALID_MARKET_DATA_PROVIDERS = {"alphavantage", "twelvedata"}
 _DEFAULT_SQLITE_URL = "sqlite:///./stocksentinal.db"
 
 
+def _get_env_var(name: str) -> str | None:
+    """Return a trimmed env var value, or None if unset/empty."""
+    value = os.environ.get(name)
+    if value is None:
+        return None
+    value = value.strip()
+    return value if value else None
+
+
 def get_database_url() -> str:
     """Return the database URL from DATABASE_URL env var.
 
@@ -43,7 +52,7 @@ def get_log_level() -> str:
 
 def get_alpha_vantage_api_key() -> str | None:
     """Return the Alpha Vantage API key from the environment, or None if not set."""
-    return os.environ.get("ALPHA_VANTAGE_API_KEY")
+    return _get_env_var("ALPHA_VANTAGE_API_KEY")
 
 
 def require_alpha_vantage_api_key() -> str:
@@ -59,7 +68,7 @@ def require_alpha_vantage_api_key() -> str:
 
 def get_twelve_data_api_key() -> str | None:
     """Return the Twelve Data API key from the environment, or None if not set."""
-    return os.environ.get("TWELVE_DATA_API_KEY")
+    return _get_env_var("TWELVE_DATA_API_KEY")
 
 
 def require_twelve_data_api_key() -> str:
@@ -76,13 +85,18 @@ def require_twelve_data_api_key() -> str:
 def get_market_data_provider() -> str:
     """Return the configured market data provider name.
 
-    Defaults to Alpha Vantage. Unknown values fall back to Alpha Vantage
-    so the application remains backward-compatible with older deployments.
+    If MARKET_DATA_PROVIDER is explicitly set to a valid value, that provider
+    is used. Otherwise the provider is auto-detected from whichever API key is
+    present: Twelve Data takes precedence if TWELVE_DATA_API_KEY is set,
+    otherwise Alpha Vantage is used as the default.
     """
-    provider = os.environ.get("MARKET_DATA_PROVIDER", "alphavantage").strip().lower()
-    if provider not in _VALID_MARKET_DATA_PROVIDERS:
-        return "alphavantage"
-    return provider
+    provider = os.environ.get("MARKET_DATA_PROVIDER", "").strip().lower()
+    if provider in _VALID_MARKET_DATA_PROVIDERS:
+        return provider
+    # Auto-detect from available keys.
+    if get_twelve_data_api_key():
+        return "twelvedata"
+    return "alphavantage"
 
 
 def get_market_data_api_key() -> str | None:

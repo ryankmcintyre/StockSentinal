@@ -103,6 +103,10 @@ class TestGetTwelveDataApiKey:
         monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
         assert get_twelve_data_api_key() is None
 
+    def test_returns_none_when_whitespace_only(self, monkeypatch):
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "  \n\t ")
+        assert get_twelve_data_api_key() is None
+
 
 class TestRequireTwelveDataApiKey:
     def test_returns_key_when_set(self, monkeypatch):
@@ -116,26 +120,62 @@ class TestRequireTwelveDataApiKey:
 
 
 class TestGetMarketDataProvider:
-    def test_defaults_to_alphavantage(self, monkeypatch):
+    def test_defaults_to_alphavantage_when_no_keys_set(self, monkeypatch):
         monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
+        assert get_market_data_provider() == "alphavantage"
+
+    def test_auto_detects_twelvedata_from_key(self, monkeypatch):
+        monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "td-key")
+        assert get_market_data_provider() == "twelvedata"
+
+    def test_auto_detects_twelvedata_when_both_keys_set(self, monkeypatch):
+        monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "av-key")
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "td-key")
+        assert get_market_data_provider() == "twelvedata"
+
+    def test_does_not_auto_detect_twelvedata_from_whitespace_key(self, monkeypatch):
+        monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "   ")
+        assert get_market_data_provider() == "alphavantage"
+
+    def test_explicit_provider_overrides_auto_detection(self, monkeypatch):
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "alphavantage")
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "td-key")
         assert get_market_data_provider() == "alphavantage"
 
     def test_normalizes_configured_provider(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "TwelveData")
         assert get_market_data_provider() == "twelvedata"
 
-    def test_invalid_provider_falls_back_to_alphavantage(self, monkeypatch):
+    def test_invalid_provider_falls_back_to_auto_detection(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "bloomberg")
+        monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
         assert get_market_data_provider() == "alphavantage"
+
+    def test_invalid_provider_auto_detects_twelvedata_from_key(self, monkeypatch):
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "bloomberg")
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "td-key")
+        assert get_market_data_provider() == "twelvedata"
 
 
 class TestMarketDataProviderHelpers:
     def test_returns_alpha_vantage_api_key_for_default_provider(self, monkeypatch):
         monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
         monkeypatch.setenv("ALPHA_VANTAGE_API_KEY", "av-key")
         assert get_market_data_api_key() == "av-key"
         assert get_market_data_api_key_env_var() == "ALPHA_VANTAGE_API_KEY"
         assert get_market_data_provider_display_name() == "Alpha Vantage"
+
+    def test_auto_detects_twelvedata_when_only_td_key_set(self, monkeypatch):
+        monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        monkeypatch.delenv("ALPHA_VANTAGE_API_KEY", raising=False)
+        monkeypatch.setenv("TWELVE_DATA_API_KEY", "td-key")
+        assert get_market_data_api_key() == "td-key"
+        assert get_market_data_provider_display_name() == "Twelve Data"
 
     def test_returns_twelve_data_api_key_for_twelvedata_provider(self, monkeypatch):
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "twelvedata")
