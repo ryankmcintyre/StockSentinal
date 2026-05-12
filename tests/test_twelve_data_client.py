@@ -195,7 +195,7 @@ class TestFetchAtr:
         ]
 
 
-class TestFetchCompanyName:
+class TestFetchTickerMatches:
     def test_returns_ticker_matches(self, mocker):
         fake_data = {
             "data": [
@@ -220,6 +220,8 @@ class TestFetchCompanyName:
         assert matches[0].name == "Apple Inc"
         assert matches[0].region == "United States"
 
+
+class TestFetchCompanyName:
     def test_returns_exact_symbol_match_name(self, mocker):
         fake_data = {
             "data": [

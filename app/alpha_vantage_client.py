@@ -82,9 +82,11 @@ def _get(params: dict, api_key: str) -> dict:
     Raises on HTTP errors, throttling notes, and error messages.
     """
     params["apikey"] = api_key
-    # Log the request with the API key redacted
-    safe_params = {k: v for k, v in params.items() if k != "apikey"}
-    logger.debug("Alpha Vantage request: %s params=%s", BASE_URL, safe_params)
+    logger.debug(
+        "Alpha Vantage request: %s function=%s",
+        BASE_URL,
+        params.get("function"),
+    )
 
     start = _time.monotonic()
     resp = requests.get(BASE_URL, params=params, timeout=REQUEST_TIMEOUT)

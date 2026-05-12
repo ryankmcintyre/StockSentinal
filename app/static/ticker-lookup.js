@@ -8,6 +8,7 @@
     var submitButton = document.getElementById("add-position-submit");
 
     if (!tickerInput || !companyInput || !lookupStatus || !priceStatus || !picker || !pickerOptions || !submitButton) {
+        console.warn("Ticker lookup UI did not initialize because required form elements were not found.");
         return;
     }
 
