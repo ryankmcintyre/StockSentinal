@@ -247,7 +247,7 @@ class TestKeyLevelRoutes:
         assert 'id="add-position-submit"' in resp.text
 
     def test_edit_position_updates_ticker_company_and_clears_cached_data(
-        self, _setup_db, client, mocker,
+        self, _setup_db, client, mocker
     ):
         mocker.patch("app.main.get_market_data_api_key", return_value=None)
         pos_id = _seed_position(
@@ -295,3 +295,28 @@ class TestKeyLevelRoutes:
             assert pos.refresh_error is None
         finally:
             db.close()
+
+    def test_edit_position_schedules_refresh_when_ticker_changes_with_api_key(
+        self, _setup_db, client, mocker
+    ):
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
+        mock_refresh = mocker.patch("app.main._refresh_single_position_task", return_value=None)
+        pos_id = _seed_position(_setup_db)
+
+        resp = client.post(
+            f"/edit/{pos_id}",
+            data={
+                "ticker": "msft",
+                "company_name": "Microsoft Corporation",
+                "cost_basis": "100.00",
+                "initial_purchase_date": "2024-01-01",
+                "investment_type": "long-term",
+                "current_price": "150.00",
+                "notes": "",
+                "sector_benchmark_ticker": "",
+            },
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        mock_refresh.assert_called_once_with(pos_id)
