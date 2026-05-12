@@ -5,7 +5,9 @@
     var priceStatus = document.getElementById("ticker_lookup_price");
     var picker = document.getElementById("ticker_lookup_picker");
     var pickerOptions = document.getElementById("ticker_lookup_options");
-    var submitButton = document.getElementById("add-position-submit");
+    var submitButton =
+        document.getElementById("add-position-submit") ||
+        document.getElementById("edit-position-submit");
 
     if (!tickerInput || !companyInput || !lookupStatus || !priceStatus || !picker || !pickerOptions || !submitButton) {
         console.warn("Ticker lookup UI did not initialize because required form elements were not found.");

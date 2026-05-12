@@ -244,7 +244,7 @@ class TestKeyLevelRoutes:
         assert 'id="ticker_lookup_picker"' in resp.text
         assert "/static/ticker-lookup.js" in resp.text
         assert "Auto-filled from ticker lookup — edit if needed." in resp.text
-        assert 'id="add-position-submit"' in resp.text
+        assert 'id="edit-position-submit"' in resp.text
 
     def test_edit_position_updates_ticker_company_and_clears_cached_data(
         self, _setup_db, client, mocker
