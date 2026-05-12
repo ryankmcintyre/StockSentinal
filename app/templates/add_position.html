@@ -2,7 +2,13 @@
 {% block title %}Add Position — Stock Sentinel{% endblock %}
 {% block content %}
 
-<h2>Add Position</h2>
+<section class="page-header page-header-compact">
+    <div>
+        <p class="page-eyebrow">Portfolio</p>
+        <h1>Add Position</h1>
+    </div>
+    <p class="page-subtitle">Capture a holding with the details needed to evaluate it against your rules.</p>
+</section>
 
 <form method="post" action="/add" class="position-form" data-api-submit="true">
     {# Keep the asterisk visual-only because required inputs are already announced accessibly. #}

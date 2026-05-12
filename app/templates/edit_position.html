@@ -2,7 +2,13 @@
 {% block title %}Edit {{ position.ticker }} — Stock Sentinel{% endblock %}
 {% block content %}
 
-<h2>Edit {{ position.ticker }} — {{ position.company_name }}</h2>
+<section class="page-header page-header-compact">
+    <div>
+        <p class="page-eyebrow">Portfolio</p>
+        <h1>Edit {{ position.ticker }}</h1>
+    </div>
+    <p class="page-subtitle">{{ position.company_name }}</p>
+</section>
 
 <form method="post" action="/edit/{{ position.id }}" class="position-form">
     {# Keep the asterisk visual-only because required inputs are already announced accessibly. #}
