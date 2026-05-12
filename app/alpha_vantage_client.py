@@ -156,8 +156,8 @@ def fetch_ticker_matches(symbol: str, api_key: str) -> list[SymbolSearchMatch]:
         )
 
     if not matches:
-        raise AlphaVantageError(
-            "Incomplete company information received from Alpha Vantage"
+        raise AlphaVantageSymbolNotFound(
+            f"No matching company found for symbol '{symbol}'"
         )
 
     return matches

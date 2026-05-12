@@ -102,6 +102,7 @@
         companyInput.value = "";
         lookupStatus.textContent = "Looking up ticker…";
         resetLookupState();
+        submitButton.disabled = true;
 
         requestCounter += 1;
         var requestId = requestCounter;

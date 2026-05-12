@@ -340,6 +340,27 @@ class TestFetchCompanyName:
 
         assert fetch_company_name("AAPL", "fake_key") == "Apple Inc"
 
+    def test_raises_not_found_when_all_matches_are_unparseable(self, mocker):
+        fake_data = {
+            "bestMatches": [
+                {
+                    "1. symbol": "",
+                    "2. name": "Missing Symbol Co",
+                },
+                {
+                    "1. symbol": "AAPL",
+                },
+            ]
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.alpha_vantage_client.requests.get", return_value=mock_resp)
+
+        with pytest.raises(AlphaVantageSymbolNotFound, match="No matching company"):
+            fetch_ticker_matches("AAPL", "fake_key")
+
     def test_raises_on_empty_matches(self, mocker):
         fake_data = {"bestMatches": []}
         mock_resp = mocker.Mock()
