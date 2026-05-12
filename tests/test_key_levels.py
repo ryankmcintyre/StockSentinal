@@ -246,7 +246,7 @@ class TestKeyLevelRoutes:
         assert "Auto-filled from ticker lookup — edit if needed." in resp.text
         assert 'id="edit-position-submit"' in resp.text
 
-    def test_edit_position_updates_ticker_company_and_clears_cached_data(
+    def test_edit_position_clears_cached_data_on_ticker_change(
         self, _setup_db, client, mocker
     ):
         mocker.patch("app.main.get_market_data_api_key", return_value=None)
