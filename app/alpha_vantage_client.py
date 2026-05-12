@@ -22,6 +22,7 @@ REQUEST_TIMEOUT = 30  # seconds
 logger = logging.getLogger(__name__)
 
 
+# Backward-compatible aliases — prefer MarketDataError etc. for new code.
 AlphaVantageError = MarketDataError
 AlphaVantageThrottled = MarketDataThrottled
 AlphaVantageSymbolNotFound = MarketDataSymbolNotFound
