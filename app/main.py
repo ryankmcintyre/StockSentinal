@@ -151,6 +151,19 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
     return len(stale_positions)
 
 
+def _clear_position_market_data(position: Position) -> None:
+    """Remove cached market-data fields from a position."""
+    position.daily_close = None
+    position.daily_sma_21 = None
+    position.daily_market_date = None
+    position.daily_retrieved_at = None
+    position.weekly_close = None
+    position.weekly_sma_20 = None
+    position.weekly_market_date = None
+    position.weekly_retrieved_at = None
+    position.refresh_error = None
+
+
 def _enrich_position(
     pos: Position,
     enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
@@ -537,7 +550,10 @@ def edit_position_form(position_id: int, request: Request, uow: UnitOfWork = Dep
 
 @app.post("/edit/{position_id}")
 def edit_position(
+    background_tasks: BackgroundTasks,
     position_id: int,
+    ticker: str = Form(...),
+    company_name: str = Form(...),
     cost_basis: float = Form(...),
     initial_purchase_date: str = Form(...),
     investment_type: str = Form(...),
@@ -548,19 +564,29 @@ def edit_position(
 ):
     """Update an existing position and redirect to portfolio.
 
-    Ticker and company name are immutable after creation and are not
-    accepted from the form.
+    If the ticker changes, cached market data is cleared and refreshed.
     """
     pos = uow.positions.get_by_id(position_id)
     if not pos:
         return RedirectResponse(url="/", status_code=303)
+    clean_ticker = ticker.strip().upper()
+    clean_company_name = company_name.strip()
+    clean_benchmark = sector_benchmark_ticker.strip().upper() or None
+    ticker_changed = pos.ticker != clean_ticker
+    if ticker_changed:
+        _clear_position_market_data(pos)
+    pos.ticker = clean_ticker
+    pos.company_name = clean_company_name
     pos.cost_basis = cost_basis
     pos.initial_purchase_date = date.fromisoformat(initial_purchase_date)
     pos.investment_type = investment_type
     pos.current_price = current_price
     pos.notes = notes.strip() or None
-    pos.sector_benchmark_ticker = sector_benchmark_ticker.strip().upper() or None
+    pos.sector_benchmark_ticker = clean_benchmark
     uow.commit()
+    if ticker_changed and get_market_data_api_key():
+        _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
+        background_tasks.add_task(_refresh_single_position_task, pos.id)
     logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, current_price)
     return RedirectResponse(url="/", status_code=303)
 
