@@ -1,5 +1,6 @@
 """Tests for the POST /add route — automatic price fetching from Alpha Vantage."""
 
+import re
 from datetime import date
 from unittest.mock import patch
 
@@ -113,7 +114,10 @@ class TestAddPositionFetchesPrice:
             "Purchase Date",
             "Investment Type",
         ):
-            assert f'{label} <span class="required-indicator"' in resp.text
+            assert re.search(
+                rf"{re.escape(label)}\s*<span class=\"required-indicator\"",
+                resp.text,
+            )
 
 
 class TestAddPositionFormRemoved:
