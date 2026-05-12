@@ -117,6 +117,31 @@ h2 {
     color: #555;
 }
 
+.table-sort-button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    width: 100%;
+    border: 0;
+    background: transparent;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    text-transform: inherit;
+    letter-spacing: inherit;
+    cursor: pointer;
+}
+
+.table-sort-button:hover,
+.table-sort-button:focus-visible {
+    color: #111;
+}
+
+.table-sort-indicator {
+    min-width: 0.7rem;
+    color: #1a73e8;
+}
+
 .positions-table tbody tr:hover {
     background: #f9f9fb;
 }

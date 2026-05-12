@@ -55,44 +55,97 @@
 {% endif %}
 
 {% if positions %}
-<table class="positions-table">
+<table class="positions-table" data-sortable-table="true">
     <thead>
         <tr>
-            <th>Verdict</th>
-            <th>Ticker</th>
-            <th>Company</th>
-            <th>Type</th>
-            <th>Cost Basis</th>
-            <th>Price</th>
-            <th>Gain / Loss</th>
-            <th>Held (days)</th>
-            <th>Reason</th>
-            <th>Actions</th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="0" data-sort-type="number">
+                    Verdict
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="1" data-sort-type="text">
+                    Ticker
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="2" data-sort-type="text">
+                    Company
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="3" data-sort-type="text">
+                    Type
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="4" data-sort-type="number">
+                    Cost Basis
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="5" data-sort-type="number">
+                    Price
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="6" data-sort-type="number">
+                    Gain / Loss
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="7" data-sort-type="number">
+                    Held (days)
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="8" data-sort-type="text">
+                    Reason
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
+            <th scope="col" aria-sort="none">
+                <button type="button" class="table-sort-button" data-sort-header="true" data-sort-column="9" data-sort-type="number">
+                    Actions
+                    <span class="table-sort-indicator" aria-hidden="true"></span>
+                </button>
+            </th>
         </tr>
     </thead>
     <tbody>
         {% for pos in positions %}
         <tr data-position-id="{{ pos.id }}" data-refresh-in-progress="{{ 'true' if pos.refresh_in_progress else 'false' }}">
-            <td>
+            <td data-sort-value="{{ pos.verdict_sort_priority }}">
                 <span class="verdict verdict-{{ pos.verdict.value | lower }}">
                     {{ pos.verdict.value }}
                 </span>
             </td>
-            <td class="ticker">{{ pos.ticker }}</td>
-            <td>{{ pos.company_name }}</td>
-            <td>{{ pos.investment_type }}</td>
-            <td>${{ "%.2f" | format(pos.cost_basis) }}</td>
-            <td>
+            <td class="ticker" data-sort-value="{{ pos.ticker }}">{{ pos.ticker }}</td>
+            <td data-sort-value="{{ pos.company_name }}">{{ pos.company_name }}</td>
+            <td data-sort-value="{{ pos.investment_type }}">{{ pos.investment_type }}</td>
+            <td data-sort-value="{{ pos.cost_basis }}">${{ "%.2f" | format(pos.cost_basis) }}</td>
+            <td data-sort-value="{{ pos.effective_price }}">
                 ${{ "%.2f" | format(pos.effective_price) }}
                 {% if pos.has_market_data %}
                     <span class="market-source" title="From {{ market_data_provider_name }}{% if pos.daily_market_date %} ({{ pos.daily_market_date }}){% endif %}">&#9679;</span>
                 {% endif %}
             </td>
-            <td class="{% if pos.percent_gain >= 0 %}gain-positive{% else %}gain-negative{% endif %}">
+            <td data-sort-value="{{ pos.percent_gain }}" class="{% if pos.percent_gain >= 0 %}gain-positive{% else %}gain-negative{% endif %}">
                 {{ "%.1f" | format(pos.percent_gain) }}%
             </td>
-            <td>{{ pos.hold_duration_days }}</td>
-            <td class="reason">
+            <td data-sort-value="{{ pos.hold_duration_days }}">{{ pos.hold_duration_days }}</td>
+            <td
+                class="reason"
+                data-sort-value="{{ pos.reason_sort_value }}"
+            >
                 {% for rule in pos.triggered_rules %}
                     <span class="rule-tag">{{ rule.description }}</span>
                 {% endfor %}
@@ -107,7 +160,7 @@
                     >Refreshing...</span>
                 {% endif %}
             </td>
-            <td class="actions">
+            <td class="actions" data-sort-value="{{ pos.id }}">
                 <a href="/edit/{{ pos.id }}" class="btn btn-small">Edit</a>
                 {% if api_configured %}
                 <form method="post" action="/refresh/{{ pos.id }}" class="inline-form" data-api-submit="true">
@@ -135,4 +188,5 @@
 </div>
 {% endif %}
 
+<script src="/static/portfolio-table.js" defer></script>
 {% endblock %}
