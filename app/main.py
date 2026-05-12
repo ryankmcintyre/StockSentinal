@@ -220,6 +220,11 @@ def _enrich_position(
 
     triggered = evaluate_position(eval_pos, signals=signals, configured_rules=configured_rules)
     verdict = get_verdict(triggered)
+    reason_sort_value = (
+        pos.refresh_error
+        or ("Refreshing..." if pos.refresh_in_progress else "")
+        or (triggered[0].description if triggered else "")
+    )
     return {
         "id": pos.id,
         "ticker": pos.ticker,
@@ -234,7 +239,9 @@ def _enrich_position(
         "percent_gain": compute_percent_gain(pos.cost_basis, effective_price),
         "hold_duration_days": compute_hold_duration_days(pos.initial_purchase_date),
         "verdict": verdict,
+        "verdict_sort_priority": VERDICT_PRIORITY.get(verdict, 99),
         "triggered_rules": triggered,
+        "reason_sort_value": reason_sort_value,
         # Market data status
         "daily_close": pos.daily_close,
         "daily_sma_21": pos.daily_sma_21,

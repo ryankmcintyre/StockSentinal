@@ -123,7 +123,7 @@
     <tbody>
         {% for pos in positions %}
         <tr data-position-id="{{ pos.id }}" data-refresh-in-progress="{{ 'true' if pos.refresh_in_progress else 'false' }}">
-            <td data-sort-value="{{ 0 if pos.verdict.value == 'Sell' else 1 if pos.verdict.value == 'Trim' else 2 }}">
+            <td data-sort-value="{{ pos.verdict_sort_priority }}">
                 <span class="verdict verdict-{{ pos.verdict.value | lower }}">
                     {{ pos.verdict.value }}
                 </span>
@@ -144,7 +144,7 @@
             <td data-sort-value="{{ pos.hold_duration_days }}">{{ pos.hold_duration_days }}</td>
             <td
                 class="reason"
-                data-sort-value="{% for rule in pos.triggered_rules %}{{ rule.description }} {% endfor %}{% if pos.refresh_error %}Refresh failed {% endif %}{% if pos.refresh_in_progress %}Refreshing{% endif %}"
+                data-sort-value="{{ pos.reason_sort_value }}"
             >
                 {% for rule in pos.triggered_rules %}
                     <span class="rule-tag">{{ rule.description }}</span>
