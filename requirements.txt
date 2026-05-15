@@ -32,3 +32,6 @@ typing-extensions==4.15.0
 typing-inspection==0.4.2
 urllib3==2.6.3
 uvicorn==0.44.0
+python-jose==3.3.0
+cryptography==45.0.0
+itsdangerous==2.2.0

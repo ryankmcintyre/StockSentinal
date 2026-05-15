@@ -4,6 +4,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from dotenv import load_dotenv
+import httpx
+
 from fastapi import BackgroundTasks, Depends, FastAPI, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
@@ -11,17 +13,32 @@ from fastapi.templating import Jinja2Templates
 
 load_dotenv()
 
+from app.auth import (
+    PKCE_COOKIE_NAME,
+    PKCE_MAX_AGE_SECONDS,
+    SESSION_COOKIE_NAME,
+    SESSION_MAX_AGE_SECONDS,
+    RequiresLoginException,
+    decode_pkce_cookie,
+    encode_pkce_cookie,
+    encode_session_cookie,
+    generate_pkce_pair,
+    get_current_user_id,
+    verify_supabase_jwt,
+)
 from app.config import (
     get_log_level,
     get_market_data_api_key,
     get_market_data_provider,
     get_market_data_provider_display_name,
+    get_supabase_auth_providers,
+    get_supabase_url,
 )
-from app.database import SessionLocal, get_uow, init_db
+from app.database import SessionLocal, get_authenticated_uow, get_uow, init_db
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 from app.market_data.service import MarketDataService
-from app.models import Position, PositionKeyLevel
+from app.models import Position, PositionKeyLevel, User
 from app.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWork
 from app.rule_config import (
     add_ma_condition,
@@ -89,12 +106,39 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
+@app.exception_handler(RequiresLoginException)
+async def requires_login_handler(request: Request, _exc: RequiresLoginException):
+    return RedirectResponse(url="/auth/login", status_code=303)
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
 REFRESH_STALE_TIMEOUT_MINUTES = 5
+
+
+def _get_request_user_id(request: Request, uow: UnitOfWork | None = None) -> str | None:
+    """Return the authenticated user id, falling back to a scoped test UoW when needed."""
+    user_id = get_current_user_id(request)
+    if user_id is not None:
+        return user_id
+    if uow is None:
+        return None
+    for repo_name in ("positions", "rule_configs"):
+        repo = getattr(uow, repo_name, None)
+        scoped_user_id = getattr(repo, "_user_id", None)
+        if scoped_user_id:
+            return scoped_user_id
+    return None
+
+
+def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
+    user_id = _get_request_user_id(request, uow)
+    if not user_id:
+        return None
+    return uow.users.get_by_id(user_id)
 
 
 def _daily_bars_for_position(pos: Position, all_daily_bars: dict[str, list]) -> dict[str, list] | None:
@@ -277,12 +321,154 @@ def _enrich_position(
 # ---------------------------------------------------------------------------
 
 
+@app.get("/auth/login")
+def login_page(request: Request):
+    """Show the login page with sign-in options."""
+    if get_current_user_id(request):
+        return RedirectResponse(url="/", status_code=303)
+    supabase_url = get_supabase_url()
+    providers = get_supabase_auth_providers()
+    return templates.TemplateResponse(
+        request,
+        "login.html",
+        {
+            "supabase_configured": supabase_url is not None,
+            "providers": providers,
+            "current_user": None,
+        },
+    )
+
+
+@app.get("/auth/{provider}/authorize")
+def oauth_authorize(provider: str, request: Request):
+    """Initiate OAuth PKCE flow for the given provider."""
+    supabase_url = get_supabase_url()
+    providers = get_supabase_auth_providers()
+    if not supabase_url or provider not in providers:
+        return RedirectResponse(url="/auth/login", status_code=303)
+
+    code_verifier, code_challenge = generate_pkce_pair()
+    pkce_cookie_value = encode_pkce_cookie(code_verifier)
+
+    base_url = str(request.base_url).rstrip("/")
+    redirect_to = f"{base_url}/auth/callback"
+    auth_url = (
+        f"{supabase_url}/auth/v1/authorize"
+        f"?provider={provider}"
+        f"&redirect_to={redirect_to}"
+        f"&code_challenge={code_challenge}"
+        f"&code_challenge_method=S256"
+    )
+
+    response = RedirectResponse(url=auth_url, status_code=303)
+    response.set_cookie(
+        key=PKCE_COOKIE_NAME,
+        value=pkce_cookie_value,
+        max_age=PKCE_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+    )
+    return response
+
+
+@app.get("/auth/callback")
+def oauth_callback(
+    request: Request,
+    code: str | None = None,
+    uow: UnitOfWork = Depends(get_uow),
+):
+    """Handle the OAuth callback from Supabase Auth."""
+    if not code:
+        logger.warning("OAuth callback received without code")
+        return RedirectResponse(url="/auth/login?error=missing_code", status_code=303)
+
+    pkce_cookie = request.cookies.get(PKCE_COOKIE_NAME)
+    code_verifier = decode_pkce_cookie(pkce_cookie) if pkce_cookie else None
+    if not code_verifier:
+        logger.warning("OAuth callback: missing or invalid PKCE cookie")
+        return RedirectResponse(url="/auth/login?error=invalid_state", status_code=303)
+
+    supabase_url = get_supabase_url()
+    if not supabase_url:
+        return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
+
+    try:
+        resp = httpx.post(
+            f"{supabase_url}/auth/v1/token?grant_type=pkce",
+            json={"auth_code": code, "code_verifier": code_verifier},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        token_data = resp.json()
+    except Exception:
+        logger.warning("OAuth token exchange failed", exc_info=True)
+        return RedirectResponse(url="/auth/login?error=token_exchange_failed", status_code=303)
+
+    access_token = token_data.get("access_token")
+    if not access_token:
+        logger.warning("OAuth callback: no access_token in response")
+        return RedirectResponse(url="/auth/login?error=no_token", status_code=303)
+
+    claims = verify_supabase_jwt(access_token)
+    if not claims:
+        return RedirectResponse(url="/auth/login?error=invalid_token", status_code=303)
+
+    user_id = claims.get("sub")
+    if not user_id:
+        return RedirectResponse(url="/auth/login?error=no_subject", status_code=303)
+
+    email = claims.get("email")
+    user_meta = claims.get("user_metadata") or {}
+    display_name = (
+        user_meta.get("full_name")
+        or user_meta.get("name")
+        or user_meta.get("preferred_username")
+        or email
+    )
+
+    user = uow.users.get_by_id(user_id)
+    if user is None:
+        user = User(id=user_id, email=email, display_name=display_name)
+        uow.users.add(user)
+    else:
+        if email and user.email != email:
+            user.email = email
+        if display_name and user.display_name != display_name:
+            user.display_name = display_name
+    uow.commit()
+
+    session_value = encode_session_cookie(user_id)
+    response = RedirectResponse(url="/", status_code=303)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_value,
+        max_age=SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+    )
+    response.delete_cookie(key=PKCE_COOKIE_NAME)
+    logger.info("User %s logged in successfully", user_id)
+    return response
+
+
+@app.post("/auth/logout")
+def logout():
+    """Clear the session cookie and redirect to login."""
+    response = RedirectResponse(url="/auth/login", status_code=303)
+    response.delete_cookie(key=SESSION_COOKIE_NAME)
+    return response
+
+
 @app.get("/")
-def portfolio(request: Request, uow: UnitOfWork = Depends(get_uow)):
+def portfolio(request: Request, uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Dashboard: list all positions with verdicts, sorted by urgency."""
+    user_id = _get_request_user_id(request, uow)
+    current_user = _get_current_user(request, uow)
     _clear_stale_refresh_flags(uow)
     positions = uow.positions.list_all()
-    enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(uow)
+    enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(uow, user_id=user_id)
 
     # Preload indicator cache for all tickers to avoid N+1 queries
     all_tickers = {p.ticker for p in positions}
@@ -334,28 +520,36 @@ def portfolio(request: Request, uow: UnitOfWork = Depends(get_uow)):
             "api_configured": get_market_data_api_key() is not None,
             "market_data_provider_name": get_market_data_provider_display_name(),
             "any_refresh_in_progress": any_refresh_in_progress,
+            "current_user": current_user,
         },
     )
 
 
 @app.get("/add")
-def add_position_form(request: Request):
+def add_position_form(request: Request, uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Show the add-position form."""
     return templates.TemplateResponse(
         request,
         "add_position.html",
-        {"investment_types": InvestmentType},
+        {
+            "investment_types": InvestmentType,
+            "current_user": _get_current_user(request, uow),
+        },
     )
 
 
 @app.get("/rules")
-def rules_page(request: Request, uow: UnitOfWork = Depends(get_uow)):
+def rules_page(request: Request, uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Show rule configuration for long-term and short-term strategies."""
-    sections = get_rule_management_sections(uow)
+    user_id = _get_request_user_id(request, uow)
+    sections = get_rule_management_sections(uow, user_id=user_id)
     return templates.TemplateResponse(
         request,
         "rules.html",
-        {"sections": sections},
+        {
+            "sections": sections,
+            "current_user": _get_current_user(request, uow),
+        },
     )
 
 
@@ -364,7 +558,7 @@ def update_rule(
     investment_type: str,
     rule_key: str,
     enabled: str | None = Form(None),
-    uow: UnitOfWork = Depends(get_uow),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Update enablement for a strategy rule."""
     try:
@@ -388,7 +582,7 @@ def add_sell_ma_condition(
     investment_type: str,
     interval: str = Form(...),
     time_period: int = Form(...),
-    uow: UnitOfWork = Depends(get_uow),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Add an MA condition to the SELL_MA_ALL rule for a strategy."""
     errors = add_ma_condition(uow, investment_type, interval, time_period)
@@ -404,7 +598,7 @@ def delete_sell_ma_condition(
     investment_type: str,
     interval: str = Form(...),
     time_period: int = Form(...),
-    uow: UnitOfWork = Depends(get_uow),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Remove an MA condition from the SELL_MA_ALL rule for a strategy."""
     errors = remove_ma_condition(uow, investment_type, interval, time_period)
@@ -468,6 +662,7 @@ def lookup_ticker(ticker: str):
 
 @app.post("/add")
 def add_position(
+    request: Request,
     background_tasks: BackgroundTasks,
     ticker: str = Form(...),
     company_name: str = Form(...),
@@ -476,7 +671,7 @@ def add_position(
     investment_type: str = Form(...),
     notes: str = Form(""),
     sector_benchmark_ticker: str = Form(""),
-    uow: UnitOfWork = Depends(get_uow),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Create a new position and redirect to portfolio.
 
@@ -484,6 +679,7 @@ def add_position(
     A background task is then queued to fetch the remaining market data
     (SMA values and weekly data for long-term positions).
     """
+    user_id = _get_request_user_id(request, uow)
     clean_ticker = ticker.strip().upper()
     clean_benchmark = sector_benchmark_ticker.strip().upper() or None
     current_price = 0.0
@@ -520,6 +716,7 @@ def add_position(
         daily_retrieved_at=daily_retrieved_at,
         notes=notes.strip() or None,
         sector_benchmark_ticker=clean_benchmark,
+        user_id=user_id,
     )
     uow.positions.add(pos)
     uow.commit()
@@ -535,7 +732,7 @@ def add_position(
 
 
 @app.get("/edit/{position_id}")
-def edit_position_form(position_id: int, request: Request, uow: UnitOfWork = Depends(get_uow)):
+def edit_position_form(position_id: int, request: Request, uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Show the edit form for an existing position."""
     pos = uow.positions.get_by_id(position_id)
     if not pos:
@@ -543,7 +740,11 @@ def edit_position_form(position_id: int, request: Request, uow: UnitOfWork = Dep
     return templates.TemplateResponse(
         request,
         "edit_position.html",
-        {"position": pos, "investment_types": InvestmentType},
+        {
+            "position": pos,
+            "investment_types": InvestmentType,
+            "current_user": _get_current_user(request, uow),
+        },
     )
 
 
@@ -559,7 +760,7 @@ def edit_position(
     current_price: float = Form(...),
     notes: str = Form(""),
     sector_benchmark_ticker: str = Form(""),
-    uow: UnitOfWork = Depends(get_uow),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Update an existing position and redirect to portfolio.
 
@@ -596,7 +797,7 @@ def add_key_level(
     level_price: float = Form(...),
     label: str = Form(""),
     notes: str = Form(""),
-    uow: UnitOfWork = Depends(get_uow),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Add a manually-identified key level to a position (issue #23)."""
     pos = uow.positions.get_by_id(position_id)
@@ -620,7 +821,7 @@ def add_key_level(
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/delete")
-def delete_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(get_uow)):
+def delete_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Delete a key level from a position."""
     kl = uow.key_levels.get_by_position_and_id(position_id, level_id)
     if kl:
@@ -631,7 +832,7 @@ def delete_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/toggle")
-def toggle_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(get_uow)):
+def toggle_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Toggle the is_active flag on a key level."""
     kl = uow.key_levels.get_by_position_and_id(position_id, level_id)
     if kl:
@@ -641,7 +842,7 @@ def toggle_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(
 
 
 @app.post("/delete/{position_id}")
-def delete_position(position_id: int, uow: UnitOfWork = Depends(get_uow)):
+def delete_position(position_id: int, uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Delete a position and redirect to portfolio."""
     pos = uow.positions.get_by_id(position_id)
     if pos:
@@ -701,7 +902,7 @@ def _refresh_single_position_task(position_id: int):
 
 
 @app.post("/refresh")
-def refresh_all(background_tasks: BackgroundTasks, uow: UnitOfWork = Depends(get_uow)):
+def refresh_all(background_tasks: BackgroundTasks, uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Refresh cached market data for all positions (respects staleness checks)."""
     _clear_stale_refresh_flags(uow)
     if uow.positions.has_any_refresh_in_progress():
@@ -717,7 +918,7 @@ def refresh_all(background_tasks: BackgroundTasks, uow: UnitOfWork = Depends(get
 @app.post("/refresh/{position_id}")
 def refresh_single(
     position_id: int,
-    uow: UnitOfWork = Depends(get_uow),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Refresh cached market data for a single position inline.
 
@@ -746,7 +947,7 @@ def refresh_single(
 
 
 @app.get("/api/refresh-status")
-def refresh_status(uow: UnitOfWork = Depends(get_uow)):
+def refresh_status(uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Expose lightweight in-progress refresh state for client-side polling."""
     _clear_stale_refresh_flags(uow)
     positions = uow.positions.list_all()

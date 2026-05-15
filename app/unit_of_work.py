@@ -1,10 +1,4 @@
-"""Unit-of-work abstraction for transactional data access.
-
-The ``UnitOfWork`` protocol defines the contract: a context manager that
-exposes repository accessors and ``commit`` / ``rollback`` for explicit
-transaction control.  ``SqlAlchemyUnitOfWork`` is the default
-implementation backed by a SQLAlchemy ``Session``.
-"""
+"""Unit-of-work abstraction for transactional data access."""
 
 from __future__ import annotations
 
@@ -19,6 +13,8 @@ from app.repositories import (
     SqlAlchemyKeyLevelRepository,
     SqlAlchemyPositionRepository,
     SqlAlchemyRuleConfigRepository,
+    SqlAlchemyUserRepository,
+    UserRepository,
 )
 
 
@@ -28,6 +24,7 @@ class UnitOfWork(Protocol):
     positions: PositionRepository
     key_levels: KeyLevelRepository
     rule_configs: RuleConfigRepository
+    users: UserRepository
 
     @property
     def session(self) -> Session: ...
@@ -47,20 +44,20 @@ class SqlAlchemyUnitOfWork:
     When used as a context manager, the session is automatically closed
     on exit.  The caller is responsible for calling ``commit()``
     explicitly — an uncommitted session is rolled back on close.
+
+    Pass ``user_id`` to scope position and rule-config queries to a specific user.
+    Background tasks that operate across all users should omit ``user_id``.
     """
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
-        self.positions = SqlAlchemyPositionRepository(session)
+        self.positions = SqlAlchemyPositionRepository(session, user_id)
         self.key_levels = SqlAlchemyKeyLevelRepository(session)
-        self.rule_configs = SqlAlchemyRuleConfigRepository(session)
+        self.rule_configs = SqlAlchemyRuleConfigRepository(session, user_id)
+        self.users = SqlAlchemyUserRepository(session)
 
     @property
     def session(self) -> Session:
-        """Expose the underlying session for edge cases (e.g. init_db).
-
-        New code should prefer repository methods over direct session access.
-        """
         return self._session
 
     def commit(self) -> None:

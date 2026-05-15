@@ -1,5 +1,6 @@
 import logging
 
+from fastapi import Request
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
@@ -109,6 +110,28 @@ def get_uow():
     """
     session = SessionLocal()
     uow = SqlAlchemyUnitOfWork(session)
+    try:
+        yield uow
+    finally:
+        session.close()
+
+
+
+def get_authenticated_uow(request: Request):
+    """Yield a user-scoped UnitOfWork for authenticated routes.
+
+    Reads the current user's ID from the session cookie and scopes all
+    position and rule-config queries to that user. Routes that use this
+    dependency are automatically protected — unauthenticated requests raise
+    RequiresLoginException (handled at the app level as a redirect to /auth/login).
+    """
+    from app.auth import RequiresLoginException, get_current_user_id
+
+    user_id = get_current_user_id(request)
+    if user_id is None:
+        raise RequiresLoginException()
+    session = SessionLocal()
+    uow = SqlAlchemyUnitOfWork(session, user_id=user_id)
     try:
         yield uow
     finally:

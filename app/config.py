@@ -118,3 +118,44 @@ def get_market_data_provider_display_name() -> str:
     if get_market_data_provider() == "twelvedata":
         return "Twelve Data"
     return "Alpha Vantage"
+
+
+
+def get_session_secret_key() -> str:
+    """Return the secret key used to sign session cookies.
+
+    Must be set in production. Falls back to an insecure default in dev
+    so the app runs without configuration, but logs a warning.
+    """
+    import logging
+
+    key = os.environ.get("SESSION_SECRET_KEY", "").strip()
+    if not key:
+        logging.getLogger(__name__).warning(
+            "SESSION_SECRET_KEY is not set — using insecure default. "
+            "Set SESSION_SECRET_KEY in your .env for production."
+        )
+        return "dev-insecure-secret-change-me"
+    return key
+
+
+def get_supabase_url() -> str | None:
+    """Return the Supabase project URL from environment, or None if not set."""
+    url = os.environ.get("SUPABASE_URL", "").strip()
+    return url if url else None
+
+
+def get_supabase_jwt_secret() -> str | None:
+    """Return the Supabase JWT secret used to verify access tokens, or None if not set."""
+    secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
+    return secret if secret else None
+
+
+def get_supabase_auth_providers() -> list[str]:
+    """Return the list of enabled Supabase Auth social providers.
+
+    Read from SUPABASE_AUTH_PROVIDERS env var as a comma-separated list.
+    Defaults to ['google'] if not set.
+    """
+    raw = os.environ.get("SUPABASE_AUTH_PROVIDERS", "google").strip()
+    return [p.strip() for p in raw.split(",") if p.strip()]

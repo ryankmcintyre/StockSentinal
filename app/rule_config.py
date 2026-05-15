@@ -64,13 +64,20 @@ def _migrate_deprecated_sell_rules(uow: UnitOfWork) -> bool:
     return changed
 
 
-def ensure_strategy_rule_defaults(uow: UnitOfWork) -> None:
+def _resolve_rule_config_user_id(uow: UnitOfWork, user_id: str | None = None) -> str | None:
+    if user_id is not None:
+        return user_id
+    return getattr(uow.rule_configs, "_user_id", None)
+
+
+def ensure_strategy_rule_defaults(uow: UnitOfWork, user_id: str | None = None) -> None:
     """Seed missing rule configuration rows for each investment type.
 
     Existing rows are preserved. New catalog rules are added as disabled by
     default unless they are part of the strategy defaults. Deprecated sell
     rule keys are cleaned up.
     """
+    user_id = _resolve_rule_config_user_id(uow, user_id)
     changed = _migrate_deprecated_sell_rules(uow)
 
     for investment_type in _supported_investment_types():
@@ -139,6 +146,7 @@ def ensure_strategy_rule_defaults(uow: UnitOfWork) -> None:
 
             uow.rule_configs.add(
                 StrategyRuleConfig(
+                    user_id=user_id,
                     investment_type=investment_type.value,
                     rule_key=spec.key,
                     enabled=spec.key in default_enabled_keys,
@@ -154,9 +162,10 @@ def ensure_strategy_rule_defaults(uow: UnitOfWork) -> None:
 
 def get_enabled_rule_selections_by_investment_type(
     uow: UnitOfWork,
+    user_id: str | None = None,
 ) -> dict[str, list[StrategyRuleSelection]]:
     """Return enabled rule selections keyed by investment type value."""
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=user_id)
 
     selections: dict[str, list[StrategyRuleSelection]] = {}
     for investment_type in _supported_investment_types():
@@ -171,9 +180,9 @@ def get_enabled_rule_selections_by_investment_type(
     return selections
 
 
-def get_rule_management_sections(uow: UnitOfWork) -> list[dict]:
+def get_rule_management_sections(uow: UnitOfWork, user_id: str | None = None) -> list[dict]:
     """Build template-ready rule management sections for long/short strategies."""
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=user_id)
 
     sections: list[dict] = []
     for investment_type in _supported_investment_types():
