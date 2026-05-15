@@ -4,12 +4,17 @@ import base64
 import hashlib
 import logging
 import secrets
+import time
 from typing import Optional
 
+import httpx
 from fastapi import Request
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
-from app.config import get_session_secret_key, get_supabase_jwt_secret
+from app.config import (
+    get_session_secret_key,
+    get_supabase_jwks_url,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +25,10 @@ SESSION_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 # PKCE state cookie name and max-age (10 minutes)
 PKCE_COOKIE_NAME = "ss_pkce"
 PKCE_MAX_AGE_SECONDS = 10 * 60
+
+_JWKS_CACHE_TTL_SECONDS = 600
+_jwks_cache: dict[str, tuple[float, list[dict]]] = {}
+_SUPPORTED_SUPABASE_JWT_ALGORITHMS = {"RS256", "ES256"}
 
 
 def _get_serializer() -> URLSafeTimedSerializer:
@@ -84,26 +93,113 @@ def decode_session_cookie(cookie_value: str) -> Optional[str]:
 def verify_supabase_jwt(token: str) -> Optional[dict]:
     """Verify a Supabase Auth JWT and return the claims dict, or None on failure.
 
-    Supabase signs access tokens with HS256 using the project's JWT secret.
+    Supabase access tokens are verified against the project's JWKS endpoint.
     The ``sub`` claim contains the Supabase user UUID.
     """
-    jwt_secret = get_supabase_jwt_secret()
-    if not jwt_secret:
-        logger.warning("SUPABASE_JWT_SECRET is not set — cannot verify JWT")
-        return None
     try:
         from jose import jwt
 
-        claims = jwt.decode(
+        header = jwt.get_unverified_header(token)
+    except Exception:
+        logger.debug("JWT header parsing failed", exc_info=True)
+        return None
+
+    return _verify_supabase_jwks_jwt(token, header)
+
+
+def _verify_supabase_jwks_jwt(token: str, header: dict) -> Optional[dict]:
+    """Verify a Supabase access token using the project's JWKS endpoint."""
+    algorithm = header.get("alg")
+    if not algorithm:
+        logger.warning("JWT header is missing alg")
+        return None
+    if algorithm not in _SUPPORTED_SUPABASE_JWT_ALGORITHMS:
+        logger.warning("JWT header uses unsupported alg=%s", algorithm)
+        return None
+
+    jwk_key = _get_signing_key_for_header(header)
+    if jwk_key is None:
+        return None
+
+    try:
+        from jose import jwt
+
+        return jwt.decode(
             token,
-            jwt_secret,
-            algorithms=["HS256"],
+            jwk_key,
+            algorithms=[algorithm],
             options={"verify_aud": False},
         )
-        return claims
     except Exception:
-        logger.debug("JWT verification failed", exc_info=True)
+        logger.debug("JWKS JWT verification failed", exc_info=True)
         return None
+
+
+def _get_signing_key_for_header(header: dict) -> Optional[dict]:
+    """Return the matching JWK for a token header, if available."""
+    keys = _load_supabase_jwks()
+    if not keys:
+        return None
+
+    algorithm = header.get("alg")
+    key_id = header.get("kid")
+    if key_id:
+        for key in keys:
+            if key.get("kid") == key_id and _is_compatible_signing_key(key, algorithm):
+                return key
+        logger.warning("No JWKS signing key found for kid=%s", key_id)
+        return None
+
+    matching_keys = [
+        key for key in keys if _is_compatible_signing_key(key, algorithm)
+    ]
+    if len(matching_keys) == 1:
+        return matching_keys[0]
+
+    logger.warning("Unable to resolve JWKS signing key for alg=%s", algorithm)
+    return None
+
+
+def _is_compatible_signing_key(key: dict, algorithm: str | None) -> bool:
+    """Return True when a JWK is suitable for verifying the requested JWT."""
+    if key.get("use") not in (None, "sig"):
+        return False
+    key_ops = key.get("key_ops")
+    if key_ops is not None and "verify" not in key_ops:
+        return False
+    key_alg = key.get("alg")
+    if algorithm is not None and key_alg not in (None, algorithm):
+        return False
+    return True
+
+
+def _load_supabase_jwks() -> Optional[list[dict]]:
+    """Fetch and cache the Supabase JWKS document."""
+    jwks_url = get_supabase_jwks_url()
+    if not jwks_url:
+        logger.warning("SUPABASE_URL is not set — cannot fetch JWKS")
+        return None
+
+    cached = _jwks_cache.get(jwks_url)
+    now = time.monotonic()
+    if cached and cached[0] > now:
+        return cached[1]
+
+    try:
+        response = httpx.get(jwks_url, timeout=10)
+        response.raise_for_status()
+        payload = response.json()
+    except Exception:
+        logger.warning("Failed to fetch Supabase JWKS", exc_info=True)
+        return None
+
+    keys = payload.get("keys")
+    if not isinstance(keys, list) or not all(isinstance(key, dict) for key in keys):
+        logger.warning("Supabase JWKS response did not contain a valid keys list")
+        return None
+
+    _jwks_cache[jwks_url] = (now + _JWKS_CACHE_TTL_SECONDS, keys)
+    return keys
 
 
 # ---------------------------------------------------------------------------

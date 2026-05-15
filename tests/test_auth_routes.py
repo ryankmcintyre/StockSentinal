@@ -1,5 +1,6 @@
 """Integration tests for auth routes (/auth/login, /auth/callback, /auth/logout)."""
 
+import base64
 from datetime import datetime
 from unittest.mock import Mock
 
@@ -9,6 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from app import auth as auth_module
 from app.auth import PKCE_COOKIE_NAME, SESSION_COOKIE_NAME, encode_pkce_cookie, encode_session_cookie
 from app.database import get_uow
 from app.main import app
@@ -18,6 +20,7 @@ from app.unit_of_work import SqlAlchemyUnitOfWork
 
 @pytest.fixture(autouse=True)
 def _setup_db():
+    auth_module._jwks_cache.clear()
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -41,6 +44,7 @@ def _setup_db():
     app.dependency_overrides[get_uow] = override_get_uow
     yield
     app.dependency_overrides.clear()
+    auth_module._jwks_cache.clear()
     engine.dispose()
 
 
@@ -53,6 +57,16 @@ def test_login_page_renders(client):
     resp = client.get("/auth/login")
     assert resp.status_code == 200
     assert "Sign In" in resp.text
+
+
+def test_login_page_accepts_jwks_projects(client, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    resp = client.get("/auth/login")
+
+    assert resp.status_code == 200
+    assert "Supabase auth is not configured" not in resp.text
 
 
 def test_login_redirects_if_already_logged_in(client):
@@ -75,35 +89,81 @@ def test_callback_missing_code(client):
     assert "error=missing_code" in resp.headers["location"]
 
 
+def test_authorize_redirects_when_session_secret_missing(client, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
+
+    resp = client.get("/auth/google/authorize")
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/auth/login?error=not_configured"
+
+
+def test_callback_redirects_when_session_secret_missing(client, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
+
+    resp = client.get("/auth/callback?code=somecode")
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/auth/login?error=not_configured"
+
+
 def test_callback_missing_pkce_cookie(client, monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
     resp = client.get("/auth/callback?code=somecode")
     assert resp.status_code == 303
     assert "error=invalid_state" in resp.headers["location"]
 
 
-def test_callback_success_sets_session_cookie(client, monkeypatch):
-    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-key")
-    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
-
+def test_callback_success_sets_session_cookie_with_jwks(client, monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
     from jose import jwt
 
+    def b64url_uint(value: int) -> str:
+        raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_numbers = private_key.public_key().public_numbers()
+    jwk = {
+        "kty": "RSA",
+        "kid": "test-key",
+        "use": "sig",
+        "alg": "RS256",
+        "n": b64url_uint(public_numbers.n),
+        "e": b64url_uint(public_numbers.e),
+    }
     token = jwt.encode(
         {
-            "sub": "new-user",
+            "sub": "new-jwks-user",
             "email": "new@example.com",
             "user_metadata": {"full_name": "New User"},
         },
-        "test-secret-key",
-        algorithm="HS256",
+        private_pem,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
     )
 
-    response = Mock()
-    response.raise_for_status.return_value = None
-    response.json.return_value = {"access_token": token}
+    token_response = Mock()
+    token_response.raise_for_status.return_value = None
+    token_response.json.return_value = {"access_token": token}
+    jwks_response = Mock()
+    jwks_response.raise_for_status.return_value = None
+    jwks_response.json.return_value = {"keys": [jwk]}
 
-    monkeypatch.setattr("app.main.httpx.post", lambda *args, **kwargs: response)
+    monkeypatch.setattr("app.main.httpx.post", lambda *args, **kwargs: token_response)
+    monkeypatch.setattr("app.auth.httpx.get", lambda *args, **kwargs: jwks_response)
 
     pkce_cookie = encode_pkce_cookie("verifier")
     resp = client.get(

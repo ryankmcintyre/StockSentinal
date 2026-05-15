@@ -8,8 +8,8 @@
 
         {% if not supabase_configured %}
         <div class="alert alert-warning">
-            Supabase is not configured. Set <code>SUPABASE_URL</code> and
-            <code>SUPABASE_JWT_SECRET</code> in your environment to enable sign-in.
+            Supabase auth is not configured. Set <code>SUPABASE_URL</code> and
+            <code>SESSION_SECRET_KEY</code> in your environment to enable sign-in.
         </div>
         {% else %}
         <div class="login-providers">

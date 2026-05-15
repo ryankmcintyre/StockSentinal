@@ -33,8 +33,8 @@ from app.config import (
     get_market_data_provider,
     get_market_data_provider_display_name,
     get_supabase_auth_providers,
-    get_supabase_jwt_secret,
     get_supabase_url,
+    has_session_secret_key,
 )
 from app.database import SessionLocal, get_authenticated_uow, get_uow, init_db
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
@@ -160,6 +160,11 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
     if not user_id:
         return None
     return uow.users.get_by_id(user_id)
+
+
+def _supabase_auth_configured() -> bool:
+    """Return True when auth routes have the required server-side config."""
+    return get_supabase_url() is not None and has_session_secret_key()
 
 
 def _daily_bars_for_position(pos: Position, all_daily_bars: dict[str, list]) -> dict[str, list] | None:
@@ -353,10 +358,7 @@ def login_page(request: Request):
     """Show the login page with sign-in options."""
     if get_current_user_id(request):
         return RedirectResponse(url="/", status_code=303)
-    supabase_url = get_supabase_url()
-    jwt_secret = get_supabase_jwt_secret()
-    # Both URL and JWT secret must be set for sign-in to actually succeed.
-    supabase_configured = supabase_url is not None and jwt_secret is not None
+    supabase_configured = _supabase_auth_configured()
     provider_ids = get_supabase_auth_providers()
     providers_with_labels = [
         {"id": p, "label": _PROVIDER_DISPLAY_NAMES.get(p, p.title())}
@@ -378,6 +380,8 @@ def oauth_authorize(provider: str, request: Request):
     """Initiate OAuth PKCE flow for the given provider."""
     supabase_url = get_supabase_url()
     providers = get_supabase_auth_providers()
+    if not _supabase_auth_configured():
+        return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
     if not supabase_url or provider not in providers:
         return RedirectResponse(url="/auth/login", status_code=303)
 
@@ -416,6 +420,9 @@ def oauth_callback(
     if not code:
         logger.warning("OAuth callback received without code")
         return RedirectResponse(url="/auth/login?error=missing_code", status_code=303)
+
+    if not _supabase_auth_configured():
+        return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
 
     pkce_cookie = request.cookies.get(PKCE_COOKIE_NAME)
     code_verifier = decode_pkce_cookie(pkce_cookie) if pkce_cookie else None
