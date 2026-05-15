@@ -8,7 +8,8 @@
 
         {% if not supabase_configured %}
         <div class="alert alert-warning">
-            Supabase auth is not configured. Set <code>SUPABASE_URL</code> and
+            Supabase auth is not configured. Set <code>SUPABASE_URL</code>,
+            <code>SUPABASE_PUBLISHABLE_KEY</code>, and
             <code>SESSION_SECRET_KEY</code> in your environment to enable sign-in.
         </div>
         {% else %}

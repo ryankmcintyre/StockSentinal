@@ -53,6 +53,7 @@ Compose reads values from your shell environment or a local `.env` file automati
 - `TWELVE_DATA_API_KEY` — optional API key when `MARKET_DATA_PROVIDER=twelvedata`
 - `DATABASE_URL` — database connection string (defaults to `sqlite:////data/stocksentinal.db`)
 - `SUPABASE_URL` — optional Supabase project URL for hosted OAuth sign-in
+- `SUPABASE_PUBLISHABLE_KEY` — required when Supabase auth is enabled; used for PKCE token exchange with Supabase Auth
 - `SESSION_SECRET_KEY` — required when Supabase auth is enabled; signs app session cookies
 
 To stop the development stack:

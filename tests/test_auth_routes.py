@@ -61,6 +61,7 @@ def test_login_page_renders(client):
 
 def test_login_page_accepts_jwks_projects(client, monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
     monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
 
     resp = client.get("/auth/login")
@@ -91,6 +92,7 @@ def test_callback_missing_code(client):
 
 def test_authorize_redirects_when_session_secret_missing(client, monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
     monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
 
     resp = client.get("/auth/google/authorize")
@@ -101,7 +103,30 @@ def test_authorize_redirects_when_session_secret_missing(client, monkeypatch):
 
 def test_callback_redirects_when_session_secret_missing(client, monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
     monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
+
+    resp = client.get("/auth/callback?code=somecode")
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/auth/login?error=not_configured"
+
+
+def test_authorize_redirects_when_publishable_key_missing(client, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
+
+    resp = client.get("/auth/google/authorize")
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/auth/login?error=not_configured"
+
+
+def test_callback_redirects_when_publishable_key_missing(client, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+    monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
 
     resp = client.get("/auth/callback?code=somecode")
 
@@ -111,6 +136,7 @@ def test_callback_redirects_when_session_secret_missing(client, monkeypatch):
 
 def test_callback_missing_pkce_cookie(client, monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
     monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
     resp = client.get("/auth/callback?code=somecode")
     assert resp.status_code == 303
@@ -127,6 +153,7 @@ def test_callback_success_sets_session_cookie_with_jwks(client, monkeypatch):
         return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
     monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -162,7 +189,13 @@ def test_callback_success_sets_session_cookie_with_jwks(client, monkeypatch):
     jwks_response.raise_for_status.return_value = None
     jwks_response.json.return_value = {"keys": [jwk]}
 
-    monkeypatch.setattr("app.main.httpx.post", lambda *args, **kwargs: token_response)
+    post_calls = []
+
+    def mock_post(*args, **kwargs):
+        post_calls.append((args, kwargs))
+        return token_response
+
+    monkeypatch.setattr("app.main.httpx.post", mock_post)
     monkeypatch.setattr("app.auth.httpx.get", lambda *args, **kwargs: jwks_response)
 
     pkce_cookie = encode_pkce_cookie("verifier")
@@ -173,6 +206,7 @@ def test_callback_success_sets_session_cookie_with_jwks(client, monkeypatch):
     assert resp.status_code == 303
     assert resp.headers["location"] == "/"
     assert resp.cookies.get(SESSION_COOKIE_NAME)
+    assert post_calls[0][1]["headers"]["apikey"] == "sb_publishable_test"
 
 
 def test_protected_route_redirects_to_login(client):
