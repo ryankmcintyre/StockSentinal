@@ -10,7 +10,9 @@ from app.config import (
     get_market_data_api_key_env_var,
     get_market_data_provider,
     get_market_data_provider_display_name,
+    get_supabase_publishable_key,
     get_twelve_data_api_key,
+    has_supabase_publishable_key,
     is_postgres,
     require_alpha_vantage_api_key,
     require_twelve_data_api_key,
@@ -73,6 +75,28 @@ class TestGetDatabaseUrl:
     def test_whitespace_only_falls_back_to_sqlite(self, monkeypatch):
         monkeypatch.setenv("DATABASE_URL", "   ")
         assert get_database_url() == "sqlite:///./stocksentinal.db"
+
+
+class TestSupabasePublishableKey:
+    def test_returns_key_when_set(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+        assert get_supabase_publishable_key() == "sb_publishable_test"
+
+    def test_returns_none_when_not_set(self, monkeypatch):
+        monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
+        assert get_supabase_publishable_key() is None
+
+    def test_returns_none_when_whitespace_only(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "   ")
+        assert get_supabase_publishable_key() is None
+
+    def test_has_publishable_key_true_when_set(self, monkeypatch):
+        monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+        assert has_supabase_publishable_key() is True
+
+    def test_has_publishable_key_false_when_unset(self, monkeypatch):
+        monkeypatch.delenv("SUPABASE_PUBLISHABLE_KEY", raising=False)
+        assert has_supabase_publishable_key() is False
 
 
 class TestIsPostgres:

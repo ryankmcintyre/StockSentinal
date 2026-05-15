@@ -33,7 +33,9 @@ from app.config import (
     get_market_data_provider,
     get_market_data_provider_display_name,
     get_supabase_auth_providers,
+    get_supabase_publishable_key,
     get_supabase_url,
+    has_supabase_publishable_key,
     has_session_secret_key,
 )
 from app.database import SessionLocal, get_authenticated_uow, get_uow, init_db
@@ -164,7 +166,11 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
 
 def _supabase_auth_configured() -> bool:
     """Return True when auth routes have the required server-side config."""
-    return get_supabase_url() is not None and has_session_secret_key()
+    return (
+        get_supabase_url() is not None
+        and has_session_secret_key()
+        and has_supabase_publishable_key()
+    )
 
 
 def _daily_bars_for_position(pos: Position, all_daily_bars: dict[str, list]) -> dict[str, list] | None:
@@ -431,17 +437,28 @@ def oauth_callback(
         return RedirectResponse(url="/auth/login?error=invalid_state", status_code=303)
 
     supabase_url = get_supabase_url()
+    supabase_publishable_key = get_supabase_publishable_key()
     if not supabase_url:
+        return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
+    if not supabase_publishable_key:
         return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
 
     try:
         resp = httpx.post(
             f"{supabase_url}/auth/v1/token?grant_type=pkce",
+            headers={"apikey": supabase_publishable_key},
             json={"auth_code": code, "code_verifier": code_verifier},
             timeout=10,
         )
         resp.raise_for_status()
         token_data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "OAuth token exchange failed with status=%s body=%s",
+            exc.response.status_code,
+            exc.response.text,
+        )
+        return RedirectResponse(url="/auth/login?error=token_exchange_failed", status_code=303)
     except Exception:
         logger.warning("OAuth token exchange failed", exc_info=True)
         return RedirectResponse(url="/auth/login?error=token_exchange_failed", status_code=303)

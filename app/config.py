@@ -155,6 +155,12 @@ def get_supabase_url() -> str | None:
     return url if url else None
 
 
+def get_supabase_publishable_key() -> str | None:
+    """Return the Supabase publishable key, or None if not set."""
+    key = os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip()
+    return key if key else None
+
+
 def get_supabase_jwks_url() -> str | None:
     """Return the Supabase JWKS discovery URL, or None if Supabase is unset."""
     url = get_supabase_url()
@@ -166,6 +172,11 @@ def get_supabase_jwks_url() -> str | None:
 def has_session_secret_key() -> bool:
     """Return True when SESSION_SECRET_KEY is explicitly configured."""
     return bool(os.environ.get("SESSION_SECRET_KEY", "").strip())
+
+
+def has_supabase_publishable_key() -> bool:
+    """Return True when SUPABASE_PUBLISHABLE_KEY is explicitly configured."""
+    return bool(os.environ.get("SUPABASE_PUBLISHABLE_KEY", "").strip())
 
 
 def get_supabase_auth_providers() -> list[str]:
