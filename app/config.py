@@ -156,9 +156,27 @@ def get_supabase_url() -> str | None:
 
 
 def get_supabase_jwt_secret() -> str | None:
-    """Return the Supabase JWT secret used to verify access tokens, or None if not set."""
+    """Return the legacy Supabase JWT secret, or None if not set.
+
+    New Supabase projects commonly use asymmetric JWT signing keys exposed via
+    JWKS instead of a shared JWT secret. This value remains optional so legacy
+    HS256 projects can still be verified server-side.
+    """
     secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
     return secret if secret else None
+
+
+def get_supabase_jwks_url() -> str | None:
+    """Return the Supabase JWKS discovery URL, or None if Supabase is unset."""
+    url = get_supabase_url()
+    if not url:
+        return None
+    return f"{url.rstrip('/')}/auth/v1/.well-known/jwks.json"
+
+
+def has_session_secret_key() -> bool:
+    """Return True when SESSION_SECRET_KEY is explicitly configured."""
+    return bool(os.environ.get("SESSION_SECRET_KEY", "").strip())
 
 
 def get_supabase_auth_providers() -> list[str]:

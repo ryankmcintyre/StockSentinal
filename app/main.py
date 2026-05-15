@@ -33,8 +33,8 @@ from app.config import (
     get_market_data_provider,
     get_market_data_provider_display_name,
     get_supabase_auth_providers,
-    get_supabase_jwt_secret,
     get_supabase_url,
+    has_session_secret_key,
 )
 from app.database import SessionLocal, get_authenticated_uow, get_uow, init_db
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
@@ -354,9 +354,7 @@ def login_page(request: Request):
     if get_current_user_id(request):
         return RedirectResponse(url="/", status_code=303)
     supabase_url = get_supabase_url()
-    jwt_secret = get_supabase_jwt_secret()
-    # Both URL and JWT secret must be set for sign-in to actually succeed.
-    supabase_configured = supabase_url is not None and jwt_secret is not None
+    supabase_configured = supabase_url is not None and has_session_secret_key()
     provider_ids = get_supabase_auth_providers()
     providers_with_labels = [
         {"id": p, "label": _PROVIDER_DISPLAY_NAMES.get(p, p.title())}

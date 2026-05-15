@@ -1,5 +1,10 @@
 """Tests for authentication helpers in app/auth.py."""
 
+import base64
+
+import pytest
+
+from app import auth as auth_module
 from app.auth import (
     decode_pkce_cookie,
     decode_session_cookie,
@@ -8,6 +13,13 @@ from app.auth import (
     generate_pkce_pair,
     verify_supabase_jwt,
 )
+
+
+@pytest.fixture(autouse=True)
+def clear_jwks_cache():
+    auth_module._jwks_cache.clear()
+    yield
+    auth_module._jwks_cache.clear()
 
 
 def test_session_cookie_roundtrip():
@@ -39,6 +51,7 @@ def test_generate_pkce_pair():
 
 def test_verify_supabase_jwt_no_secret(monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "")
+    monkeypatch.delenv("SUPABASE_URL", raising=False)
     assert verify_supabase_jwt("any.token.here") is None
 
 
@@ -53,6 +66,55 @@ def test_verify_supabase_jwt_valid(monkeypatch):
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-key")
     payload = {"sub": "user-uuid-123", "email": "user@example.com"}
     token = jwt.encode(payload, "test-secret-key", algorithm="HS256")
+    claims = verify_supabase_jwt(token)
+    assert claims is not None
+    assert claims["sub"] == "user-uuid-123"
+
+
+def test_verify_supabase_jwt_valid_via_jwks(monkeypatch):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jose import jwt
+
+    def b64url_uint(value: int) -> str:
+        raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_numbers = private_key.public_key().public_numbers()
+    jwk = {
+        "kty": "RSA",
+        "kid": "test-key",
+        "use": "sig",
+        "alg": "RS256",
+        "n": b64url_uint(public_numbers.n),
+        "e": b64url_uint(public_numbers.e),
+    }
+
+    token = jwt.encode(
+        {"sub": "user-uuid-123", "email": "user@example.com"},
+        private_pem,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+
+    class MockResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"keys": [jwk]}
+
+    monkeypatch.setattr("app.auth.httpx.get", lambda *args, **kwargs: MockResponse())
+
     claims = verify_supabase_jwt(token)
     assert claims is not None
     assert claims["sub"] == "user-uuid-123"
