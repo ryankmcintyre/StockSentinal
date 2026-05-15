@@ -21,6 +21,7 @@ from app.models import (
     Position,
     PositionKeyLevel,
     StrategyRuleConfig,
+    User,
 )
 
 
@@ -56,20 +57,30 @@ class PositionRepository(Protocol):
 class SqlAlchemyPositionRepository:
     """SQLAlchemy-backed Position repository."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
+        self._user_id = user_id
+
+    def _base_query(self):
+        q = self._session.query(Position)
+        if self._user_id is not None:
+            q = q.filter(Position.user_id == self._user_id)
+        return q
 
     def list_all(self) -> Sequence[Position]:
-        return self._session.query(Position).all()
+        return self._base_query().all()
 
     def list_all_ids(self) -> list[int]:
-        return [pid for (pid,) in self._session.query(Position.id).all()]
+        q = self._session.query(Position.id)
+        if self._user_id is not None:
+            q = q.filter(Position.user_id == self._user_id)
+        return [pid for (pid,) in q.all()]
 
     def get_by_id(self, position_id: int) -> Optional[Position]:
-        return self._session.query(Position).filter(Position.id == position_id).first()
+        return self._base_query().filter(Position.id == position_id).first()
 
     def get_by_ids(self, position_ids: list[int]) -> Sequence[Position]:
-        return self._session.query(Position).filter(Position.id.in_(position_ids)).all()
+        return self._base_query().filter(Position.id.in_(position_ids)).all()
 
     def add(self, position: Position) -> None:
         self._session.add(position)
@@ -82,14 +93,14 @@ class SqlAlchemyPositionRepository:
 
     def has_any_refresh_in_progress(self) -> bool:
         return (
-            self._session.query(Position)
+            self._base_query()
             .filter(Position.refresh_in_progress.is_(True))
             .first()
         ) is not None
 
     def list_stale_refreshing(self, cutoff: datetime) -> Sequence[Position]:
         return (
-            self._session.query(Position)
+            self._base_query()
             .filter(Position.refresh_in_progress.is_(True))
             .filter(Position.refresh_started_at.is_not(None))
             .filter(Position.refresh_started_at < cutoff)
@@ -138,6 +149,32 @@ class SqlAlchemyKeyLevelRepository:
 
 
 # ---------------------------------------------------------------------------
+# User repository
+# ---------------------------------------------------------------------------
+
+
+class UserRepository(Protocol):
+    """Data-access contract for User entities."""
+
+    def get_by_id(self, user_id: str) -> Optional[User]: ...
+
+    def add(self, user: User) -> None: ...
+
+
+class SqlAlchemyUserRepository:
+    """SQLAlchemy-backed User repository."""
+
+    def __init__(self, session: Session) -> None:
+        self._session = session
+
+    def get_by_id(self, user_id: str) -> Optional[User]:
+        return self._session.query(User).filter(User.id == user_id).first()
+
+    def add(self, user: User) -> None:
+        self._session.add(user)
+
+
+# ---------------------------------------------------------------------------
 # Rule config repository
 # ---------------------------------------------------------------------------
 
@@ -171,14 +208,21 @@ class RuleConfigRepository(Protocol):
 class SqlAlchemyRuleConfigRepository:
     """SQLAlchemy-backed rule config repository."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
+        self._user_id = user_id
+
+    def _base_query(self):
+        q = self._session.query(StrategyRuleConfig)
+        if self._user_id is not None:
+            q = q.filter(StrategyRuleConfig.user_id == self._user_id)
+        return q
 
     def list_by_investment_type(
         self, investment_type: str,
     ) -> Sequence[StrategyRuleConfig]:
         return (
-            self._session.query(StrategyRuleConfig)
+            self._base_query()
             .filter(StrategyRuleConfig.investment_type == investment_type)
             .all()
         )
@@ -187,7 +231,7 @@ class SqlAlchemyRuleConfigRepository:
         self, investment_type: str,
     ) -> Sequence[StrategyRuleConfig]:
         return (
-            self._session.query(StrategyRuleConfig)
+            self._base_query()
             .filter(StrategyRuleConfig.investment_type == investment_type)
             .filter(StrategyRuleConfig.enabled.is_(True))
             .all()
@@ -197,7 +241,7 @@ class SqlAlchemyRuleConfigRepository:
         self, investment_type: str, rule_keys: Sequence[str],
     ) -> Sequence[StrategyRuleConfig]:
         return (
-            self._session.query(StrategyRuleConfig)
+            self._base_query()
             .filter(StrategyRuleConfig.investment_type == investment_type)
             .filter(StrategyRuleConfig.enabled.is_(True))
             .filter(StrategyRuleConfig.rule_key.in_(rule_keys))
@@ -208,7 +252,7 @@ class SqlAlchemyRuleConfigRepository:
         self, investment_type: str, rule_key: str,
     ) -> Optional[StrategyRuleConfig]:
         return (
-            self._session.query(StrategyRuleConfig)
+            self._base_query()
             .filter(StrategyRuleConfig.investment_type == investment_type)
             .filter(StrategyRuleConfig.rule_key == rule_key)
             .first()
@@ -216,7 +260,7 @@ class SqlAlchemyRuleConfigRepository:
 
     def list_by_key(self, rule_key: str) -> Sequence[StrategyRuleConfig]:
         return (
-            self._session.query(StrategyRuleConfig)
+            self._base_query()
             .filter(StrategyRuleConfig.rule_key == rule_key)
             .all()
         )

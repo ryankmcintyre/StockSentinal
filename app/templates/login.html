@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Sign In — Stock Sentinel{% endblock %}
+{% block content %}
+<section class="login-page">
+    <div class="login-card">
+        <h1>Sign In</h1>
+        <p class="login-subtitle">Sign in to access your portfolio.</p>
+
+        {% if not supabase_configured %}
+        <div class="alert alert-warning">
+            Supabase is not configured. Set <code>SUPABASE_URL</code> and
+            <code>SUPABASE_JWT_SECRET</code> in your environment to enable sign-in.
+        </div>
+        {% else %}
+        <div class="login-providers">
+            {% for provider in providers %}
+            <a href="/auth/{{ provider.id }}/authorize" class="btn btn-primary btn-login">
+                Sign in with {{ provider.label }}
+            </a>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        {% if request.query_params.get("error") %}
+        <p class="login-error">Sign in failed. Please try again.</p>
+        {% endif %}
+    </div>
+</section>
+{% endblock %}

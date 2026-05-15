@@ -8,6 +8,24 @@ class Base(DeclarativeBase):
     pass
 
 
+class User(Base):
+    """A user authenticated via Supabase Auth.
+
+    The ``id`` matches the Supabase Auth user UUID so no separate mapping is needed.
+    """
+    __tablename__ = "users"
+
+    id = Column(String, primary_key=True)
+    email = Column(String, nullable=True)
+    display_name = Column(String, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=datetime.now)
+
+    positions = relationship("Position", back_populates="user", cascade="all, delete-orphan")
+    strategy_rule_configs = relationship(
+        "StrategyRuleConfig", back_populates="user", cascade="all, delete-orphan"
+    )
+
+
 class Position(Base):
     __tablename__ = "positions"
 
@@ -41,6 +59,9 @@ class Position(Base):
     # Per-position sector benchmark ticker (issue #22). Optional;
     # the relative-weakness rule is skipped when missing.
     sector_benchmark_ticker = Column(String, nullable=True)
+
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    user = relationship("User", back_populates="positions")
 
     # Manually identified historical key levels (issue #23 — failed
     # breakout / reclaim failure rule).  Cascade on delete so removing
@@ -176,10 +197,14 @@ class MarketDailyBarCache(Base):
 class StrategyRuleConfig(Base):
     __tablename__ = "strategy_rule_configs"
     __table_args__ = (
-        UniqueConstraint("investment_type", "rule_key", name="uq_strategy_rule_configs_type_key"),
+        UniqueConstraint(
+            "user_id", "investment_type", "rule_key",
+            name="uq_strategy_rule_configs_user_type_key",
+        ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
     investment_type = Column(String, nullable=False)  # "long-term" or "short-term"
     rule_key = Column(String, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)
@@ -187,3 +212,4 @@ class StrategyRuleConfig(Base):
     params_json = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
     updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
+    user = relationship("User", back_populates="strategy_rule_configs")

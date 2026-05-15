@@ -1,17 +1,17 @@
 """Tests for strategy rule configuration routes and integration."""
 
 import re
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.database import get_uow
+from app.database import get_authenticated_uow, get_uow
 from app.main import _market_service, app
-from app.models import Base, Position, StrategyRuleConfig
+from app.models import Base, Position, StrategyRuleConfig, User
 from app.unit_of_work import SqlAlchemyUnitOfWork, as_uow
 from app.rule_engine import list_rule_specs_for_investment_type
 
@@ -27,6 +27,21 @@ def _setup_db():
     TestingSession = sessionmaker(bind=engine)
     Base.metadata.create_all(bind=engine)
 
+    @event.listens_for(TestingSession.class_, "before_flush")
+    def _assign_test_user_id(session, _flush_context, _instances):
+        for obj in session.new:
+            if isinstance(obj, User) and not obj.id:
+                obj.id = "test-user-id"
+            if isinstance(obj, Position) and obj.user_id is None:
+                obj.user_id = "test-user-id"
+            if isinstance(obj, StrategyRuleConfig) and obj.user_id is None:
+                obj.user_id = "test-user-id"
+
+    db = TestingSession()
+    db.add(User(id="test-user-id", email="test@example.com", display_name="Test User", created_at=datetime.now()))
+    db.commit()
+    db.close()
+
     def override_get_uow():
         session = TestingSession()
         try:
@@ -34,7 +49,15 @@ def _setup_db():
         finally:
             session.close()
 
+    def override_get_authenticated_uow():
+        session = TestingSession()
+        try:
+            yield SqlAlchemyUnitOfWork(session, user_id="test-user-id")
+        finally:
+            session.close()
+
     app.dependency_overrides[get_uow] = override_get_uow
+    app.dependency_overrides[get_authenticated_uow] = override_get_authenticated_uow
     yield TestingSession
     app.dependency_overrides.clear()
     engine.dispose()
@@ -144,7 +167,7 @@ class TestRulesPage:
         db = _setup_db()
         try:
             from app.rule_config import ensure_strategy_rule_defaults
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             # Clear conditions so the rule has an empty params_json
             row = (
                 db.query(StrategyRuleConfig)
@@ -376,7 +399,7 @@ class TestRulesPage:
 
             # Trigger defaults seeding (which should clean up deprecated keys)
             from app.rule_config import ensure_strategy_rule_defaults
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
 
             old_rows = (
                 db.query(StrategyRuleConfig)
@@ -401,7 +424,7 @@ class TestRulesPage:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
 
             for investment_type in ("long-term", "short-term"):
                 expected_sort_order_by_key = {
@@ -438,7 +461,7 @@ class TestExtensionAtrRules:
         db = _setup_db()
         try:
             from app.rule_config import ensure_strategy_rule_defaults
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key.in_(
@@ -484,7 +507,7 @@ class TestExtensionAtrRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             # Disable SELL_MA_ALL to isolate extension-rule indicator demands.
             update_strategy_rule_config(as_uow(db), "long-term", "SELL_MA_ALL", enabled=False)
             update_strategy_rule_config(as_uow(db), "short-term", "SELL_MA_ALL", enabled=False)
@@ -508,7 +531,7 @@ class TestExtensionAtrRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             update_strategy_rule_config(as_uow(db), "long-term", "SELL_MA_ALL", enabled=False)
             update_strategy_rule_config(as_uow(db), "short-term", "SELL_MA_ALL", enabled=False)
             assert get_required_atr_indicators(as_uow(db)) == set()
@@ -590,7 +613,7 @@ class TestWeeklyUpperWickRule:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key == "TRIM_WEEKLY_UPPER_WICK")
@@ -631,7 +654,7 @@ class TestWeeklyUpperWickRule:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             assert get_required_weekly_bar_lookback(as_uow(db)) == 0
         finally:
             db.close()
@@ -645,7 +668,7 @@ class TestWeeklyUpperWickRule:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             update_strategy_rule_config(
                 as_uow(db), "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
             )
@@ -718,7 +741,7 @@ class TestDistributionClusterRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key.in_(
@@ -741,7 +764,7 @@ class TestDistributionClusterRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             update_strategy_rule_config(
                 as_uow(db), "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
             )
@@ -813,7 +836,7 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key.in_(
@@ -836,7 +859,7 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             update_strategy_rule_config(
                 as_uow(db), "long-term", "TRIM_WEEKLY_FIRST_LOWER_HIGH", enabled=True
             )
@@ -859,7 +882,7 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key == "TRIM_RELATIVE_WEAKNESS_VS_SECTOR")
@@ -880,7 +903,7 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             assert get_required_daily_bar_lookback(as_uow(db)) == 0
             update_strategy_rule_config(
                 as_uow(db), "long-term", "TRIM_RELATIVE_WEAKNESS_VS_SECTOR", enabled=True
@@ -900,7 +923,7 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key == "SELL_FAILED_BREAKOUT_RECLAIM")
@@ -921,7 +944,7 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db))
+            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
             update_strategy_rule_config(
                 as_uow(db), "long-term", "SELL_FAILED_BREAKOUT_RECLAIM", enabled=True
             )

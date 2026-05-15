@@ -107,3 +107,13 @@ class PositionResponse(PositionBase):
     triggered_rules: list[RuleResult]
 
     model_config = {"from_attributes": True}
+
+
+class UserResponse(BaseModel):
+    """Schema for a logged-in user."""
+
+    id: str
+    email: Optional[str] = None
+    display_name: Optional[str] = None
+
+    model_config = {"from_attributes": True}
