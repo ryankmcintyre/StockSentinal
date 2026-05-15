@@ -89,8 +89,29 @@ def test_callback_missing_code(client):
     assert "error=missing_code" in resp.headers["location"]
 
 
+def test_authorize_redirects_when_session_secret_missing(client, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
+
+    resp = client.get("/auth/google/authorize")
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/auth/login?error=not_configured"
+
+
+def test_callback_redirects_when_session_secret_missing(client, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.delenv("SESSION_SECRET_KEY", raising=False)
+
+    resp = client.get("/auth/callback?code=somecode")
+
+    assert resp.status_code == 303
+    assert resp.headers["location"] == "/auth/login?error=not_configured"
+
+
 def test_callback_missing_pkce_cookie(client, monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
     resp = client.get("/auth/callback?code=somecode")
     assert resp.status_code == 303
     assert "error=invalid_state" in resp.headers["location"]

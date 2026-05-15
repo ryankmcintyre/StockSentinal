@@ -28,6 +28,7 @@ PKCE_MAX_AGE_SECONDS = 10 * 60
 
 _JWKS_CACHE_TTL_SECONDS = 600
 _jwks_cache: dict[str, tuple[float, list[dict]]] = {}
+_SUPPORTED_SUPABASE_JWT_ALGORITHMS = {"RS256", "ES256"}
 
 
 def _get_serializer() -> URLSafeTimedSerializer:
@@ -112,6 +113,9 @@ def _verify_supabase_jwks_jwt(token: str, header: dict) -> Optional[dict]:
     if not algorithm:
         logger.warning("JWT header is missing alg")
         return None
+    if algorithm not in _SUPPORTED_SUPABASE_JWT_ALGORITHMS:
+        logger.warning("JWT header uses unsupported alg=%s", algorithm)
+        return None
 
     jwk_key = _get_signing_key_for_header(header)
     if jwk_key is None:
@@ -141,17 +145,32 @@ def _get_signing_key_for_header(header: dict) -> Optional[dict]:
     key_id = header.get("kid")
     if key_id:
         for key in keys:
-            if key.get("kid") == key_id:
+            if key.get("kid") == key_id and _is_compatible_signing_key(key, algorithm):
                 return key
         logger.warning("No JWKS signing key found for kid=%s", key_id)
         return None
 
-    matching_keys = [key for key in keys if key.get("alg") == algorithm]
+    matching_keys = [
+        key for key in keys if _is_compatible_signing_key(key, algorithm)
+    ]
     if len(matching_keys) == 1:
         return matching_keys[0]
 
     logger.warning("Unable to resolve JWKS signing key for alg=%s", algorithm)
     return None
+
+
+def _is_compatible_signing_key(key: dict, algorithm: str | None) -> bool:
+    """Return True when a JWK is suitable for verifying the requested JWT."""
+    if key.get("use") not in (None, "sig"):
+        return False
+    key_ops = key.get("key_ops")
+    if key_ops is not None and "verify" not in key_ops:
+        return False
+    key_alg = key.get("alg")
+    if algorithm is not None and key_alg not in (None, algorithm):
+        return False
+    return True
 
 
 def _load_supabase_jwks() -> Optional[list[dict]]:
