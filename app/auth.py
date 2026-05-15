@@ -116,6 +116,17 @@ class RequiresLoginException(Exception):
 
 
 
+def is_https(request: Request) -> bool:
+    """Return True if the request was made over HTTPS.
+
+    Checks both the request scheme and the X-Forwarded-Proto header so this
+    works correctly behind reverse proxies (e.g. Render, Heroku).
+    """
+    if request.headers.get("x-forwarded-proto", "").lower() == "https":
+        return True
+    return request.url.scheme == "https"
+
+
 def get_current_user_id(request: Request) -> Optional[str]:
     """Read the session cookie and return the user_id, or None if not authenticated."""
     cookie = request.cookies.get(SESSION_COOKIE_NAME)

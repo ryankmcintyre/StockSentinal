@@ -4,6 +4,24 @@ Revision ID: a1b2c3d4e5f6
 Revises: 3ee6b210c351
 Create Date: 2026-05-15 12:00:00.000000
 
+SQLite note
+-----------
+This migration targets PostgreSQL (production).  For local SQLite development
+the app uses ``Base.metadata.create_all`` + the ``_add_missing_columns`` helper
+in ``app/database.py`` to manage the schema, NOT Alembic.
+
+``_add_missing_columns`` will add the new nullable ``user_id`` column to
+``positions`` and ``strategy_rule_configs`` automatically on next startup.
+However, it cannot drop or replace the old unique constraint on
+``strategy_rule_configs`` (``uq_strategy_rule_configs_type_key``), which
+means an existing SQLite dev database will still enforce the old
+``(investment_type, rule_key)`` uniqueness and will reject per-user rule
+config inserts when a second user's rows conflict.
+
+**If you have an existing SQLite dev database, delete it** (``stocksentinal.db``)
+and let the app recreate it with the correct schema on next startup.  This is
+safe for development; all production data is in Supabase / PostgreSQL.
+
 """
 from typing import Sequence, Union
 

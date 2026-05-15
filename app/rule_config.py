@@ -1,7 +1,10 @@
 """Persistence helpers for strategy rule configuration."""
 
 import json
+import logging
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 from app.models import StrategyRuleConfig
 from app.unit_of_work import UnitOfWork
@@ -64,20 +67,20 @@ def _migrate_deprecated_sell_rules(uow: UnitOfWork) -> bool:
     return changed
 
 
-def _resolve_rule_config_user_id(uow: UnitOfWork, user_id: str | None = None) -> str | None:
-    if user_id is not None:
-        return user_id
-    return getattr(uow.rule_configs, "_user_id", None)
-
-
 def ensure_strategy_rule_defaults(uow: UnitOfWork, user_id: str | None = None) -> None:
     """Seed missing rule configuration rows for each investment type.
+
+    A valid ``user_id`` is required to seed rows — if it is ``None`` (e.g. an
+    unscoped background UoW) seeding is skipped to prevent NULL-owned rows from
+    accumulating under the unique constraint.
 
     Existing rows are preserved. New catalog rules are added as disabled by
     default unless they are part of the strategy defaults. Deprecated sell
     rule keys are cleaned up.
     """
-    user_id = _resolve_rule_config_user_id(uow, user_id)
+    if user_id is None:
+        logger.debug("ensure_strategy_rule_defaults called without user_id — skipping seed")
+        return
     changed = _migrate_deprecated_sell_rules(uow)
 
     for investment_type in _supported_investment_types():
@@ -363,7 +366,7 @@ def update_strategy_rule_config(
     if investment_type not in spec.supported_investment_types:
         raise ValueError(f"Rule '{rule_key}' is not valid for {investment_type.value}")
 
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     row = uow.rule_configs.get_by_investment_type_and_key(investment_type.value, rule_key)
     if row is None:
         row = StrategyRuleConfig(
@@ -395,7 +398,7 @@ def update_strategy_rule_config(
 
 def get_ma_conditions(uow: UnitOfWork, investment_type_value: str) -> list[dict]:
     """Return the MA conditions for SELL_MA_ALL for a given investment type."""
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     row = uow.rule_configs.get_by_investment_type_and_key(
         investment_type_value, RULE_KEY_SELL_MA_ALL
     )
@@ -413,7 +416,7 @@ def add_ma_condition(
 ) -> list[str]:
     """Add an MA condition.  Returns list of validation errors (empty on success)."""
     _normalize_investment_type(investment_type_value)
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
 
     row = uow.rule_configs.get_by_investment_type_and_key(
         investment_type_value, RULE_KEY_SELL_MA_ALL
@@ -450,7 +453,7 @@ def remove_ma_condition(
     At least one condition must remain when the rule is enabled.
     """
     _normalize_investment_type(investment_type_value)
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
 
     row = uow.rule_configs.get_by_investment_type_and_key(
         investment_type_value, RULE_KEY_SELL_MA_ALL
@@ -488,7 +491,7 @@ def get_required_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
 
     Used by the market data refresh logic to know which SMA indicators to fetch.
     """
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     indicators: set[tuple[str, int]] = set()
 
     for investment_type in _supported_investment_types():
@@ -515,7 +518,7 @@ def get_required_atr_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
 
     Used by the market data refresh logic to know which ATR indicators to fetch.
     """
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     indicators: set[tuple[str, int]] = set()
 
     for investment_type in _supported_investment_types():
@@ -536,7 +539,7 @@ def get_required_weekly_bar_lookback(uow: UnitOfWork) -> int:
 
     Returns 0 when no enabled rule needs weekly OHLC history.
     """
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     max_lookback = 0
     for investment_type in _supported_investment_types():
         rows = uow.rule_configs.list_enabled_by_investment_type_and_keys(
@@ -571,7 +574,7 @@ def get_required_daily_bar_lookback(uow: UnitOfWork) -> int:
 
     Returns 0 when no enabled rule needs daily close history.
     """
-    ensure_strategy_rule_defaults(uow)
+    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     max_lookback = 0
     for investment_type in _supported_investment_types():
         rows = uow.rule_configs.list_enabled_by_investment_type_and_keys(

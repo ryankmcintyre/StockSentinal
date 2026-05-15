@@ -14,8 +14,8 @@
         {% else %}
         <div class="login-providers">
             {% for provider in providers %}
-            <a href="/auth/{{ provider }}/authorize" class="btn btn-primary btn-login">
-                Sign in with {{ provider | title }}
+            <a href="/auth/{{ provider.id }}/authorize" class="btn btn-primary btn-login">
+                Sign in with {{ provider.label }}
             </a>
             {% endfor %}
         </div>

@@ -25,6 +25,7 @@ class UnitOfWork(Protocol):
     key_levels: KeyLevelRepository
     rule_configs: RuleConfigRepository
     users: UserRepository
+    user_id: str | None
 
     @property
     def session(self) -> Session: ...
@@ -51,6 +52,7 @@ class SqlAlchemyUnitOfWork:
 
     def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
+        self.user_id = user_id
         self.positions = SqlAlchemyPositionRepository(session, user_id)
         self.key_levels = SqlAlchemyKeyLevelRepository(session)
         self.rule_configs = SqlAlchemyRuleConfigRepository(session, user_id)

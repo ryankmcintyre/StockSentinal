@@ -124,19 +124,29 @@ def get_market_data_provider_display_name() -> str:
 def get_session_secret_key() -> str:
     """Return the secret key used to sign session cookies.
 
-    Must be set in production. Falls back to an insecure default in dev
-    so the app runs without configuration, but logs a warning.
+    When Supabase Auth is configured (SUPABASE_URL is set), SESSION_SECRET_KEY
+    is required and the app raises at startup if it is missing — a misconfigured
+    production environment must not silently use a known insecure default.
+
+    When Supabase Auth is not configured (local dev without auth), an insecure
+    fallback is used with a warning so the app still starts without extra setup.
     """
     import logging
 
     key = os.environ.get("SESSION_SECRET_KEY", "").strip()
-    if not key:
-        logging.getLogger(__name__).warning(
-            "SESSION_SECRET_KEY is not set — using insecure default. "
-            "Set SESSION_SECRET_KEY in your .env for production."
+    if key:
+        return key
+    # Auth is enabled in production — refuse to start with an insecure default.
+    if os.environ.get("SUPABASE_URL", "").strip():
+        raise RuntimeError(
+            "SESSION_SECRET_KEY must be set when SUPABASE_URL is configured. "
+            "Set it to a long random string in your environment or .env file."
         )
-        return "dev-insecure-secret-change-me"
-    return key
+    logging.getLogger(__name__).warning(
+        "SESSION_SECRET_KEY is not set — using insecure default. "
+        "Set SESSION_SECRET_KEY in your .env for production."
+    )
+    return "dev-insecure-secret-change-me"
 
 
 def get_supabase_url() -> str | None:

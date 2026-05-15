@@ -24,6 +24,7 @@ from app.auth import (
     encode_session_cookie,
     generate_pkce_pair,
     get_current_user_id,
+    is_https,
     verify_supabase_jwt,
 )
 from app.config import (
@@ -32,6 +33,7 @@ from app.config import (
     get_market_data_provider,
     get_market_data_provider_display_name,
     get_supabase_auth_providers,
+    get_supabase_jwt_secret,
     get_supabase_url,
 )
 from app.database import SessionLocal, get_authenticated_uow, get_uow, init_db
@@ -116,6 +118,25 @@ async def requires_login_handler(request: Request, _exc: RequiresLoginException)
 # ---------------------------------------------------------------------------
 
 VERDICT_PRIORITY = {Verdict.sell: 0, Verdict.trim: 1, Verdict.hold: 2}
+
+# Human-readable display names for Supabase Auth social providers.
+# Falls back to title-cased provider id for any unlisted provider.
+_PROVIDER_DISPLAY_NAMES: dict[str, str] = {
+    "google": "Google",
+    "github": "GitHub",
+    "discord": "Discord",
+    "apple": "Apple",
+    "twitter": "Twitter",
+    "facebook": "Facebook",
+    "azure": "Azure AD",
+    "gitlab": "GitLab",
+    "bitbucket": "Bitbucket",
+    "spotify": "Spotify",
+    "slack": "Slack",
+    "twitch": "Twitch",
+    "linkedin": "LinkedIn",
+    "notion": "Notion",
+}
 REFRESH_STALE_TIMEOUT_MINUTES = 5
 
 
@@ -327,13 +348,20 @@ def login_page(request: Request):
     if get_current_user_id(request):
         return RedirectResponse(url="/", status_code=303)
     supabase_url = get_supabase_url()
-    providers = get_supabase_auth_providers()
+    jwt_secret = get_supabase_jwt_secret()
+    # Both URL and JWT secret must be set for sign-in to actually succeed.
+    supabase_configured = supabase_url is not None and jwt_secret is not None
+    provider_ids = get_supabase_auth_providers()
+    providers_with_labels = [
+        {"id": p, "label": _PROVIDER_DISPLAY_NAMES.get(p, p.title())}
+        for p in provider_ids
+    ]
     return templates.TemplateResponse(
         request,
         "login.html",
         {
-            "supabase_configured": supabase_url is not None,
-            "providers": providers,
+            "supabase_configured": supabase_configured,
+            "providers": providers_with_labels,
             "current_user": None,
         },
     )
@@ -367,7 +395,7 @@ def oauth_authorize(provider: str, request: Request):
         max_age=PKCE_MAX_AGE_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=is_https(request),
     )
     return response
 
@@ -446,7 +474,7 @@ def oauth_callback(
         max_age=SESSION_MAX_AGE_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=is_https(request),
     )
     response.delete_cookie(key=PKCE_COOKIE_NAME)
     logger.info("User %s logged in successfully", user_id)

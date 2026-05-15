@@ -85,10 +85,7 @@ def test_callback_missing_pkce_cookie(client, monkeypatch):
 def test_callback_success_sets_session_cookie(client, monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-key")
-
-    response = Mock()
-    response.raise_for_status.return_value = None
-    response.json.return_value = {"access_token": "signed-token"}
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
 
     from jose import jwt
 
@@ -101,13 +98,17 @@ def test_callback_success_sets_session_cookie(client, monkeypatch):
         "test-secret-key",
         algorithm="HS256",
     )
+
+    response = Mock()
+    response.raise_for_status.return_value = None
     response.json.return_value = {"access_token": token}
 
     monkeypatch.setattr("app.main.httpx.post", lambda *args, **kwargs: response)
 
+    pkce_cookie = encode_pkce_cookie("verifier")
     resp = client.get(
         "/auth/callback?code=somecode",
-        cookies={PKCE_COOKIE_NAME: encode_pkce_cookie("verifier")},
+        cookies={PKCE_COOKIE_NAME: pkce_cookie},
     )
     assert resp.status_code == 303
     assert resp.headers["location"] == "/"
