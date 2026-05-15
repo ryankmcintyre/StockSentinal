@@ -49,26 +49,14 @@ def test_generate_pkce_pair():
     assert "=" not in challenge
 
 
-def test_verify_supabase_jwt_no_secret(monkeypatch):
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "")
+def test_verify_supabase_jwt_missing_supabase_url(monkeypatch):
     monkeypatch.delenv("SUPABASE_URL", raising=False)
     assert verify_supabase_jwt("any.token.here") is None
 
 
 def test_verify_supabase_jwt_invalid_token(monkeypatch):
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret")
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     assert verify_supabase_jwt("not.a.real.jwt") is None
-
-
-def test_verify_supabase_jwt_valid(monkeypatch):
-    from jose import jwt
-
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-key")
-    payload = {"sub": "user-uuid-123", "email": "user@example.com"}
-    token = jwt.encode(payload, "test-secret-key", algorithm="HS256")
-    claims = verify_supabase_jwt(token)
-    assert claims is not None
-    assert claims["sub"] == "user-uuid-123"
 
 
 def test_verify_supabase_jwt_valid_via_jwks(monkeypatch):
@@ -81,7 +69,6 @@ def test_verify_supabase_jwt_valid_via_jwks(monkeypatch):
         return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
 
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_pem = private_key.private_bytes(

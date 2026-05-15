@@ -155,17 +155,6 @@ def get_supabase_url() -> str | None:
     return url if url else None
 
 
-def get_supabase_jwt_secret() -> str | None:
-    """Return the legacy Supabase JWT secret, or None if not set.
-
-    New Supabase projects commonly use asymmetric JWT signing keys exposed via
-    JWKS instead of a shared JWT secret. This value remains optional so legacy
-    HS256 projects can still be verified server-side.
-    """
-    secret = os.environ.get("SUPABASE_JWT_SECRET", "").strip()
-    return secret if secret else None
-
-
 def get_supabase_jwks_url() -> str | None:
     """Return the Supabase JWKS discovery URL, or None if Supabase is unset."""
     url = get_supabase_url()

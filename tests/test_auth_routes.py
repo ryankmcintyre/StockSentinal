@@ -59,10 +59,9 @@ def test_login_page_renders(client):
     assert "Sign In" in resp.text
 
 
-def test_login_page_accepts_jwks_projects_without_legacy_secret(client, monkeypatch):
+def test_login_page_accepts_jwks_projects(client, monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
-    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
 
     resp = client.get("/auth/login")
 
@@ -97,39 +96,6 @@ def test_callback_missing_pkce_cookie(client, monkeypatch):
     assert "error=invalid_state" in resp.headers["location"]
 
 
-def test_callback_success_sets_session_cookie(client, monkeypatch):
-    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
-    monkeypatch.setenv("SUPABASE_JWT_SECRET", "test-secret-key")
-    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
-
-    from jose import jwt
-
-    token = jwt.encode(
-        {
-            "sub": "new-user",
-            "email": "new@example.com",
-            "user_metadata": {"full_name": "New User"},
-        },
-        "test-secret-key",
-        algorithm="HS256",
-    )
-
-    response = Mock()
-    response.raise_for_status.return_value = None
-    response.json.return_value = {"access_token": token}
-
-    monkeypatch.setattr("app.main.httpx.post", lambda *args, **kwargs: response)
-
-    pkce_cookie = encode_pkce_cookie("verifier")
-    resp = client.get(
-        "/auth/callback?code=somecode",
-        cookies={PKCE_COOKIE_NAME: pkce_cookie},
-    )
-    assert resp.status_code == 303
-    assert resp.headers["location"] == "/"
-    assert resp.cookies.get(SESSION_COOKIE_NAME)
-
-
 def test_callback_success_sets_session_cookie_with_jwks(client, monkeypatch):
     from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
@@ -141,7 +107,6 @@ def test_callback_success_sets_session_cookie_with_jwks(client, monkeypatch):
 
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
     monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
-    monkeypatch.delenv("SUPABASE_JWT_SECRET", raising=False)
 
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     private_pem = private_key.private_bytes(

@@ -54,7 +54,6 @@ Compose reads values from your shell environment or a local `.env` file automati
 - `DATABASE_URL` — database connection string (defaults to `sqlite:////data/stocksentinal.db`)
 - `SUPABASE_URL` — optional Supabase project URL for hosted OAuth sign-in
 - `SESSION_SECRET_KEY` — required when Supabase auth is enabled; signs app session cookies
-- `SUPABASE_JWT_SECRET` — optional only for legacy Supabase HS256 projects; modern projects use JWKS automatically
 
 To stop the development stack:
 

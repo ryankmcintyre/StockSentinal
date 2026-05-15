@@ -14,7 +14,6 @@ from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 from app.config import (
     get_session_secret_key,
     get_supabase_jwks_url,
-    get_supabase_jwt_secret,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,9 +92,8 @@ def decode_session_cookie(cookie_value: str) -> Optional[str]:
 def verify_supabase_jwt(token: str) -> Optional[dict]:
     """Verify a Supabase Auth JWT and return the claims dict, or None on failure.
 
-    Modern Supabase projects usually sign access tokens with asymmetric signing
-    keys discoverable via JWKS. Legacy projects may still use HS256 with a
-    shared JWT secret. The ``sub`` claim contains the Supabase user UUID.
+    Supabase access tokens are verified against the project's JWKS endpoint.
+    The ``sub`` claim contains the Supabase user UUID.
     """
     try:
         from jose import jwt
@@ -105,31 +103,7 @@ def verify_supabase_jwt(token: str) -> Optional[dict]:
         logger.debug("JWT header parsing failed", exc_info=True)
         return None
 
-    algorithm = header.get("alg")
-    if algorithm == "HS256":
-        return _verify_supabase_hs256_jwt(token)
     return _verify_supabase_jwks_jwt(token, header)
-
-
-def _verify_supabase_hs256_jwt(token: str) -> Optional[dict]:
-    """Verify a legacy shared-secret Supabase access token."""
-    jwt_secret = get_supabase_jwt_secret()
-    if not jwt_secret:
-        logger.warning("SUPABASE_JWT_SECRET is not set — cannot verify HS256 JWT")
-        return None
-    try:
-        from jose import jwt
-
-        claims = jwt.decode(
-            token,
-            jwt_secret,
-            algorithms=["HS256"],
-            options={"verify_aud": False},
-        )
-        return claims
-    except Exception:
-        logger.debug("JWT verification failed", exc_info=True)
-        return None
 
 
 def _verify_supabase_jwks_jwt(token: str, header: dict) -> Optional[dict]:
