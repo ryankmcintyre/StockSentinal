@@ -30,9 +30,9 @@ jobs:
           sleep 5
           
           echo "Testing health check..."
-          if curl -f -s http://localhost:8000/ | grep -q "Stock Sentinel"; then
+          if curl -f -s http://localhost:8000/health | grep -q "Stock Sentinel"; then
             echo "✓ App is running and responding!"
-            curl -s http://localhost:8000/ | head -5
+            curl -s http://localhost:8000/health
             docker stop stocksentinal-test
           else
             echo "✗ App failed to respond correctly"

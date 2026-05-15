@@ -342,6 +342,12 @@ def _enrich_position(
 # ---------------------------------------------------------------------------
 
 
+@app.get("/health")
+def health_check():
+    """Lightweight liveness probe — no auth required."""
+    return {"status": "ok", "app": "Stock Sentinel"}
+
+
 @app.get("/auth/login")
 def login_page(request: Request):
     """Show the login page with sign-in options."""
