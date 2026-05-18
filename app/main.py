@@ -520,8 +520,22 @@ def logout():
 
 
 @app.get("/")
-def portfolio(request: Request, uow: UnitOfWork = Depends(get_authenticated_uow)):
-    """Dashboard: list all positions with verdicts, sorted by urgency."""
+def index(request: Request):
+    """Root: splash page for anonymous visitors, portfolio dashboard for authenticated users."""
+    user_id = get_current_user_id(request)
+    if user_id is None:
+        return templates.TemplateResponse(request, "splash.html", {"current_user": None})
+
+    session = SessionLocal()
+    uow = SqlAlchemyUnitOfWork(session, user_id=user_id)
+    try:
+        return _portfolio_response(request, uow)
+    finally:
+        session.close()
+
+
+def _portfolio_response(request: Request, uow: UnitOfWork):
+    """Build and return the portfolio dashboard template response."""
     user_id = _get_request_user_id(request, uow)
     current_user = _get_current_user(request, uow)
     _clear_stale_refresh_flags(uow)

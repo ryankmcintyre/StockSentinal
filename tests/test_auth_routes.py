@@ -210,6 +210,8 @@ def test_callback_success_sets_session_cookie_with_jwks(client, monkeypatch):
 
 
 def test_protected_route_redirects_to_login(client):
-    resp = client.get("/")
+    # GET / now serves the public splash page — use a genuinely protected
+    # route (e.g. /add) to verify the redirect-to-login behaviour.
+    resp = client.get("/add")
     assert resp.status_code == 303
     assert resp.headers["location"] == "/auth/login"

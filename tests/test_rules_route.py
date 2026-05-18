@@ -2,6 +2,7 @@
 
 import re
 from datetime import date, datetime
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -58,7 +59,13 @@ def _setup_db():
 
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_authenticated_uow] = override_get_authenticated_uow
-    yield TestingSession
+    # GET / no longer uses get_authenticated_uow — patch auth helpers directly
+    # so that client.get("/") renders the portfolio rather than the splash.
+    with (
+        patch("app.main.get_current_user_id", return_value="test-user-id"),
+        patch("app.main.SessionLocal", new=TestingSession),
+    ):
+        yield TestingSession
     app.dependency_overrides.clear()
     engine.dispose()
 

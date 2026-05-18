@@ -22,7 +22,9 @@
                         <span class="brand-tagline">Sell · Trim · Hold</span>
                     </span>
                 </a>
+                {% if current_user %}
                 <a href="/rules" class="btn btn-small">Rules</a>
+                {% endif %}
             </div>
             <div class="nav-right">
                 {% if current_user %}
@@ -30,8 +32,10 @@
                 <form method="post" action="/auth/logout" style="display:inline">
                     <button type="submit" class="btn btn-small">Sign Out</button>
                 </form>
-                {% endif %}
                 <a href="/add" class="btn btn-primary">+ Add Position</a>
+                {% else %}
+                <a href="/auth/login" class="btn btn-primary">Sign In</a>
+                {% endif %}
             </div>
         </nav>
     </header>
