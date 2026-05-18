@@ -677,6 +677,14 @@ class MarketDataService:
         for pos in positions:
             ticker_groups.setdefault(pos.ticker, []).append(pos)
 
+        import app.rule_config as rule_config
+
+        rule_uow = as_uow(db)
+        required = rule_config.get_required_indicators(rule_uow)
+        required_atr = rule_config.get_required_atr_indicators(rule_uow)
+        weekly_lookback = rule_config.get_required_weekly_bar_lookback(rule_uow)
+        daily_lookback = rule_config.get_required_daily_bar_lookback(rule_uow)
+
         refresh_plan = {}
         daily_batch_tickers: set[str] = set()
         weekly_batch_tickers: set[str] = set()
@@ -708,6 +716,25 @@ class MarketDataService:
                 daily_batch_tickers.add(ticker)
             if group_needs_weekly:
                 weekly_batch_tickers.add(ticker)
+
+        all_tickers = set(ticker_groups.keys())
+        for interval, _time_period in required:
+            if interval == "daily":
+                daily_batch_tickers.update(all_tickers)
+            elif interval == "weekly":
+                weekly_batch_tickers.update(all_tickers)
+
+        if weekly_lookback > 0:
+            weekly_batch_tickers.update(all_tickers)
+
+        daily_rule_tickers: set[str] = set()
+        if daily_lookback > 0:
+            for pos in positions:
+                benchmark = getattr(pos, "sector_benchmark_ticker", None)
+                if benchmark:
+                    daily_rule_tickers.add(pos.ticker)
+                    daily_rule_tickers.add(benchmark.upper())
+            daily_batch_tickers.update(daily_rule_tickers)
 
         cache.preload_daily_bars(daily_batch_tickers)
         cache.preload_weekly_bars(weekly_batch_tickers)
@@ -771,13 +798,7 @@ class MarketDataService:
 
             db.commit()
 
-        # Refresh indicator / ATR / bar caches for configured rules
-        import app.rule_config as rule_config
-
-        rule_uow = as_uow(db)
-        required = rule_config.get_required_indicators(rule_uow)
         if required and ticker_groups:
-            all_tickers = set(ticker_groups.keys())
             cache_errors = self.refresh_indicator_cache(
                 db, all_tickers, required, force=force,
                 fetch_cache=cache,
@@ -785,9 +806,7 @@ class MarketDataService:
             if cache_errors:
                 logger.warning("Indicator cache refresh errors: %s", cache_errors)
 
-        required_atr = rule_config.get_required_atr_indicators(rule_uow)
         if required_atr and ticker_groups:
-            all_tickers = set(ticker_groups.keys())
             atr_errors = self.refresh_atr_cache(
                 db, all_tickers, required_atr, force=force,
                 fetch_cache=cache,
@@ -795,9 +814,7 @@ class MarketDataService:
             if atr_errors:
                 logger.warning("ATR cache refresh errors: %s", atr_errors)
 
-        weekly_lookback = rule_config.get_required_weekly_bar_lookback(rule_uow)
         if weekly_lookback > 0 and ticker_groups:
-            all_tickers = set(ticker_groups.keys())
             bar_errors = self.refresh_weekly_bar_cache(
                 db, all_tickers, weekly_lookback, force=force,
                 fetch_cache=cache,
@@ -805,17 +822,10 @@ class MarketDataService:
             if bar_errors:
                 logger.warning("Weekly bar cache refresh errors: %s", bar_errors)
 
-        daily_lookback = rule_config.get_required_daily_bar_lookback(rule_uow)
         if daily_lookback > 0 and ticker_groups:
-            daily_tickers: set[str] = set()
-            for pos in positions:
-                benchmark = getattr(pos, "sector_benchmark_ticker", None)
-                if benchmark:
-                    daily_tickers.add(pos.ticker)
-                    daily_tickers.add(benchmark.upper())
-            if daily_tickers:
+            if daily_rule_tickers:
                 daily_errors = self.refresh_daily_bar_cache(
-                    db, daily_tickers, daily_lookback, force=force,
+                    db, daily_rule_tickers, daily_lookback, force=force,
                     fetch_cache=cache,
                 )
                 if daily_errors:
