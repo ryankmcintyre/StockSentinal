@@ -54,10 +54,6 @@ class MarketDataProvider(Protocol):
 
     def fetch_weekly_bars(self, symbol: str) -> list[WeeklyBar]: ...
 
-    def fetch_daily_bars_batch(self, symbols: list[str]) -> dict[str, list[DailyBar]]: ...
-
-    def fetch_weekly_bars_batch(self, symbols: list[str]) -> dict[str, list[WeeklyBar]]: ...
-
     def fetch_sma(
         self, symbol: str, interval: str, time_period: int,
     ) -> list[SMAPoint]: ...
@@ -123,12 +119,6 @@ class AlphaVantageProvider:
     def fetch_weekly_bars(self, symbol: str) -> list[WeeklyBar]:
         self._wait_for_slot()
         return _av_fetch_weekly_series(symbol, self._get_api_key())
-
-    def fetch_daily_bars_batch(self, symbols: list[str]) -> dict[str, list[DailyBar]]:
-        return {symbol.upper(): self.fetch_daily_bars(symbol) for symbol in symbols}
-
-    def fetch_weekly_bars_batch(self, symbols: list[str]) -> dict[str, list[WeeklyBar]]:
-        return {symbol.upper(): self.fetch_weekly_bars(symbol) for symbol in symbols}
 
     def fetch_sma(
         self, symbol: str, interval: str, time_period: int,

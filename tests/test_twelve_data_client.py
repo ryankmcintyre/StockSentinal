@@ -108,7 +108,10 @@ class TestFetchDailySeriesBatch:
         mock_resp.raise_for_status = mocker.Mock()
         mock_get = mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
 
-        bars_by_symbol = fetch_daily_series_batch(["aapl", "MSFT", "AAPL"], "fake_key")
+        bars_by_symbol = fetch_daily_series_batch(
+            [" aapl ", "MSFT", "AAPL", "", "   "],
+            "fake_key",
+        )
 
         assert mock_get.call_count == 1
         assert mock_get.call_args.kwargs["params"]["symbol"] == "AAPL,MSFT"

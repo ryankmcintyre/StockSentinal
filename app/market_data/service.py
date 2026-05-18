@@ -732,7 +732,7 @@ class MarketDataService:
             for pos in positions:
                 benchmark = getattr(pos, "sector_benchmark_ticker", None)
                 if benchmark:
-                    daily_rule_tickers.add(pos.ticker)
+                    daily_rule_tickers.add(pos.ticker.upper())
                     daily_rule_tickers.add(benchmark.upper())
             daily_batch_tickers.update(daily_rule_tickers)
 
