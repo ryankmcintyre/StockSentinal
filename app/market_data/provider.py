@@ -24,12 +24,18 @@ from app.alpha_vantage_client import (
     fetch_weekly_series as _av_fetch_weekly_series,
 )
 from app.config import require_alpha_vantage_api_key, require_twelve_data_api_key
+from app.config import (
+    get_alpha_vantage_min_interval_seconds,
+    get_twelve_data_min_interval_seconds,
+)
 from app.twelve_data_client import (
     fetch_atr as _td_fetch_atr,
     fetch_company_name as _td_fetch_company_name,
     fetch_ticker_matches as _td_fetch_ticker_matches,
+    fetch_daily_series_batch as _td_fetch_daily_series_batch,
     fetch_daily_series as _td_fetch_daily_series,
     fetch_sma as _td_fetch_sma,
+    fetch_weekly_series_batch as _td_fetch_weekly_series_batch,
     fetch_weekly_series as _td_fetch_weekly_series,
 )
 
@@ -68,7 +74,7 @@ class AlphaVantageProvider:
     tests can inject a fake without touching environment variables.
     """
 
-    _MIN_INTERVAL_SECONDS = 12.0
+    supports_batch_fetch = False
     _last_call_at: Optional[float] = None
     _lock = threading.Lock()
 
@@ -83,10 +89,11 @@ class AlphaVantageProvider:
     @classmethod
     def _wait_for_slot(cls) -> None:
         with cls._lock:
+            min_interval_seconds = get_alpha_vantage_min_interval_seconds()
             now = time.monotonic()
             if cls._last_call_at is not None:
                 elapsed = now - cls._last_call_at
-                remaining = cls._MIN_INTERVAL_SECONDS - elapsed
+                remaining = min_interval_seconds - elapsed
                 if remaining > 0:
                     logger.debug(
                         "Rate-limit: sleeping %.1fs before next API call",
@@ -135,7 +142,7 @@ class AlphaVantageProvider:
 class TwelveDataProvider:
     """Twelve Data implementation of :class:`MarketDataProvider`."""
 
-    _MIN_INTERVAL_SECONDS = 8.0
+    supports_batch_fetch = True
     _last_call_at: Optional[float] = None
     _lock = threading.Lock()
 
@@ -148,10 +155,11 @@ class TwelveDataProvider:
     @classmethod
     def _wait_for_slot(cls) -> None:
         with cls._lock:
+            min_interval_seconds = get_twelve_data_min_interval_seconds()
             now = time.monotonic()
             if cls._last_call_at is not None:
                 elapsed = now - cls._last_call_at
-                remaining = cls._MIN_INTERVAL_SECONDS - elapsed
+                remaining = min_interval_seconds - elapsed
                 if remaining > 0:
                     logger.debug(
                         "Rate-limit: sleeping %.1fs before next API call",
@@ -175,6 +183,14 @@ class TwelveDataProvider:
     def fetch_weekly_bars(self, symbol: str) -> list[WeeklyBar]:
         self._wait_for_slot()
         return _td_fetch_weekly_series(symbol, self._get_api_key())
+
+    def fetch_daily_bars_batch(self, symbols: list[str]) -> dict[str, list[DailyBar]]:
+        self._wait_for_slot()
+        return _td_fetch_daily_series_batch(symbols, self._get_api_key())
+
+    def fetch_weekly_bars_batch(self, symbols: list[str]) -> dict[str, list[WeeklyBar]]:
+        self._wait_for_slot()
+        return _td_fetch_weekly_series_batch(symbols, self._get_api_key())
 
     def fetch_sma(
         self, symbol: str, interval: str, time_period: int,

@@ -104,6 +104,33 @@ class TestRefreshLoadingCues:
         assert "/static/refresh-status.js" in resp.text
         assert "data-api-submit=\"true\"" in resp.text
 
+    def test_refresh_all_form_warns_before_submit(self, client, _setup_db, mocker):
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
+        db = _setup_db()
+        try:
+            db.add(
+                Position(
+                    ticker="AAPL",
+                    company_name="Apple Inc.",
+                    cost_basis=100.0,
+                    initial_purchase_date=date(2025, 1, 1),
+                    investment_type="long-term",
+                    current_price=115.0,
+                    notes=None,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get("/")
+
+        assert resp.status_code == 200
+        assert (
+            'data-confirm-message="Refreshing all market data may take several minutes '
+            'if you have many positions. Continue?"'
+        ) in resp.text
+
     def test_refresh_status_endpoint_returns_position_flags(self, client, _setup_db):
         db = _setup_db()
         try:

@@ -141,9 +141,7 @@ def _parse_bars(data: dict[str, Any], symbol: str) -> list[dict[str, Any]]:
     return parsed
 
 
-def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:
-    """Fetch daily time series bars from Twelve Data."""
-    data = _get("/time_series", {"symbol": symbol, "interval": "1day"}, api_key)
+def _parse_daily_bars(data: dict[str, Any], symbol: str) -> list[DailyBar]:
     values = _parse_bars(data, symbol)
     return [
         DailyBar(
@@ -154,9 +152,7 @@ def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:
     ]
 
 
-def fetch_weekly_series(symbol: str, api_key: str) -> list[WeeklyBar]:
-    """Fetch weekly time series bars from Twelve Data."""
-    data = _get("/time_series", {"symbol": symbol, "interval": "1week"}, api_key)
+def _parse_weekly_bars(data: dict[str, Any], symbol: str) -> list[WeeklyBar]:
     values = _parse_bars(data, symbol)
     return [
         WeeklyBar(
@@ -169,6 +165,97 @@ def fetch_weekly_series(symbol: str, api_key: str) -> list[WeeklyBar]:
         )
         for value in values
     ]
+
+
+def _normalize_symbols(symbols: list[str]) -> list[str]:
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for symbol in symbols:
+        cleaned = symbol.strip().upper()
+        if cleaned and cleaned not in seen:
+            normalized.append(cleaned)
+            seen.add(cleaned)
+    return normalized
+
+
+def _fetch_time_series_batch(
+    symbols: list[str],
+    interval: str,
+    api_key: str,
+) -> dict[str, dict[str, Any]]:
+    """Fetch raw time-series payloads for one or more symbols."""
+    normalized = _normalize_symbols(symbols)
+    if not normalized:
+        return {}
+
+    data = _get(
+        "/time_series",
+        {"symbol": ",".join(normalized), "interval": interval},
+        api_key,
+    )
+
+    if len(normalized) == 1:
+        return {normalized[0]: data}
+
+    results: dict[str, dict[str, Any]] = {}
+    if not isinstance(data, dict):
+        raise MarketDataError("Unexpected Twelve Data batch response structure")
+
+    for symbol in normalized:
+        payload = data.get(symbol)
+        if not isinstance(payload, dict):
+            logger.warning("Twelve Data batch response missing payload for %s", symbol)
+            continue
+        if payload.get("status") == "error":
+            try:
+                _raise_api_error(payload)
+            except MarketDataError as exc:
+                logger.warning("Twelve Data batch error for %s: %s", symbol, exc)
+                continue
+        results[symbol] = payload
+    return results
+
+
+def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:
+    """Fetch daily time series bars from Twelve Data."""
+    data = _get("/time_series", {"symbol": symbol, "interval": "1day"}, api_key)
+    return _parse_daily_bars(data, symbol)
+
+
+def fetch_daily_series_batch(
+    symbols: list[str],
+    api_key: str,
+) -> dict[str, list[DailyBar]]:
+    """Fetch daily time series bars for multiple symbols in one request."""
+    payloads = _fetch_time_series_batch(symbols, "1day", api_key)
+    results: dict[str, list[DailyBar]] = {}
+    for symbol, payload in payloads.items():
+        try:
+            results[symbol] = _parse_daily_bars(payload, symbol)
+        except MarketDataError as exc:
+            logger.warning("Skipping daily batch payload for %s: %s", symbol, exc)
+    return results
+
+
+def fetch_weekly_series(symbol: str, api_key: str) -> list[WeeklyBar]:
+    """Fetch weekly time series bars from Twelve Data."""
+    data = _get("/time_series", {"symbol": symbol, "interval": "1week"}, api_key)
+    return _parse_weekly_bars(data, symbol)
+
+
+def fetch_weekly_series_batch(
+    symbols: list[str],
+    api_key: str,
+) -> dict[str, list[WeeklyBar]]:
+    """Fetch weekly time series bars for multiple symbols in one request."""
+    payloads = _fetch_time_series_batch(symbols, "1week", api_key)
+    results: dict[str, list[WeeklyBar]] = {}
+    for symbol, payload in payloads.items():
+        try:
+            results[symbol] = _parse_weekly_bars(payload, symbol)
+        except MarketDataError as exc:
+            logger.warning("Skipping weekly batch payload for %s: %s", symbol, exc)
+    return results
 
 
 def fetch_sma(

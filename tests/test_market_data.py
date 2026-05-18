@@ -373,6 +373,141 @@ class TestRefreshAllPositions:
         assert daily_refresh.call_count == 2
         assert weekly_refresh.call_count == 1
 
+    def test_preloads_twelve_data_style_batches_before_refreshing_positions(self, mocker):
+        from datetime import timedelta
+
+        from app.alpha_vantage_client import DailyBar, WeeklyBar
+
+        class BatchProvider:
+            supports_batch_fetch = True
+
+            def __init__(self):
+                self.daily_batch_symbols = []
+                self.weekly_batch_symbols = []
+                self.single_daily_calls = []
+                self.single_weekly_calls = []
+
+            def fetch_daily_bars_batch(self, symbols):
+                self.daily_batch_symbols.append(list(symbols))
+                return {
+                    symbol: [
+                        DailyBar(
+                            date=date(2026, 4, 20) - timedelta(days=offset),
+                            close=100.0 + offset,
+                        )
+                        for offset in range(25)
+                    ]
+                    for symbol in symbols
+                }
+
+            def fetch_weekly_bars_batch(self, symbols):
+                self.weekly_batch_symbols.append(list(symbols))
+                return {
+                    symbol: [
+                        WeeklyBar(
+                            date=date(2026, 4, 17) - timedelta(weeks=offset),
+                            close=200.0 + offset,
+                        )
+                        for offset in range(25)
+                    ]
+                    for symbol in symbols
+                }
+
+            def fetch_daily_bars(self, symbol):
+                self.single_daily_calls.append(symbol)
+                raise AssertionError("daily batch preload should satisfy refresh")
+
+            def fetch_weekly_bars(self, symbol):
+                self.single_weekly_calls.append(symbol)
+                raise AssertionError("weekly batch preload should satisfy refresh")
+
+        provider = BatchProvider()
+        service = MarketDataService(provider)
+        positions = [
+            FakePosition(ticker="AAPL", investment_type="long-term"),
+            FakePosition(ticker="MSFT", investment_type="short-term"),
+        ]
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = positions
+
+        refreshed = service.refresh_all_positions(db, force=True)
+
+        assert refreshed == 2
+        assert provider.daily_batch_symbols == [["AAPL", "MSFT"]]
+        assert provider.weekly_batch_symbols == [["AAPL"]]
+        assert provider.single_daily_calls == []
+        assert provider.single_weekly_calls == []
+        assert positions[0].daily_close is not None
+        assert positions[0].weekly_close is not None
+        assert positions[1].daily_close is not None
+        assert positions[1].weekly_close is None
+
+    def test_preloads_batches_for_rule_cache_needs(self, mocker):
+        from app.alpha_vantage_client import DailyBar, WeeklyBar
+
+        class BatchProvider:
+            supports_batch_fetch = True
+
+            def __init__(self):
+                self.daily_batch_symbols = []
+                self.weekly_batch_symbols = []
+
+            def fetch_daily_bars_batch(self, symbols):
+                self.daily_batch_symbols.append(list(symbols))
+                return {
+                    symbol: [DailyBar(date=date(2026, 4, 20), close=100.0)]
+                    for symbol in symbols
+                }
+
+            def fetch_weekly_bars_batch(self, symbols):
+                self.weekly_batch_symbols.append(list(symbols))
+                return {
+                    symbol: [WeeklyBar(date=date(2026, 4, 17), close=200.0)]
+                    for symbol in symbols
+                }
+
+            def fetch_daily_bars(self, symbol):
+                raise AssertionError("rule cache should use daily batch preload")
+
+            def fetch_weekly_bars(self, symbol):
+                raise AssertionError("rule cache should use weekly batch preload")
+
+        provider = BatchProvider()
+        service = MarketDataService(provider)
+        positions = [
+            FakePosition(
+                ticker="AAPL",
+                investment_type="long-term",
+                daily_market_date=date(2026, 4, 20),
+                weekly_market_date=date(2026, 4, 17),
+                sector_benchmark_ticker="SPY",
+            ),
+            FakePosition(
+                ticker="MSFT",
+                investment_type="short-term",
+                daily_market_date=date(2026, 4, 20),
+            ),
+        ]
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = positions
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch("app.rule_config.get_required_indicators", return_value={("daily", 50), ("weekly", 20)})
+        mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=26)
+        mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=63)
+        indicator_refresh = mocker.patch.object(service, "refresh_indicator_cache", return_value=[])
+        weekly_cache_refresh = mocker.patch.object(service, "refresh_weekly_bar_cache", return_value=[])
+        daily_cache_refresh = mocker.patch.object(service, "refresh_daily_bar_cache", return_value=[])
+
+        refreshed = service.refresh_all_positions(db, force=False)
+
+        assert refreshed == 0
+        assert provider.daily_batch_symbols == [["AAPL", "MSFT", "SPY"]]
+        assert provider.weekly_batch_symbols == [["AAPL", "MSFT"]]
+        indicator_refresh.assert_called_once()
+        weekly_cache_refresh.assert_called_once()
+        daily_cache_refresh.assert_called_once()
+
     def test_deduplicates_api_calls_for_same_ticker(self, mocker):
         pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
         pos2 = FakePosition(ticker="AAPL", investment_type="long-term")

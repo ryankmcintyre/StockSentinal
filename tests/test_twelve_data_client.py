@@ -14,9 +14,11 @@ from app.twelve_data_client import (
     _get,
     fetch_atr,
     fetch_company_name,
+    fetch_daily_series_batch,
     fetch_ticker_matches,
     fetch_daily_series,
     fetch_sma,
+    fetch_weekly_series_batch,
     fetch_weekly_series,
 )
 
@@ -83,6 +85,68 @@ class TestFetchDailySeries:
             fetch_daily_series("IBM", "fake_key")
 
 
+class TestFetchDailySeriesBatch:
+    def test_parses_batch_bars_from_single_http_request(self, mocker):
+        fake_data = {
+            "AAPL": {
+                "meta": {"symbol": "AAPL"},
+                "values": [
+                    {"datetime": "2026-04-16", "close": "179.00"},
+                    {"datetime": "2026-04-17", "close": "181.50"},
+                ],
+            },
+            "MSFT": {
+                "meta": {"symbol": "MSFT"},
+                "values": [
+                    {"datetime": "2026-04-17", "close": "425.25"},
+                ],
+            },
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mock_get = mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        bars_by_symbol = fetch_daily_series_batch(
+            [" aapl ", "MSFT", "AAPL", "", "   "],
+            "fake_key",
+        )
+
+        assert mock_get.call_count == 1
+        assert mock_get.call_args.kwargs["params"]["symbol"] == "AAPL,MSFT"
+        assert mock_get.call_args.kwargs["params"]["interval"] == "1day"
+        assert bars_by_symbol["AAPL"] == [
+            DailyBar(date=date(2026, 4, 17), close=181.50),
+            DailyBar(date=date(2026, 4, 16), close=179.00),
+        ]
+        assert bars_by_symbol["MSFT"] == [
+            DailyBar(date=date(2026, 4, 17), close=425.25),
+        ]
+
+    def test_skips_symbol_level_errors(self, mocker):
+        fake_data = {
+            "AAPL": {
+                "meta": {"symbol": "AAPL"},
+                "values": [{"datetime": "2026-04-17", "close": "181.50"}],
+            },
+            "ZZZZ": {
+                "status": "error",
+                "code": 400,
+                "message": "Symbol not found: ZZZZ",
+            },
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        bars_by_symbol = fetch_daily_series_batch(["AAPL", "ZZZZ"], "fake_key")
+
+        assert set(bars_by_symbol) == {"AAPL"}
+
+
 class TestFetchWeeklySeries:
     def test_parses_bars(self, mocker):
         fake_data = {
@@ -130,6 +194,59 @@ class TestFetchWeeklySeries:
                 close=176.00,
                 volume=14000000.0,
             ),
+        ]
+
+
+class TestFetchWeeklySeriesBatch:
+    def test_parses_batch_bars(self, mocker):
+        fake_data = {
+            "IBM": {
+                "meta": {"symbol": "IBM"},
+                "values": [
+                    {
+                        "datetime": "2026-04-17",
+                        "open": "175.00",
+                        "high": "185.00",
+                        "low": "174.00",
+                        "close": "182.00",
+                        "volume": "15000000",
+                    },
+                ],
+            },
+            "AAPL": {
+                "meta": {"symbol": "AAPL"},
+                "values": [
+                    {
+                        "datetime": "2026-04-17",
+                        "open": "200.00",
+                        "high": "210.00",
+                        "low": "199.00",
+                        "close": "205.00",
+                        "volume": "25000000",
+                    },
+                ],
+            },
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mock_get = mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        bars_by_symbol = fetch_weekly_series_batch(["IBM", "AAPL"], "fake_key")
+
+        assert mock_get.call_count == 1
+        assert mock_get.call_args.kwargs["params"]["symbol"] == "IBM,AAPL"
+        assert mock_get.call_args.kwargs["params"]["interval"] == "1week"
+        assert bars_by_symbol["IBM"] == [
+            WeeklyBar(
+                date=date(2026, 4, 17),
+                open=175.00,
+                high=185.00,
+                low=174.00,
+                close=182.00,
+                volume=15000000.0,
+            )
         ]
 
 
