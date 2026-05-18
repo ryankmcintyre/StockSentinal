@@ -1,21 +1,28 @@
 {% extends "base.html" %}
 {% block title %}Stock Sentinel — Sell · Trim · Hold{% endblock %}
+{% block main_class %}main--full-bleed{% endblock %}
 {% block content %}
 <section class="splash">
+
     <div class="splash-hero">
         <p class="splash-eyebrow">Personal portfolio decision tool</p>
-        <h1 class="splash-headline">Know when to sell, trim, or hold.</h1>
+        <h1 class="splash-headline">Know when to sell,<br>trim, or hold.</h1>
         <p class="splash-sub">
             Stock Sentinel evaluates your holdings against a clear set of rules —
-            moving averages, gain thresholds, and more — and returns a prioritised
+            moving averages, gain thresholds, and more — and returns a prioritized
             <strong>Sell&nbsp;/ Trim&nbsp;/ Hold</strong> verdict for every position.
             No guesswork. No noise.
         </p>
-        <a href="/auth/login" class="btn btn-primary btn-large">Get started — Sign In</a>
+        <div class="splash-verdicts">
+            <span class="verdict verdict-sell">Sell</span>
+            <span class="verdict verdict-trim">Trim</span>
+            <span class="verdict verdict-hold">Hold</span>
+        </div>
     </div>
 
     <div class="splash-features">
         <div class="splash-feature">
+            <div class="splash-feature-icon">01</div>
             <h2 class="splash-feature-title">Track your positions</h2>
             <p class="splash-feature-body">
                 Manually enter your holdings — ticker, cost basis, purchase date,
@@ -24,6 +31,7 @@
             </p>
         </div>
         <div class="splash-feature">
+            <div class="splash-feature-icon">02</div>
             <h2 class="splash-feature-title">Rules-driven verdicts</h2>
             <p class="splash-feature-body">
                 Each position is evaluated against your configured rules every time
@@ -32,7 +40,8 @@
             </p>
         </div>
         <div class="splash-feature">
-            <h2 class="splash-feature-title">Prioritised recommendations</h2>
+            <div class="splash-feature-icon">03</div>
+            <h2 class="splash-feature-title">Prioritized recommendations</h2>
             <p class="splash-feature-body">
                 Your portfolio is sorted by urgency so you always know which
                 positions to act on first. Sell signals surface at the top;
@@ -45,5 +54,6 @@
         Stock Sentinel is a personal decision-support tool, not financial advice.
         Always do your own research before making investment decisions.
     </div>
+
 </section>
 {% endblock %}
