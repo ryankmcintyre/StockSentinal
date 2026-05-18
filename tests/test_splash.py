@@ -1,7 +1,6 @@
 """Tests for the splash page (GET /) and root route auth-branching."""
 
 from datetime import datetime
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,7 +8,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.database import get_authenticated_uow, get_uow
+from app.database import get_authenticated_uow, get_optional_uow, get_uow
 from app.main import app
 from app.models import Base, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
@@ -44,6 +43,29 @@ def engine_and_session():
 
 @pytest.fixture()
 def client(engine_and_session):
+    """Anonymous client — get_optional_uow yields None (not authenticated)."""
+    _, TestingSession = engine_and_session
+
+    def override_get_uow():
+        session = TestingSession()
+        try:
+            yield SqlAlchemyUnitOfWork(session)
+        finally:
+            session.close()
+
+    def override_get_optional_uow_anon():
+        yield None
+
+    app.dependency_overrides[get_uow] = override_get_uow
+    app.dependency_overrides[get_optional_uow] = override_get_optional_uow_anon
+    c = TestClient(app, follow_redirects=False)
+    yield c
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
+def auth_client(engine_and_session):
+    """Authenticated client — get_optional_uow yields a real scoped UoW."""
     _, TestingSession = engine_and_session
 
     def override_get_uow():
@@ -60,8 +82,16 @@ def client(engine_and_session):
         finally:
             session.close()
 
+    def override_get_optional_uow_auth():
+        session = TestingSession()
+        try:
+            yield SqlAlchemyUnitOfWork(session, user_id="test-user-id")
+        finally:
+            session.close()
+
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_authenticated_uow] = override_get_authenticated_uow
+    app.dependency_overrides[get_optional_uow] = override_get_optional_uow_auth
     c = TestClient(app, follow_redirects=False)
     yield c
     app.dependency_overrides.clear()
@@ -112,21 +142,9 @@ def test_splash_does_not_redirect_to_login(client):
 # Authenticated visitor tests
 # ---------------------------------------------------------------------------
 
-def test_authenticated_get_root_returns_portfolio(client, engine_and_session):
+def test_authenticated_get_root_returns_portfolio(auth_client):
     """Authenticated GET / must render the portfolio dashboard, not the splash."""
-    _, TestingSession = engine_and_session
-
-    def fake_get_user_id(_request):
-        return "test-user-id"
-
-    def fake_session_local():
-        return TestingSession()
-
-    with (
-        patch("app.main.get_current_user_id", side_effect=fake_get_user_id),
-        patch("app.main.SessionLocal", side_effect=fake_session_local),
-    ):
-        resp = client.get("/")
+    resp = auth_client.get("/")
 
     assert resp.status_code == 200
     # Portfolio page has the positions table / summary section, splash does not

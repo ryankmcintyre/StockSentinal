@@ -38,7 +38,7 @@ from app.config import (
     has_supabase_publishable_key,
     has_session_secret_key,
 )
-from app.database import SessionLocal, get_authenticated_uow, get_uow, init_db
+from app.database import SessionLocal, get_authenticated_uow, get_optional_uow, get_uow, init_db
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 from app.market_data.service import MarketDataService
@@ -520,18 +520,11 @@ def logout():
 
 
 @app.get("/")
-def index(request: Request):
+def index(request: Request, uow: UnitOfWork | None = Depends(get_optional_uow)):
     """Root: splash page for anonymous visitors, portfolio dashboard for authenticated users."""
-    user_id = get_current_user_id(request)
-    if user_id is None:
+    if uow is None:
         return templates.TemplateResponse(request, "splash.html", {"current_user": None})
-
-    session = SessionLocal()
-    uow = SqlAlchemyUnitOfWork(session, user_id=user_id)
-    try:
-        return _portfolio_response(request, uow)
-    finally:
-        session.close()
+    return _portfolio_response(request, uow)
 
 
 def _portfolio_response(request: Request, uow: UnitOfWork):

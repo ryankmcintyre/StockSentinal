@@ -116,6 +116,27 @@ def get_uow():
         session.close()
 
 
+def get_optional_uow(request: Request):
+    """Yield a user-scoped UnitOfWork for authenticated users, or None for anonymous users.
+
+    Used for routes that serve different content depending on auth state
+    (e.g. the root route that shows the splash page to anonymous visitors and
+    the portfolio dashboard to signed-in users).  Tests can override this
+    dependency to simulate either state without patching module-level names.
+    """
+    from app.auth import get_current_user_id
+
+    user_id = get_current_user_id(request)
+    if user_id is None:
+        yield None
+        return
+    session = SessionLocal()
+    uow = SqlAlchemyUnitOfWork(session, user_id=user_id)
+    try:
+        yield uow
+    finally:
+        session.close()
+
 
 def get_authenticated_uow(request: Request):
     """Yield a user-scoped UnitOfWork for authenticated routes.
