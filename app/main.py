@@ -38,7 +38,7 @@ from app.config import (
     has_supabase_publishable_key,
     has_session_secret_key,
 )
-from app.database import SessionLocal, get_authenticated_uow, get_uow, init_db
+from app.database import SessionLocal, get_authenticated_uow, get_optional_uow, get_uow, init_db
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 from app.market_data.service import MarketDataService
@@ -520,8 +520,15 @@ def logout():
 
 
 @app.get("/")
-def portfolio(request: Request, uow: UnitOfWork = Depends(get_authenticated_uow)):
-    """Dashboard: list all positions with verdicts, sorted by urgency."""
+def index(request: Request, uow: UnitOfWork | None = Depends(get_optional_uow)):
+    """Root: splash page for anonymous visitors, portfolio dashboard for authenticated users."""
+    if uow is None:
+        return templates.TemplateResponse(request, "splash.html", {"current_user": None})
+    return _portfolio_response(request, uow)
+
+
+def _portfolio_response(request: Request, uow: UnitOfWork):
+    """Build and return the portfolio dashboard template response."""
     user_id = _get_request_user_id(request, uow)
     current_user = _get_current_user(request, uow)
     _clear_stale_refresh_flags(uow)

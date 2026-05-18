@@ -9,7 +9,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.database import get_authenticated_uow, get_uow
+from app.database import get_authenticated_uow, get_optional_uow, get_uow
 from app.main import _market_service, app
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.unit_of_work import SqlAlchemyUnitOfWork, as_uow
@@ -56,8 +56,16 @@ def _setup_db():
         finally:
             session.close()
 
+    def override_get_optional_uow():
+        session = TestingSession()
+        try:
+            yield SqlAlchemyUnitOfWork(session, user_id="test-user-id")
+        finally:
+            session.close()
+
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_authenticated_uow] = override_get_authenticated_uow
+    app.dependency_overrides[get_optional_uow] = override_get_optional_uow
     yield TestingSession
     app.dependency_overrides.clear()
     engine.dispose()

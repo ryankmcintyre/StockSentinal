@@ -822,3 +822,86 @@ h3 {
     border-color: #f1de9c;
     color: #7c5d00;
 }
+
+/* --- Splash / landing page --- */
+
+.splash {
+    max-width: 800px;
+    margin: 3rem auto 4rem;
+    padding: 0 1.5rem;
+}
+
+.splash-hero {
+    text-align: center;
+    padding: 2.5rem 1rem 3rem;
+}
+
+.splash-eyebrow {
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: #1a73e8;
+    margin-bottom: 0.75rem;
+}
+
+.splash-headline {
+    font-size: 2.6rem;
+    font-weight: 800;
+    letter-spacing: -0.04em;
+    color: #0f172a;
+    line-height: 1.1;
+    margin-bottom: 1.1rem;
+}
+
+.splash-sub {
+    max-width: 36rem;
+    margin: 0 auto 2rem;
+    color: #52606d;
+    font-size: 1.05rem;
+    line-height: 1.65;
+}
+
+.btn-large {
+    padding: 0.8rem 2rem;
+    font-size: 1rem;
+}
+
+.splash-features {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1.5rem;
+    margin-top: 1rem;
+    padding-top: 2.5rem;
+    border-top: 1px solid #e8ecf0;
+}
+
+.splash-feature {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 1.4rem 1.25rem;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.splash-feature-title {
+    font-size: 1rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 0.5rem;
+}
+
+.splash-feature-body {
+    font-size: 0.9rem;
+    color: #52606d;
+    line-height: 1.6;
+}
+
+.splash-disclaimer {
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid #e8ecf0;
+    text-align: center;
+    font-size: 0.82rem;
+    color: #8898aa;
+}
