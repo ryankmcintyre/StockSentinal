@@ -31,7 +31,13 @@
 
 {% if api_configured and positions %}
 <section class="refresh-controls">
-    <form method="post" action="/refresh" class="inline-form" data-api-submit="true">
+    <form
+        method="post"
+        action="/refresh"
+        class="inline-form"
+        data-api-submit="true"
+        data-confirm-message="Refreshing all market data may take several minutes if you have many positions. Continue?"
+    >
         <button
             type="submit"
             class="btn btn-small"

@@ -4,6 +4,7 @@ import pytest
 
 from app.config import (
     get_alpha_vantage_api_key,
+    get_alpha_vantage_min_interval_seconds,
     get_database_url,
     get_log_level,
     get_market_data_api_key,
@@ -12,6 +13,7 @@ from app.config import (
     get_market_data_provider_display_name,
     get_supabase_publishable_key,
     get_twelve_data_api_key,
+    get_twelve_data_min_interval_seconds,
     has_supabase_publishable_key,
     is_postgres,
     require_alpha_vantage_api_key,
@@ -141,6 +143,30 @@ class TestRequireTwelveDataApiKey:
         monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
         with pytest.raises(RuntimeError, match="TWELVE_DATA_API_KEY"):
             require_twelve_data_api_key()
+
+
+class TestMarketDataRateLimitIntervals:
+    def test_alpha_vantage_interval_defaults_to_free_tier_safe_value(self, monkeypatch):
+        monkeypatch.delenv("ALPHA_VANTAGE_MIN_INTERVAL_SECONDS", raising=False)
+        assert get_alpha_vantage_min_interval_seconds() == 12.0
+
+    def test_alpha_vantage_interval_can_be_configured(self, monkeypatch):
+        monkeypatch.setenv("ALPHA_VANTAGE_MIN_INTERVAL_SECONDS", "1.5")
+        assert get_alpha_vantage_min_interval_seconds() == 1.5
+
+    def test_twelve_data_interval_defaults_to_free_tier_safe_value(self, monkeypatch):
+        monkeypatch.delenv("TWELVE_DATA_MIN_INTERVAL_SECONDS", raising=False)
+        assert get_twelve_data_min_interval_seconds() == 8.0
+
+    def test_twelve_data_interval_can_be_configured(self, monkeypatch):
+        monkeypatch.setenv("TWELVE_DATA_MIN_INTERVAL_SECONDS", "0.25")
+        assert get_twelve_data_min_interval_seconds() == 0.25
+
+    def test_invalid_interval_falls_back_to_default(self, monkeypatch):
+        monkeypatch.setenv("TWELVE_DATA_MIN_INTERVAL_SECONDS", "-1")
+        assert get_twelve_data_min_interval_seconds() == 8.0
+        monkeypatch.setenv("ALPHA_VANTAGE_MIN_INTERVAL_SECONDS", "fast")
+        assert get_alpha_vantage_min_interval_seconds() == 12.0
 
 
 class TestGetMarketDataProvider:

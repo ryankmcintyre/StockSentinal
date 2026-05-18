@@ -82,6 +82,28 @@ def require_twelve_data_api_key() -> str:
     return key
 
 
+def _get_float_env_var(name: str, default: float) -> float:
+    """Return a positive float env var value, or *default* if unset/invalid."""
+    value = _get_env_var(name)
+    if value is None:
+        return default
+    try:
+        parsed = float(value)
+    except ValueError:
+        return default
+    return parsed if parsed >= 0 else default
+
+
+def get_alpha_vantage_min_interval_seconds() -> float:
+    """Return the Alpha Vantage per-call rate-limit interval."""
+    return _get_float_env_var("ALPHA_VANTAGE_MIN_INTERVAL_SECONDS", 12.0)
+
+
+def get_twelve_data_min_interval_seconds() -> float:
+    """Return the Twelve Data per-call rate-limit interval."""
+    return _get_float_env_var("TWELVE_DATA_MIN_INTERVAL_SECONDS", 8.0)
+
+
 def get_market_data_provider() -> str:
     """Return the configured market data provider name.
 

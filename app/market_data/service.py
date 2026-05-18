@@ -69,14 +69,44 @@ class _FetchCache:
         self._atr: dict[tuple[str, str, int], list[ATRPoint]] = {}
 
     def get_daily_bars(self, ticker: str) -> list[DailyBar]:
-        if ticker not in self._daily_bars:
-            self._daily_bars[ticker] = self._provider.fetch_daily_bars(ticker)
-        return self._daily_bars[ticker]
+        key = ticker.upper()
+        if key not in self._daily_bars:
+            self._daily_bars[key] = self._provider.fetch_daily_bars(ticker)
+        return self._daily_bars[key]
+
+    def preload_daily_bars(self, tickers: set[str]) -> None:
+        self._preload_bars(tickers, "fetch_daily_bars_batch", self._daily_bars)
 
     def get_weekly_bars(self, ticker: str) -> list[WeeklyBar]:
-        if ticker not in self._weekly_bars:
-            self._weekly_bars[ticker] = self._provider.fetch_weekly_bars(ticker)
-        return self._weekly_bars[ticker]
+        key = ticker.upper()
+        if key not in self._weekly_bars:
+            self._weekly_bars[key] = self._provider.fetch_weekly_bars(ticker)
+        return self._weekly_bars[key]
+
+    def preload_weekly_bars(self, tickers: set[str]) -> None:
+        self._preload_bars(tickers, "fetch_weekly_bars_batch", self._weekly_bars)
+
+    def _preload_bars(
+        self,
+        tickers: set[str],
+        method_name: str,
+        target_cache: dict[str, list[DailyBar] | list[WeeklyBar]],
+    ) -> None:
+        missing = sorted(ticker for ticker in tickers if ticker.upper() not in target_cache)
+        if not missing:
+            return
+        if not getattr(type(self._provider), "supports_batch_fetch", False):
+            return
+        batch_method = getattr(self._provider, method_name, None)
+        if not callable(batch_method):
+            return
+        try:
+            fetched = batch_method(missing)
+        except Exception:
+            logger.exception("Batch market data preload failed for %s", method_name)
+            return
+        for ticker, bars in fetched.items():
+            target_cache[ticker.upper()] = bars
 
     def get_atr(self, ticker: str, interval: str, time_period: int) -> list[ATRPoint]:
         key = (ticker, interval, time_period)
@@ -647,7 +677,10 @@ class MarketDataService:
         for pos in positions:
             ticker_groups.setdefault(pos.ticker, []).append(pos)
 
-        refreshed = 0
+        refresh_plan = {}
+        daily_batch_tickers: set[str] = set()
+        weekly_batch_tickers: set[str] = set()
+
         for ticker, group in ticker_groups.items():
             daily_needs = {id(p): force or daily_data_is_stale(p) for p in group}
             weekly_needs = {
@@ -657,15 +690,40 @@ class MarketDataService:
             group_needs_daily = any(daily_needs.values())
             group_needs_weekly = any(weekly_needs.values())
 
-            if not group_needs_daily and not group_needs_weekly:
-                continue
-
             representative = group[0]
             if group_needs_weekly:
                 for p in group:
                     if self._needs_weekly(p):
                         representative = p
                         break
+
+            refresh_plan[ticker] = {
+                "daily_needs": daily_needs,
+                "weekly_needs": weekly_needs,
+                "group_needs_daily": group_needs_daily,
+                "group_needs_weekly": group_needs_weekly,
+                "representative": representative,
+            }
+            if group_needs_daily:
+                daily_batch_tickers.add(ticker)
+            if group_needs_weekly:
+                weekly_batch_tickers.add(ticker)
+
+        cache.preload_daily_bars(daily_batch_tickers)
+        cache.preload_weekly_bars(weekly_batch_tickers)
+
+        refreshed = 0
+        for ticker, group in ticker_groups.items():
+            plan = refresh_plan[ticker]
+            daily_needs = plan["daily_needs"]
+            weekly_needs = plan["weekly_needs"]
+            group_needs_daily = plan["group_needs_daily"]
+            group_needs_weekly = plan["group_needs_weekly"]
+
+            if not group_needs_daily and not group_needs_weekly:
+                continue
+
+            representative = plan["representative"]
 
             errors: list[str] = []
 

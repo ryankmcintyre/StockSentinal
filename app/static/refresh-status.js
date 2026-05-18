@@ -11,7 +11,12 @@
     function wireSubmitCues() {
         var forms = document.querySelectorAll("form[data-api-submit='true']");
         forms.forEach(function (form) {
-            form.addEventListener("submit", function () {
+            form.addEventListener("submit", function (event) {
+                var confirmMessage = form.dataset.confirmMessage;
+                if (confirmMessage && !window.confirm(confirmMessage)) {
+                    event.preventDefault();
+                    return;
+                }
                 markFormBusy(form);
             });
         });
