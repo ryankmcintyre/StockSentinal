@@ -102,6 +102,13 @@ main {
     padding: 0 1.5rem;
 }
 
+/* Full-bleed variant — used by splash and other edge-to-edge layouts */
+main.main--full-bleed {
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+}
+
 h1,
 h2,
 h3 {
@@ -826,82 +833,108 @@ h3 {
 /* --- Splash / landing page --- */
 
 .splash {
-    max-width: 800px;
-    margin: 3rem auto 4rem;
-    padding: 0 1.5rem;
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
 }
 
+/* Hero — dark full-width band */
 .splash-hero {
+    background: linear-gradient(160deg, #0f172a 0%, #1e3a5f 100%);
     text-align: center;
-    padding: 2.5rem 1rem 3rem;
+    padding: 5rem 1.5rem 4.5rem;
 }
 
 .splash-eyebrow {
-    font-size: 0.78rem;
+    font-size: 0.75rem;
     font-weight: 700;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.12em;
     text-transform: uppercase;
-    color: #1a73e8;
-    margin-bottom: 0.75rem;
+    color: #7dd3fc;
+    margin-bottom: 1rem;
 }
 
 .splash-headline {
-    font-size: 2.6rem;
+    font-size: 3rem;
     font-weight: 800;
     letter-spacing: -0.04em;
-    color: #0f172a;
-    line-height: 1.1;
-    margin-bottom: 1.1rem;
+    color: #f0f6ff;
+    line-height: 1.08;
+    margin-bottom: 1.25rem;
 }
 
 .splash-sub {
-    max-width: 36rem;
-    margin: 0 auto 2rem;
-    color: #52606d;
+    max-width: 34rem;
+    margin: 0 auto 2.25rem;
+    color: #94a3b8;
     font-size: 1.05rem;
-    line-height: 1.65;
+    line-height: 1.7;
 }
 
-.btn-large {
-    padding: 0.8rem 2rem;
-    font-size: 1rem;
+.splash-sub strong {
+    color: #cbd5e1;
 }
 
+/* Verdict badges shown in hero */
+.splash-verdicts {
+    display: flex;
+    justify-content: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.splash-verdicts .verdict {
+    font-size: 0.85rem;
+    padding: 0.4rem 1.1rem;
+    letter-spacing: 0.06em;
+}
+
+/* Features grid */
 .splash-features {
+    max-width: 1000px;
+    margin: 0 auto;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: 1.5rem;
-    margin-top: 1rem;
-    padding-top: 2.5rem;
-    border-top: 1px solid #e8ecf0;
+    padding: 3.5rem 1.5rem;
 }
 
 .splash-feature {
     background: #fff;
     border: 1px solid #e0e0e0;
+    border-top: 3px solid #1a73e8;
     border-radius: 10px;
-    padding: 1.4rem 1.25rem;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    padding: 1.75rem 1.5rem 1.5rem;
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.06);
+}
+
+.splash-feature-icon {
+    font-size: 0.7rem;
+    font-weight: 800;
+    letter-spacing: 0.1em;
+    color: #1a73e8;
+    text-transform: uppercase;
+    margin-bottom: 0.65rem;
 }
 
 .splash-feature-title {
-    font-size: 1rem;
+    font-size: 1.05rem;
     font-weight: 700;
     color: #0f172a;
-    margin-bottom: 0.5rem;
+    margin-bottom: 0.6rem;
 }
 
 .splash-feature-body {
     font-size: 0.9rem;
     color: #52606d;
-    line-height: 1.6;
+    line-height: 1.65;
 }
 
 .splash-disclaimer {
-    margin-top: 3rem;
-    padding-top: 1.5rem;
+    background: #f8fafc;
     border-top: 1px solid #e8ecf0;
     text-align: center;
+    padding: 1.25rem 1.5rem;
     font-size: 0.82rem;
     color: #8898aa;
 }
