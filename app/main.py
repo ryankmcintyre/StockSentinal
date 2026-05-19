@@ -165,7 +165,7 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
 
 
 def _url_safe_edit_position_path(position_id: int) -> str:
-    position_id_segment = quote(str(int(position_id)), safe="")
+    position_id_segment = quote(str(position_id), safe="")
     return f"/edit/{position_id_segment}"
 
 

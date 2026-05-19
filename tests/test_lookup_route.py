@@ -91,10 +91,6 @@ class TestLookupRoute:
         assert resp.status_code == 303
         assert resp.headers["location"] == "/auth/login"
 
-        assert app.dependency_overrides[get_authenticated_uow] == (
-            authenticated_uow_override
-        )
-
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         mock_fetch_matches = mocker.patch.object(
             _market_service,
@@ -114,6 +110,9 @@ class TestLookupRoute:
         assert restored_resp.json()["company_name"] == "Apple Inc"
         mock_fetch_matches.assert_called_once_with("AAPL")
         mock_fetch_price.assert_called_once_with("AAPL")
+        assert app.dependency_overrides[get_authenticated_uow] == (
+            authenticated_uow_override
+        )
 
     def test_returns_matches_and_price(self, authenticated_client, mocker):
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
