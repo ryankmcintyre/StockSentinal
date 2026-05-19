@@ -2,7 +2,6 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import urlencode
 
 from dotenv import load_dotenv
 import httpx
@@ -150,6 +149,10 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "notion": "Notion",
 }
 REFRESH_STALE_TIMEOUT_MINUTES = 5
+FLASH_MESSAGES = {
+    "refresh_limit": "You've used 5 of 5 refreshes today. Your limit resets at midnight UTC.",
+    "admin_updated": "Admin user settings updated.",
+}
 
 
 def _get_request_user_id(request: Request, uow: UnitOfWork | None = None) -> str | None:
@@ -175,16 +178,16 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
 
 
 def _flash_message(request: Request) -> str | None:
-    message = request.query_params.get("flash")
-    return message.strip() if message else None
+    code = request.query_params.get("flash")
+    return FLASH_MESSAGES.get(code) if code else None
 
 
-def _redirect_with_flash(message: str) -> RedirectResponse:
-    return RedirectResponse(url=f"/?{urlencode({'flash': message})}", status_code=303)
+def _redirect_with_refresh_limit_flash() -> RedirectResponse:
+    return RedirectResponse(url="/?flash=refresh_limit", status_code=303)
 
 
-def _admin_redirect_with_flash(message: str) -> RedirectResponse:
-    return RedirectResponse(url=f"/admin?{urlencode({'flash': message})}", status_code=303)
+def _admin_redirect_with_flash() -> RedirectResponse:
+    return RedirectResponse(url="/admin?flash=admin_updated", status_code=303)
 
 
 def _url_safe_edit_position_path(position_id: int) -> str:
@@ -783,7 +786,7 @@ def admin_update_tier(
             "after": tier,
         },
     )
-    return _admin_redirect_with_flash(f"Updated tier for {target.email or target.id} to {tier}.")
+    return _admin_redirect_with_flash()
 
 
 @app.post("/admin/users/{user_id}/admin")
@@ -814,9 +817,7 @@ def admin_update_admin_flag(
             "after": is_admin,
         },
     )
-    return _admin_redirect_with_flash(
-        f"Updated admin access for {target.email or target.id}."
-    )
+    return _admin_redirect_with_flash()
 
 
 @app.get("/api/lookup/{ticker}")
@@ -1182,9 +1183,9 @@ def refresh_all(
         try:
             check_and_consume_refresh(current_user)
             uow.commit()
-        except TierLimitExceeded as exc:
+        except TierLimitExceeded:
             uow.rollback()
-            return _redirect_with_flash(exc.message)
+            return _redirect_with_refresh_limit_flash()
         _mark_positions_refresh_state(uow, position_ids, in_progress=True)
         background_tasks.add_task(_refresh_all_positions_task, position_ids, uow.user_id)
     return RedirectResponse(url="/", status_code=303)
@@ -1210,9 +1211,9 @@ def refresh_single(
         try:
             check_and_consume_refresh(current_user)
             uow.commit()
-        except TierLimitExceeded as exc:
+        except TierLimitExceeded:
             uow.rollback()
-            return _redirect_with_flash(exc.message)
+            return _redirect_with_refresh_limit_flash()
         _mark_positions_refresh_state(uow, [position_id], in_progress=True)
         try:
             _market_service.refresh_position(pos, uow.session)
