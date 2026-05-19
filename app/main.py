@@ -1,5 +1,5 @@
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -231,11 +231,8 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
 
 def _clear_all_stale_refresh_flags() -> int:
     """Reset stale refresh flags across all users during application startup."""
-    session = SessionLocal()
-    try:
+    with closing(SessionLocal()) as session:
         bind = session.get_bind()
-    finally:
-        session.close()
 
     cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
     with bind.begin() as conn:

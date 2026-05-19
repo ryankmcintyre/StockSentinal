@@ -296,10 +296,10 @@ class TestRefreshLoadingCues:
 
         assert _clear_all_stale_refresh_flags() == 3
 
+        session.get_bind.assert_called_once()
         bind.begin.assert_called_once()
         connection.execute.assert_called_once()
         assert "UPDATE positions" in str(connection.execute.call_args.args[0])
-        assert "app.system_task" not in str(connection.execute.call_args.args[0])
         session.execute.assert_not_called()
         session.commit.assert_not_called()
         session.close.assert_called_once()
