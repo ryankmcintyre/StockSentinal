@@ -59,7 +59,8 @@ def _setup_db(monkeypatch):
 
     monkeypatch.setattr("app.database.engine", engine)
     monkeypatch.setattr("app.database.SessionLocal", TestingSession)
-    # The app lifespan reads SessionLocal imported into app.main directly.
+    # The app lifespan reads database objects imported into app.main directly.
+    monkeypatch.setattr("app.main.engine", engine)
     monkeypatch.setattr("app.main.SessionLocal", TestingSession)
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_authenticated_uow] = override_get_authenticated_uow
