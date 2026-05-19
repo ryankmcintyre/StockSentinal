@@ -96,12 +96,12 @@ class TestLookupRoute:
         )
 
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
-        mocker.patch.object(
+        mock_fetch_matches = mocker.patch.object(
             _market_service,
             "fetch_ticker_matches",
             return_value=[SymbolSearchMatch(symbol="AAPL", name="Apple Inc")],
         )
-        mocker.patch.object(
+        mock_fetch_price = mocker.patch.object(
             _market_service,
             "fetch_daily_series",
             return_value=[DailyBar(date=date(2026, 4, 17), close=182.45)],
@@ -111,6 +111,9 @@ class TestLookupRoute:
             restored_resp = client.get("/api/lookup/AAPL")
 
         assert restored_resp.status_code == 200
+        assert restored_resp.json()["company_name"] == "Apple Inc"
+        mock_fetch_matches.assert_called_once_with("AAPL")
+        mock_fetch_price.assert_called_once_with("AAPL")
 
     def test_returns_matches_and_price(self, authenticated_client, mocker):
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
