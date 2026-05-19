@@ -708,9 +708,11 @@ def lookup_ticker(
     ticker: str,
     _authenticated_uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
-    """Look up ticker matches and the latest price via the configured provider."""
-    # Dependency injection of _authenticated_uow enforces authentication before
-    # allowing access to this quota-consuming endpoint.
+    """Look up ticker matches and the latest price via the configured provider.
+
+    Dependency injection of ``_authenticated_uow`` enforces authentication before
+    allowing access to this quota-consuming endpoint.
+    """
     api_key = get_market_data_api_key()
     if not api_key:
         return JSONResponse(
