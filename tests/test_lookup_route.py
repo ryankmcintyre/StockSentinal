@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
@@ -12,7 +12,7 @@ from app.alpha_vantage_client import DailyBar, SymbolSearchMatch
 from app.database import get_authenticated_uow, get_uow
 from app.main import _market_service, app
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
-from app.models import Base, Position, StrategyRuleConfig, User
+from app.models import Base, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
 
 
@@ -30,16 +30,6 @@ def _setup_db(monkeypatch):
     )
     TestingSession = sessionmaker(bind=engine)
     Base.metadata.create_all(bind=engine)
-
-    @event.listens_for(TestingSession.class_, "before_flush")
-    def _assign_test_user_id(session, _flush_context, _instances):
-        for obj in session.new:
-            if isinstance(obj, User) and not obj.id:
-                obj.id = TEST_USER_ID
-            if isinstance(obj, Position) and obj.user_id is None:
-                obj.user_id = TEST_USER_ID
-            if isinstance(obj, StrategyRuleConfig) and obj.user_id is None:
-                obj.user_id = TEST_USER_ID
 
     db = TestingSession()
     db.add(
@@ -67,8 +57,10 @@ def _setup_db(monkeypatch):
         finally:
             session.close()
 
+    monkeypatch.setattr("app.database.engine", engine)
+    monkeypatch.setattr("app.database.SessionLocal", TestingSession)
+    # The app lifespan reads SessionLocal imported into app.main directly.
     monkeypatch.setattr("app.main.SessionLocal", TestingSession)
-    monkeypatch.setattr("app.main.init_db", lambda: None)
     app.dependency_overrides[get_uow] = override_get_uow
     app.dependency_overrides[get_authenticated_uow] = override_get_authenticated_uow
     yield
