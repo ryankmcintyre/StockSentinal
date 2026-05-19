@@ -258,7 +258,7 @@ def _clear_all_stale_refresh_flags() -> int:
             },
         )
         session.commit()
-        return max(result.rowcount or 0, 0)
+        return result.rowcount or 0
     except Exception:
         session.rollback()
         raise
