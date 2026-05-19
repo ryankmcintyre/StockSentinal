@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
 
 load_dotenv()
 
@@ -95,13 +96,9 @@ _market_service = MarketDataService(_provider)
 async def lifespan(app: FastAPI):
     logger.info("Starting Stock Sentinel — initializing database")
     init_db()
-    uow = SqlAlchemyUnitOfWork(SessionLocal())
-    try:
-        cleared = _clear_stale_refresh_flags(uow)
-        if cleared:
-            logger.info("Cleared %d stale refresh-in-progress flags", cleared)
-    finally:
-        uow.session.close()
+    cleared = _clear_all_stale_refresh_flags()
+    if cleared:
+        logger.info("Cleared %d stale refresh-in-progress flags", cleared)
     logger.info("Database initialized, application ready")
     yield
 
@@ -143,6 +140,7 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "notion": "Notion",
 }
 REFRESH_STALE_TIMEOUT_MINUTES = 5
+STALE_REFRESH_SYSTEM_TASK = "clear_stale_refresh_flags"
 
 
 def _get_request_user_id(request: Request, uow: UnitOfWork | None = None) -> str | None:
@@ -230,6 +228,42 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
         pos.refresh_started_at = None
     uow.commit()
     return len(stale_positions)
+
+
+def _clear_all_stale_refresh_flags() -> int:
+    """Reset stale refresh flags across all users during application startup."""
+    session = SessionLocal()
+    try:
+        cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+        if session.get_bind().dialect.name == "postgresql":
+            session.execute(
+                text("SELECT set_config('app.system_task', :task_name, true)"),
+                {"task_name": STALE_REFRESH_SYSTEM_TASK},
+            )
+        result = session.execute(
+            text(
+                """
+                UPDATE positions
+                SET refresh_in_progress = :not_in_progress,
+                    refresh_started_at = NULL
+                WHERE refresh_in_progress = :in_progress
+                  AND refresh_started_at IS NOT NULL
+                  AND refresh_started_at < :cutoff
+                """
+            ),
+            {
+                "not_in_progress": False,
+                "in_progress": True,
+                "cutoff": cutoff,
+            },
+        )
+        session.commit()
+        return max(result.rowcount or 0, 0)
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
 
 
 def _clear_position_market_data(position: Position) -> None:

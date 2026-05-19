@@ -205,6 +205,111 @@ class TestRefreshLoadingCues:
         finally:
             verify_db.close()
 
+    def test_startup_stale_cleanup_clears_positions_for_all_users(
+        self, _setup_db, mocker
+    ):
+        from app.main import _clear_all_stale_refresh_flags
+
+        db = _setup_db()
+        try:
+            db.add_all(
+                [
+                    User(
+                        id="alice-user-id",
+                        email="alice@example.com",
+                        display_name="Alice",
+                        created_at=datetime.now(),
+                    ),
+                    User(
+                        id="bob-user-id",
+                        email="bob@example.com",
+                        display_name="Bob",
+                        created_at=datetime.now(),
+                    ),
+                    Position(
+                        ticker="AAPL",
+                        company_name="Apple Inc.",
+                        cost_basis=100.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=115.0,
+                        user_id="alice-user-id",
+                        refresh_in_progress=True,
+                        refresh_started_at=datetime.now() - timedelta(minutes=6),
+                    ),
+                    Position(
+                        ticker="MSFT",
+                        company_name="Microsoft Corp.",
+                        cost_basis=200.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=215.0,
+                        user_id="bob-user-id",
+                        refresh_in_progress=True,
+                        refresh_started_at=datetime.now() - timedelta(minutes=6),
+                    ),
+                    Position(
+                        ticker="NVDA",
+                        company_name="NVIDIA Corp.",
+                        cost_basis=300.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=315.0,
+                        user_id="test-user-id",
+                        refresh_in_progress=True,
+                        refresh_started_at=datetime.now(),
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        mocker.patch("app.main.SessionLocal", _setup_db)
+
+        assert _clear_all_stale_refresh_flags() == 2
+
+        verify_db = _setup_db()
+        try:
+            positions = {pos.ticker: pos for pos in verify_db.query(Position).all()}
+            assert positions["AAPL"].refresh_in_progress is False
+            assert positions["AAPL"].refresh_started_at is None
+            assert positions["MSFT"].refresh_in_progress is False
+            assert positions["MSFT"].refresh_started_at is None
+            assert positions["NVDA"].refresh_in_progress is True
+            assert positions["NVDA"].refresh_started_at is not None
+        finally:
+            verify_db.close()
+
+    def test_startup_stale_cleanup_sets_system_task_for_postgresql(
+        self, mocker
+    ):
+        from app.main import STALE_REFRESH_SYSTEM_TASK, _clear_all_stale_refresh_flags
+
+        executed_sql = []
+        session = mocker.Mock()
+        bind = mocker.Mock()
+        bind.dialect.name = "postgresql"
+        session.get_bind.return_value = bind
+        session.execute.side_effect = [
+            mocker.Mock(rowcount=None),
+            mocker.Mock(rowcount=3),
+        ]
+        mocker.patch("app.main.SessionLocal", return_value=session)
+
+        assert _clear_all_stale_refresh_flags() == 3
+
+        for call in session.execute.call_args_list:
+            executed_sql.append(str(call.args[0]))
+        assert "set_config('app.system_task'" in executed_sql[0]
+        assert "UPDATE positions" in executed_sql[1]
+        assert session.execute.call_args_list[0].args[1] == {
+            "task_name": STALE_REFRESH_SYSTEM_TASK
+        }
+        session.commit.assert_called_once()
+        session.rollback.assert_not_called()
+        session.close.assert_called_once()
+
     def test_single_refresh_route_noops_when_already_in_progress(
         self, client, _setup_db, mocker
     ):
