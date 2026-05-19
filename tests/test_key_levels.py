@@ -88,6 +88,42 @@ def _seed_position(SessionMaker, **overrides) -> int:
         db.close()
 
 
+def _seed_key_level_with_user(
+    session_maker,
+    user_id: str,
+    is_active: bool = True,
+) -> tuple[int, int]:
+    """Create a position and key level for a user.
+
+    Returns ``(position_id, key_level_id)``.
+    """
+    db = session_maker()
+    try:
+        db.merge(User(id=user_id, email=f"{user_id}@example.com"))
+        db.flush()
+        pos = Position(
+            ticker="AAPL",
+            company_name="Apple Inc.",
+            cost_basis=100.0,
+            initial_purchase_date=date(2024, 1, 1),
+            investment_type="long-term",
+            current_price=150.0,
+            user_id=user_id,
+        )
+        db.add(pos)
+        db.commit()
+        kl = PositionKeyLevel(
+            position_id=pos.id,
+            level_price=100.0,
+            is_active=is_active,
+        )
+        db.add(kl)
+        db.commit()
+        return pos.id, kl.id
+    finally:
+        db.close()
+
+
 class TestKeyLevelRoutes:
     def test_add_key_level(self, _setup_db, client):
         pos_id = _seed_position(_setup_db)
@@ -195,6 +231,103 @@ class TestKeyLevelRoutes:
             assert kl.is_active is True
         finally:
             db.close()
+
+    def test_delete_key_level_for_other_user_is_noop(self, _setup_db, client):
+        pos_id, kl_id = _seed_key_level_with_user(_setup_db, "alice-user-id")
+
+        resp = client.post(
+            f"/edit/{pos_id}/key-levels/{kl_id}/delete",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        db = _setup_db()
+        try:
+            kl = (
+                db.query(PositionKeyLevel)
+                .join(Position)
+                .filter(PositionKeyLevel.id == kl_id)
+                .first()
+            )
+            assert kl is not None
+            assert kl.position.user_id == "alice-user-id"
+        finally:
+            db.close()
+
+    def test_toggle_key_level_for_other_user_is_noop(self, _setup_db, client):
+        pos_id, kl_id = _seed_key_level_with_user(
+            _setup_db,
+            "alice-user-id",
+            is_active=True,
+        )
+
+        resp = client.post(
+            f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        db = _setup_db()
+        try:
+            kl = (
+                db.query(PositionKeyLevel)
+                .join(Position)
+                .filter(PositionKeyLevel.id == kl_id)
+                .first()
+            )
+            assert kl is not None
+            assert kl.position.user_id == "alice-user-id"
+            assert kl.is_active is True
+        finally:
+            db.close()
+
+    def test_delete_key_level_requires_authentication(self, _setup_db, client):
+        pos_id = _seed_position(_setup_db)
+        db = _setup_db()
+        try:
+            kl = PositionKeyLevel(position_id=pos_id, level_price=100.0)
+            db.add(kl)
+            db.commit()
+            kl_id = kl.id
+        finally:
+            db.close()
+
+        original_override = app.dependency_overrides.pop(get_authenticated_uow, None)
+        try:
+            resp = client.post(
+                f"/edit/{pos_id}/key-levels/{kl_id}/delete",
+                follow_redirects=False,
+            )
+        finally:
+            if original_override is not None:
+                app.dependency_overrides[get_authenticated_uow] = original_override
+
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+    def test_toggle_key_level_requires_authentication(self, _setup_db, client):
+        pos_id = _seed_position(_setup_db)
+        db = _setup_db()
+        try:
+            kl = PositionKeyLevel(position_id=pos_id, level_price=100.0)
+            db.add(kl)
+            db.commit()
+            kl_id = kl.id
+        finally:
+            db.close()
+
+        original_override = app.dependency_overrides.pop(get_authenticated_uow, None)
+        try:
+            resp = client.post(
+                f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+                follow_redirects=False,
+            )
+        finally:
+            if original_override is not None:
+                app.dependency_overrides[get_authenticated_uow] = original_override
+
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
 
     def test_delete_position_cascades_to_key_levels(self, _setup_db, client):
         pos_id = _seed_position(_setup_db)
