@@ -75,7 +75,7 @@ def authenticated_client():
 
 
 class TestLookupRoute:
-    def test_anonymous_requests_redirect_to_login(self, mocker):
+    def test_anonymous_requests_redirect_and_auth_restoration(self, mocker):
         authenticated_uow_override = app.dependency_overrides.pop(
             get_authenticated_uow, None
         )
@@ -91,6 +91,8 @@ class TestLookupRoute:
         assert resp.status_code == 303
         assert resp.headers["location"] == "/auth/login"
 
+        # Verify the dependency override restored by the finally block still
+        # allows authenticated lookup behavior after the anonymous request.
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         mock_fetch_matches = mocker.patch.object(
             _market_service,

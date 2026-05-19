@@ -145,7 +145,7 @@ class SqlAlchemyKeyLevelRepository:
                 "Blocked key-level lookup without user context",
                 extra={"position_id": position_id, "level_id": level_id},
             )
-            raise ValueError("Key level lookup requires user authentication")
+            raise ValueError("Cannot lookup key level without user context")
         query = (
             self._session.query(PositionKeyLevel)
             .filter(PositionKeyLevel.id == level_id)
