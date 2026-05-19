@@ -88,6 +88,33 @@ def _seed_position(SessionMaker, **overrides) -> int:
         db.close()
 
 
+def _seed_key_level_for_user(SessionMaker, user_id: str, is_active: bool = True) -> tuple[int, int]:
+    db = SessionMaker()
+    try:
+        db.add(User(id=user_id, email=f"{user_id}@example.com"))
+        pos = Position(
+            ticker="AAPL",
+            company_name="Apple Inc.",
+            cost_basis=100.0,
+            initial_purchase_date=date(2024, 1, 1),
+            investment_type="long-term",
+            current_price=150.0,
+            user_id=user_id,
+        )
+        db.add(pos)
+        db.commit()
+        kl = PositionKeyLevel(
+            position_id=pos.id,
+            level_price=100.0,
+            is_active=is_active,
+        )
+        db.add(kl)
+        db.commit()
+        return pos.id, kl.id
+    finally:
+        db.close()
+
+
 class TestKeyLevelRoutes:
     def test_add_key_level(self, _setup_db, client):
         pos_id = _seed_position(_setup_db)
@@ -197,27 +224,7 @@ class TestKeyLevelRoutes:
             db.close()
 
     def test_delete_key_level_for_other_user_is_noop(self, _setup_db, client):
-        db = _setup_db()
-        try:
-            db.add(User(id="alice-user-id", email="alice@example.com"))
-            pos = Position(
-                ticker="AAPL",
-                company_name="Apple Inc.",
-                cost_basis=100.0,
-                initial_purchase_date=date(2024, 1, 1),
-                investment_type="long-term",
-                current_price=150.0,
-                user_id="alice-user-id",
-            )
-            db.add(pos)
-            db.commit()
-            kl = PositionKeyLevel(position_id=pos.id, level_price=100.0)
-            db.add(kl)
-            db.commit()
-            pos_id = pos.id
-            kl_id = kl.id
-        finally:
-            db.close()
+        pos_id, kl_id = _seed_key_level_for_user(_setup_db, "alice-user-id")
 
         resp = client.post(
             f"/edit/{pos_id}/key-levels/{kl_id}/delete",
@@ -234,27 +241,11 @@ class TestKeyLevelRoutes:
             db.close()
 
     def test_toggle_key_level_for_other_user_is_noop(self, _setup_db, client):
-        db = _setup_db()
-        try:
-            db.add(User(id="alice-user-id", email="alice@example.com"))
-            pos = Position(
-                ticker="AAPL",
-                company_name="Apple Inc.",
-                cost_basis=100.0,
-                initial_purchase_date=date(2024, 1, 1),
-                investment_type="long-term",
-                current_price=150.0,
-                user_id="alice-user-id",
-            )
-            db.add(pos)
-            db.commit()
-            kl = PositionKeyLevel(position_id=pos.id, level_price=100.0, is_active=True)
-            db.add(kl)
-            db.commit()
-            pos_id = pos.id
-            kl_id = kl.id
-        finally:
-            db.close()
+        pos_id, kl_id = _seed_key_level_for_user(
+            _setup_db,
+            "alice-user-id",
+            is_active=True,
+        )
 
         resp = client.post(
             f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
@@ -282,14 +273,15 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        original_override = app.dependency_overrides.pop(get_authenticated_uow)
+        original_override = app.dependency_overrides.pop(get_authenticated_uow, None)
         try:
             resp = client.post(
                 f"/edit/{pos_id}/key-levels/{kl_id}/delete",
                 follow_redirects=False,
             )
         finally:
-            app.dependency_overrides[get_authenticated_uow] = original_override
+            if original_override is not None:
+                app.dependency_overrides[get_authenticated_uow] = original_override
 
         assert resp.status_code == 303
         assert resp.headers["location"] == "/auth/login"
@@ -305,14 +297,15 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        original_override = app.dependency_overrides.pop(get_authenticated_uow)
+        original_override = app.dependency_overrides.pop(get_authenticated_uow, None)
         try:
             resp = client.post(
                 f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
                 follow_redirects=False,
             )
         finally:
-            app.dependency_overrides[get_authenticated_uow] = original_override
+            if original_override is not None:
+                app.dependency_overrides[get_authenticated_uow] = original_override
 
         assert resp.status_code == 303
         assert resp.headers["location"] == "/auth/login"
