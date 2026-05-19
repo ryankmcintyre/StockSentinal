@@ -403,7 +403,7 @@ class TestRefreshLoadingCues:
 
 
 class TestRefreshTierLimits:
-    def _seed_position(self, session_maker) -> int:
+    def _seed_single_position(self, session_maker) -> int:
         db = session_maker()
         try:
             pos = Position(
@@ -433,7 +433,7 @@ class TestRefreshTierLimits:
             db.close()
 
     def test_sixth_refresh_all_is_blocked_with_banner(self, client, _setup_db, mocker):
-        self._seed_position(_setup_db)
+        self._seed_single_position(_setup_db)
         self._set_refresh_count(_setup_db, 5)
         mock_refresh_all = mocker.patch("app.main._refresh_all_positions_task", return_value=None)
 
@@ -444,7 +444,7 @@ class TestRefreshTierLimits:
         mock_refresh_all.assert_not_called()
 
     def test_single_refresh_consumes_one_refresh(self, client, _setup_db, mocker):
-        position_id = self._seed_position(_setup_db)
+        position_id = self._seed_single_position(_setup_db)
         self._set_refresh_count(_setup_db, 0)
         mocker.patch.object(_market_service, "refresh_position", return_value=None)
 
@@ -463,7 +463,7 @@ class TestRefreshTierLimits:
             db.close()
 
     def test_full_access_refresh_bypasses_limit(self, client, _setup_db, mocker):
-        self._seed_position(_setup_db)
+        self._seed_single_position(_setup_db)
         self._set_refresh_count(_setup_db, 5, tier="full_access")
         mock_refresh_all = mocker.patch("app.main._refresh_all_positions_task", return_value=None)
 

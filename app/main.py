@@ -903,7 +903,7 @@ def add_position(
     if current_user is None:
         raise HTTPException(status_code=403)
     try:
-        check_can_add_position(current_user, len(uow.positions.list_all_ids()))
+        check_can_add_position(current_user, uow.positions.count_all())
         check_and_consume_refresh(current_user)
     except TierLimitExceeded as exc:
         return templates.TemplateResponse(

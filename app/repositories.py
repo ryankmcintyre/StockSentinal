@@ -48,6 +48,8 @@ class PositionRepository(Protocol):
 
     def list_all_ids(self) -> list[int]: ...
 
+    def count_all(self) -> int: ...
+
     def get_by_id(self, position_id: int) -> Optional[Position]: ...
 
     def get_by_ids(self, position_ids: list[int]) -> Sequence[Position]: ...
@@ -81,6 +83,9 @@ class SqlAlchemyPositionRepository:
     def list_all_ids(self) -> list[int]:
         q = self._session.query(Position.id).filter(Position.user_id == self._user_id)
         return [pid for (pid,) in q.all()]
+
+    def count_all(self) -> int:
+        return self._base_query().count()
 
     def get_by_id(self, position_id: int) -> Optional[Position]:
         return self._base_query().filter(Position.id == position_id).first()
