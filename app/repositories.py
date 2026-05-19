@@ -57,7 +57,7 @@ class PositionRepository(Protocol):
 class SqlAlchemyPositionRepository:
     """SQLAlchemy-backed Position repository."""
 
-    def __init__(self, session: Session, user_id: str) -> None:
+    def __init__(self, session: Session, user_id: str | None) -> None:
         if user_id is None:
             raise ValueError("user_id is required")
         self._session = session
@@ -205,7 +205,7 @@ class RuleConfigRepository(Protocol):
 class SqlAlchemyRuleConfigRepository:
     """SQLAlchemy-backed rule config repository."""
 
-    def __init__(self, session: Session, user_id: str) -> None:
+    def __init__(self, session: Session, user_id: str | None) -> None:
         if user_id is None:
             raise ValueError("user_id is required")
         self._session = session
