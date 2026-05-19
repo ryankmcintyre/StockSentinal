@@ -168,7 +168,7 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
 
 
 def _edit_position_path(position_id: int) -> str:
-    return "/edit/" + str(int(position_id))
+    return f"/edit/{position_id}"
 
 
 def _supabase_auth_configured() -> bool:

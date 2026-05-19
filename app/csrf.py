@@ -1,5 +1,6 @@
 """CSRF protection helpers and middleware."""
 
+import logging
 import secrets
 from hmac import compare_digest
 
@@ -15,6 +16,7 @@ CSRF_FIELD_NAME = "csrf_token"
 CSRF_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 
 _SAFE_METHODS = {"GET", "HEAD", "OPTIONS", "TRACE"}
+logger = logging.getLogger(__name__)
 
 
 def _is_https(request: Request) -> bool:
@@ -36,7 +38,10 @@ def _is_valid_signed_token(token: str | None) -> bool:
         return False
     try:
         data = _get_serializer().loads(token, max_age=CSRF_MAX_AGE_SECONDS)
-    except (BadSignature, SignatureExpired, RuntimeError):
+    except (BadSignature, SignatureExpired):
+        return False
+    except RuntimeError:
+        logger.debug("CSRF token validation failed because signing is not configured", exc_info=True)
         return False
     return isinstance(data, dict) and isinstance(data.get("token"), str)
 
