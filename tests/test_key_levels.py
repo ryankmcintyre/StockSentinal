@@ -254,7 +254,7 @@ class TestKeyLevelRoutes:
 
         db = _setup_db()
         try:
-            retrieved_kl = db.query(PositionKeyLevel).join(Position).filter(
+            retrieved_kl = db.query(PositionKeyLevel).filter(
                 PositionKeyLevel.id == kl_id
             ).first()
             assert retrieved_kl is not None
@@ -278,7 +278,7 @@ class TestKeyLevelRoutes:
 
         db = _setup_db()
         try:
-            retrieved_kl = db.query(PositionKeyLevel).join(Position).filter(
+            retrieved_kl = db.query(PositionKeyLevel).filter(
                 PositionKeyLevel.id == kl_id
             ).first()
             assert retrieved_kl is not None

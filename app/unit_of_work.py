@@ -89,6 +89,7 @@ class SqlAlchemyUnitOfWork:
             return
 
         user_id = self.user_id
+        assert user_id is not None
 
         @event.listens_for(self._session, "after_begin")
         def _set_current_user_id_on_begin(_session, _transaction, connection):
