@@ -350,4 +350,4 @@ class TestKeyLevelRoutes:
         )
 
         assert resp.status_code == 303
-        mock_refresh.assert_called_once_with(pos_id)
+        mock_refresh.assert_called_once_with(pos_id, "test-user-id")
