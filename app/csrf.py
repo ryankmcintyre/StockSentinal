@@ -36,7 +36,7 @@ def _is_valid_signed_token(token: str | None) -> bool:
         return False
     try:
         data = _get_serializer().loads(token, max_age=CSRF_MAX_AGE_SECONDS)
-    except (BadSignature, SignatureExpired, Exception):
+    except (BadSignature, SignatureExpired, RuntimeError):
         return False
     return isinstance(data, dict) and isinstance(data.get("token"), str)
 

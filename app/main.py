@@ -2,7 +2,6 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote
 
 from dotenv import load_dotenv
 import httpx
@@ -169,7 +168,7 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
 
 
 def _edit_position_path(position_id: int) -> str:
-    return "/edit/" + quote(str(int(position_id)), safe="")
+    return "/edit/" + str(int(position_id))
 
 
 def _supabase_auth_configured() -> bool:
