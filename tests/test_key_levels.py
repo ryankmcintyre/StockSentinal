@@ -247,6 +247,7 @@ class TestKeyLevelRoutes:
 
         resp = client.post(
             f"/edit/{pos_id}/key-levels/{kl_id}/delete",
+            data=csrf_form_data(client),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -273,6 +274,7 @@ class TestKeyLevelRoutes:
 
         resp = client.post(
             f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+            data=csrf_form_data(client),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -306,6 +308,7 @@ class TestKeyLevelRoutes:
         try:
             resp = client.post(
                 f"/edit/{pos_id}/key-levels/{kl_id}/delete",
+                data=csrf_form_data(client),
                 follow_redirects=False,
             )
         finally:
@@ -330,6 +333,7 @@ class TestKeyLevelRoutes:
         try:
             resp = client.post(
                 f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+                data=csrf_form_data(client),
                 follow_redirects=False,
             )
         finally:
