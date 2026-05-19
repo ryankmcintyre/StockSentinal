@@ -10,13 +10,17 @@
     <p class="page-subtitle">Capture a holding with the details needed to evaluate it against your rules.</p>
 </section>
 
+{% if error %}
+<section class="alert alert-warning">{{ error }}</section>
+{% endif %}
+
 <form method="post" action="/add" class="position-form" data-api-submit="true">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {# Keep the asterisk visual-only because required inputs are already announced accessibly. #}
     <p class="form-legend"><span class="required-indicator" aria-hidden="true">*</span> Required field</p>
     <div class="form-group">
         <label for="ticker">Ticker <span class="required-indicator" aria-hidden="true">*</span></label>
-        <input type="text" id="ticker" name="ticker" required maxlength="10" placeholder="AAPL">
+        <input type="text" id="ticker" name="ticker" required maxlength="10" placeholder="AAPL" value="{{ form.ticker if form else '' }}">
         <small id="ticker_lookup_status" class="form-hint" aria-live="polite"></small>
         <small id="ticker_lookup_price" class="form-hint ticker-lookup-price" aria-live="polite" hidden></small>
         <div id="ticker_lookup_picker" class="ticker-lookup-picker" hidden>
@@ -27,38 +31,38 @@
 
     <div class="form-group">
         <label for="company_name">Company Name <span class="required-indicator" aria-hidden="true">*</span></label>
-        <input type="text" id="company_name" name="company_name" required placeholder="Apple Inc." aria-describedby="company_name_status">
+        <input type="text" id="company_name" name="company_name" required placeholder="Apple Inc." aria-describedby="company_name_status" value="{{ form.company_name if form else '' }}">
         <small id="company_name_status" class="form-hint">Auto-filled from ticker lookup — edit if needed.</small>
     </div>
 
     <div class="form-group">
         <label for="cost_basis">Cost Basis ($) <span class="required-indicator" aria-hidden="true">*</span></label>
-        <input type="number" id="cost_basis" name="cost_basis" required min="0.01" step="0.01" placeholder="150.00">
+        <input type="number" id="cost_basis" name="cost_basis" required min="0.01" step="0.01" placeholder="150.00" value="{{ form.cost_basis if form else '' }}">
     </div>
 
     <div class="form-group">
         <label for="initial_purchase_date">Purchase Date <span class="required-indicator" aria-hidden="true">*</span></label>
-        <input type="date" id="initial_purchase_date" name="initial_purchase_date" required>
+        <input type="date" id="initial_purchase_date" name="initial_purchase_date" required value="{{ form.initial_purchase_date if form else '' }}">
     </div>
 
     <div class="form-group">
         <label for="investment_type">Investment Type <span class="required-indicator" aria-hidden="true">*</span></label>
         <select id="investment_type" name="investment_type" required>
             {% for t in investment_types %}
-            <option value="{{ t.value }}">{{ t.value }}</option>
+            <option value="{{ t.value }}" {% if form and form.investment_type == t.value %}selected{% endif %}>{{ t.value }}</option>
             {% endfor %}
         </select>
     </div>
 
     <div class="form-group">
         <label for="sector_benchmark_ticker">Sector Benchmark Ticker (optional)</label>
-        <input type="text" id="sector_benchmark_ticker" name="sector_benchmark_ticker" maxlength="10" placeholder="e.g. SMH, XLK">
+        <input type="text" id="sector_benchmark_ticker" name="sector_benchmark_ticker" maxlength="10" placeholder="e.g. SMH, XLK" value="{{ form.sector_benchmark_ticker if form else '' }}">
         <small class="form-hint">Used by the Relative Weakness vs. Sector rule.</small>
     </div>
 
     <div class="form-group">
         <label for="notes">Notes (optional)</label>
-        <textarea id="notes" name="notes" rows="3" placeholder="Any notes about this position..."></textarea>
+        <textarea id="notes" name="notes" rows="3" placeholder="Any notes about this position...">{{ form.notes if form else '' }}</textarea>
     </div>
 
     <div class="form-actions">

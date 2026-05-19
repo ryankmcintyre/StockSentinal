@@ -817,6 +817,12 @@ h3 {
     font-weight: 600;
 }
 
+.login-tier-note {
+    margin-top: 1rem;
+    color: #52606d;
+    font-size: 0.85rem;
+}
+
 .alert {
     margin-top: 1.25rem;
     padding: 0.85rem 1rem;
@@ -828,6 +834,12 @@ h3 {
     background: #fff8e1;
     border-color: #f1de9c;
     color: #7c5d00;
+}
+
+.alert-info {
+    background: #eef6ff;
+    border-color: #bfd7f5;
+    color: #1e4f82;
 }
 
 /* --- Splash / landing page --- */
@@ -928,6 +940,12 @@ h3 {
     font-size: 0.9rem;
     color: #52606d;
     line-height: 1.65;
+}
+
+.splash-tier-note {
+    color: #52606d;
+    text-align: center;
+    margin-bottom: 3rem;
 }
 
 .splash-disclaimer {

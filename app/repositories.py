@@ -16,6 +16,7 @@ import logging
 from datetime import datetime
 from typing import Optional, Protocol, Sequence
 
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -171,6 +172,10 @@ class UserRepository(Protocol):
 
     def get_by_id(self, user_id: str) -> Optional[User]: ...
 
+    def list_with_position_counts(self) -> Sequence[tuple[User, int]]: ...
+
+    def count_admins(self, for_update: bool = False) -> int: ...
+
     def add(self, user: User) -> None: ...
 
 
@@ -182,6 +187,21 @@ class SqlAlchemyUserRepository:
 
     def get_by_id(self, user_id: str) -> Optional[User]:
         return self._session.query(User).filter(User.id == user_id).first()
+
+    def list_with_position_counts(self) -> Sequence[tuple[User, int]]:
+        return (
+            self._session.query(User, func.count(Position.id))
+            .outerjoin(Position, Position.user_id == User.id)
+            .group_by(User.id)
+            .order_by(User.created_at.desc(), User.email)
+            .all()
+        )
+
+    def count_admins(self, for_update: bool = False) -> int:
+        query = self._session.query(User).filter(User.is_admin.is_(True))
+        if for_update:
+            return len(query.with_for_update().all())
+        return query.count()
 
     def add(self, user: User) -> None:
         self._session.add(user)

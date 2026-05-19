@@ -2,7 +2,7 @@ from datetime import date
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class InvestmentType(str, Enum):
@@ -117,3 +117,16 @@ class UserResponse(BaseModel):
     display_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
+
+
+# Admin-only schemas — do not import from non-admin routes.
+class AdminUpdateTierForm(BaseModel):
+    tier: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class AdminUpdateAdminFlagForm(BaseModel):
+    is_admin: bool
+
+    model_config = ConfigDict(extra="forbid")

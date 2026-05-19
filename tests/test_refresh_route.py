@@ -400,3 +400,74 @@ class TestRefreshLoadingCues:
         assert created_user_ids == ["test-user-id"]
         refresh_all.assert_called_once_with(session, user_id="test-user-id")
         session.close.assert_called_once()
+
+
+class TestRefreshTierLimits:
+    def _seed_position(self, session_maker) -> int:
+        db = session_maker()
+        try:
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+            )
+            db.add(pos)
+            db.commit()
+            return pos.id
+        finally:
+            db.close()
+
+    def _set_refresh_count(self, session_maker, count: int, tier: str = "free"):
+        db = session_maker()
+        try:
+            user = db.query(User).filter(User.id == "test-user-id").one()
+            user.tier = tier
+            user.refresh_count_today = count
+            user.refresh_count_date = datetime.now().date()
+            db.commit()
+        finally:
+            db.close()
+
+    def test_sixth_refresh_all_is_blocked_with_banner(self, client, _setup_db, mocker):
+        self._seed_position(_setup_db)
+        self._set_refresh_count(_setup_db, 5)
+        mock_refresh_all = mocker.patch("app.main._refresh_all_positions_task", return_value=None)
+
+        resp = client.post("/refresh", data=csrf_form_data(client), follow_redirects=True)
+
+        assert resp.status_code == 200
+        assert "used 5 of 5 refreshes today" in resp.text
+        mock_refresh_all.assert_not_called()
+
+    def test_single_refresh_consumes_one_refresh(self, client, _setup_db, mocker):
+        position_id = self._seed_position(_setup_db)
+        self._set_refresh_count(_setup_db, 0)
+        mocker.patch.object(_market_service, "refresh_position", return_value=None)
+
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        db = _setup_db()
+        try:
+            user = db.query(User).filter(User.id == "test-user-id").one()
+            assert user.refresh_count_today == 1
+        finally:
+            db.close()
+
+    def test_full_access_refresh_bypasses_limit(self, client, _setup_db, mocker):
+        self._seed_position(_setup_db)
+        self._set_refresh_count(_setup_db, 5, tier="full_access")
+        mock_refresh_all = mocker.patch("app.main._refresh_all_positions_task", return_value=None)
+
+        resp = client.post("/refresh", data=csrf_form_data(client), follow_redirects=False)
+
+        assert resp.status_code == 303
+        mock_refresh_all.assert_called_once()
