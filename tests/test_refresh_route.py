@@ -274,11 +274,12 @@ class TestRefreshLoadingCues:
         from app.main import _refresh_all_positions_task
 
         created_user_ids = []
+        expected_position_ids = [123]
         session = mocker.Mock()
 
         class FakePositions:
             def get_by_ids(self, position_ids):
-                assert position_ids == [123]
+                assert position_ids == expected_position_ids
                 return []
 
         class FakeUow:
@@ -301,7 +302,7 @@ class TestRefreshLoadingCues:
             return_value=0,
         )
 
-        _refresh_all_positions_task([123], "test-user-id")
+        _refresh_all_positions_task(expected_position_ids, "test-user-id")
 
         assert created_user_ids == ["test-user-id"]
         refresh_all.assert_called_once_with(session)

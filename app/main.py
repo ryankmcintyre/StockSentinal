@@ -2,7 +2,6 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote
 
 from dotenv import load_dotenv
 import httpx
@@ -169,7 +168,7 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
 
 
 def _url_safe_edit_position_path(position_id: int) -> str:
-    position_id_segment = quote(str(position_id), safe="")
+    position_id_segment = str(int(position_id))
     return f"/edit/{position_id_segment}"
 
 

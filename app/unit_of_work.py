@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
 from sqlalchemy import event, text
@@ -17,6 +18,8 @@ from app.repositories import (
     SqlAlchemyUserRepository,
     UserRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class UnitOfWork(Protocol):
@@ -80,6 +83,9 @@ class SqlAlchemyUnitOfWork:
         if self.user_id is None or not self._is_postgresql:
             return
         if not hasattr(self._session, "dispatch"):
+            logger.debug(
+                "Skipping app.current_user_id transaction hook because session has no dispatch"
+            )
             return
 
         user_id = self.user_id
