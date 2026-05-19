@@ -75,7 +75,7 @@ def authenticated_client():
 
 
 class TestLookupRoute:
-    def test_anonymous_requests_redirect_to_login(self):
+    def test_anonymous_requests_redirect_to_login(self, mocker):
         authenticated_uow_override = app.dependency_overrides.pop(
             get_authenticated_uow, None
         )
@@ -90,6 +90,27 @@ class TestLookupRoute:
 
         assert resp.status_code == 303
         assert resp.headers["location"] == "/auth/login"
+
+        assert app.dependency_overrides[get_authenticated_uow] is (
+            authenticated_uow_override
+        )
+
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
+        mocker.patch.object(
+            _market_service,
+            "fetch_ticker_matches",
+            return_value=[SymbolSearchMatch(symbol="AAPL", name="Apple Inc")],
+        )
+        mocker.patch.object(
+            _market_service,
+            "fetch_daily_series",
+            return_value=[DailyBar(date=date(2026, 4, 17), close=182.45)],
+        )
+
+        with TestClient(app) as client:
+            restored_resp = client.get("/api/lookup/AAPL")
+
+        assert restored_resp.status_code == 200
 
     def test_returns_matches_and_price(self, authenticated_client, mocker):
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
