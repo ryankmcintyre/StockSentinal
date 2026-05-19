@@ -265,7 +265,7 @@ class TestRefreshLoadingCues:
         finally:
             db.close()
 
-        mocker.patch("app.main.SessionLocal", _setup_db)
+        mocker.patch("app.main.engine", _setup_db.kw["bind"])
 
         assert _clear_all_stale_refresh_flags() == 2
 
@@ -284,25 +284,19 @@ class TestRefreshLoadingCues:
     def test_startup_stale_cleanup_uses_unscoped_connection(self, mocker):
         from app.main import _clear_all_stale_refresh_flags
 
-        session = mocker.Mock()
-        bind = mocker.Mock()
+        engine = mocker.Mock()
         connection = mocker.Mock()
         begin_context = mocker.MagicMock()
         begin_context.__enter__.return_value = connection
-        bind.begin.return_value = begin_context
-        session.get_bind.return_value = bind
+        engine.begin.return_value = begin_context
         connection.execute.return_value = mocker.Mock(rowcount=3)
-        mocker.patch("app.main.SessionLocal", return_value=session)
+        mocker.patch("app.main.engine", engine)
 
         assert _clear_all_stale_refresh_flags() == 3
 
-        session.get_bind.assert_called_once()
-        bind.begin.assert_called_once()
+        engine.begin.assert_called_once()
         connection.execute.assert_called_once()
         assert "UPDATE positions" in str(connection.execute.call_args.args[0])
-        session.execute.assert_not_called()
-        session.commit.assert_not_called()
-        session.close.assert_called_once()
 
     def test_single_refresh_route_noops_when_already_in_progress(
         self, client, _setup_db, mocker

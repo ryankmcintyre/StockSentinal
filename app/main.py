@@ -1,5 +1,5 @@
 import logging
-from contextlib import asynccontextmanager, closing
+from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -40,7 +40,14 @@ from app.config import (
     has_session_secret_key,
 )
 from app.csrf import CSRFMiddleware, csrf_token_for_template, validate_csrf
-from app.database import SessionLocal, get_authenticated_uow, get_optional_uow, get_uow, init_db
+from app.database import (
+    SessionLocal,
+    engine,
+    get_authenticated_uow,
+    get_optional_uow,
+    get_uow,
+    init_db,
+)
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 from app.market_data.service import MarketDataService
@@ -231,23 +238,24 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
 
 def _clear_all_stale_refresh_flags() -> int:
     """Reset stale refresh flags across all users during application startup."""
-    with closing(SessionLocal()) as session:
-        bind = session.get_bind()
-
     cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
-    with bind.begin() as conn:
+    with engine.begin() as conn:
         result = conn.execute(
             text(
                 """
                 UPDATE positions
-                SET refresh_in_progress = FALSE,
+                SET refresh_in_progress = :not_in_progress,
                     refresh_started_at = NULL
-                WHERE refresh_in_progress = TRUE
+                WHERE refresh_in_progress = :in_progress
                   AND refresh_started_at IS NOT NULL
                   AND refresh_started_at < :cutoff
                 """
             ),
-            {"cutoff": cutoff},
+            {
+                "not_in_progress": False,
+                "in_progress": True,
+                "cutoff": cutoff,
+            },
         )
         return result.rowcount or 0
 
