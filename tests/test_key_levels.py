@@ -95,9 +95,8 @@ def _seed_key_level_with_user(
 ) -> tuple[int, int]:
     db = session_maker()
     try:
-        if db.query(User).filter(User.id == user_id).first() is None:
-            db.add(User(id=user_id, email=f"{user_id}@example.com"))
-            db.flush()
+        db.merge(User(id=user_id, email=f"{user_id}@example.com"))
+        db.flush()
         pos = Position(
             ticker="AAPL",
             company_name="Apple Inc.",
@@ -240,9 +239,14 @@ class TestKeyLevelRoutes:
 
         db = _setup_db()
         try:
-            assert db.query(PositionKeyLevel).filter(
-                PositionKeyLevel.id == kl_id
-            ).first() is not None
+            kl = (
+                db.query(PositionKeyLevel)
+                .join(Position)
+                .filter(PositionKeyLevel.id == kl_id)
+                .first()
+            )
+            assert kl is not None
+            assert kl.position.user_id == "alice-user-id"
         finally:
             db.close()
 
@@ -261,9 +265,14 @@ class TestKeyLevelRoutes:
 
         db = _setup_db()
         try:
-            kl = db.query(PositionKeyLevel).filter(
-                PositionKeyLevel.id == kl_id
-            ).first()
+            kl = (
+                db.query(PositionKeyLevel)
+                .join(Position)
+                .filter(PositionKeyLevel.id == kl_id)
+                .first()
+            )
+            assert kl is not None
+            assert kl.position.user_id == "alice-user-id"
             assert kl.is_active is True
         finally:
             db.close()
