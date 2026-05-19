@@ -12,6 +12,7 @@ from app.database import get_authenticated_uow, get_optional_uow, get_uow
 from app.main import _market_service, app
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
+from tests.csrf_utils import csrf_form_data
 
 
 @pytest.fixture(autouse=True)
@@ -227,7 +228,7 @@ class TestRefreshLoadingCues:
             db.close()
 
         mock_refresh = mocker.patch.object(_market_service, "refresh_position")
-        resp = client.post(f"/refresh/{position_id}", follow_redirects=False)
+        resp = client.post(f"/refresh/{position_id}", data=csrf_form_data(client), follow_redirects=False)
         assert resp.status_code == 303
         mock_refresh.assert_not_called()
 
@@ -252,7 +253,7 @@ class TestRefreshLoadingCues:
             db.close()
 
         mocker.patch("app.main._refresh_all_positions_task", return_value=None)
-        resp = client.post("/refresh", follow_redirects=False)
+        resp = client.post("/refresh", data=csrf_form_data(client), follow_redirects=False)
         assert resp.status_code == 303
 
         verify_db = _setup_db()

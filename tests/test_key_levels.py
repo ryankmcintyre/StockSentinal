@@ -13,6 +13,7 @@ from app.database import get_authenticated_uow, get_uow
 from app.main import app
 from app.models import Base, Position, PositionKeyLevel, StrategyRuleConfig, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
+from tests.csrf_utils import csrf_form_data
 
 
 @pytest.fixture(autouse=True)
@@ -93,7 +94,7 @@ class TestKeyLevelRoutes:
         pos_id = _seed_position(_setup_db)
         resp = client.post(
             f"/edit/{pos_id}/key-levels/add",
-            data={"level_price": "120.5", "label": "2024 high", "notes": "from chart"},
+            data=csrf_form_data(client, {"level_price": "120.5", "label": "2024 high", "notes": "from chart"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -116,7 +117,7 @@ class TestKeyLevelRoutes:
         pos_id = _seed_position(_setup_db)
         resp = client.post(
             f"/edit/{pos_id}/key-levels/add",
-            data={"level_price": "0", "label": "bad"},
+            data=csrf_form_data(client, {"level_price": "0", "label": "bad"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -132,7 +133,7 @@ class TestKeyLevelRoutes:
     def test_add_to_unknown_position_redirects_to_root(self, _setup_db, client):
         resp = client.post(
             "/edit/99999/key-levels/add",
-            data={"level_price": "100"},
+            data=csrf_form_data(client, {"level_price": "100"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -151,6 +152,7 @@ class TestKeyLevelRoutes:
 
         resp = client.post(
             f"/edit/{pos_id}/key-levels/{kl_id}/delete",
+            data=csrf_form_data(client),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -174,7 +176,7 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        client.post(f"/edit/{pos_id}/key-levels/{kl_id}/toggle", follow_redirects=False)
+        client.post(f"/edit/{pos_id}/key-levels/{kl_id}/toggle", data=csrf_form_data(client), follow_redirects=False)
 
         db = _setup_db()
         try:
@@ -185,7 +187,7 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        client.post(f"/edit/{pos_id}/key-levels/{kl_id}/toggle", follow_redirects=False)
+        client.post(f"/edit/{pos_id}/key-levels/{kl_id}/toggle", data=csrf_form_data(client), follow_redirects=False)
 
         db = _setup_db()
         try:
@@ -208,7 +210,7 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        client.post(f"/delete/{pos_id}", follow_redirects=False)
+        client.post(f"/delete/{pos_id}", data=csrf_form_data(client), follow_redirects=False)
 
         db = _setup_db()
         try:
@@ -288,7 +290,7 @@ class TestKeyLevelRoutes:
 
         resp = client.post(
             f"/edit/{pos_id}",
-            data={
+            data=csrf_form_data(client, {
                 "ticker": " msft ",
                 "company_name": " Microsoft Corporation ",
                 "cost_basis": "110.00",
@@ -297,7 +299,7 @@ class TestKeyLevelRoutes:
                 "current_price": "125.50",
                 "notes": " updated notes ",
                 "sector_benchmark_ticker": " xlk ",
-            },
+            }),
             follow_redirects=False,
         )
 
@@ -336,7 +338,7 @@ class TestKeyLevelRoutes:
 
         resp = client.post(
             f"/edit/{pos_id}",
-            data={
+            data=csrf_form_data(client, {
                 "ticker": "msft",
                 "company_name": "Microsoft Corporation",
                 "cost_basis": "100.00",
@@ -345,7 +347,7 @@ class TestKeyLevelRoutes:
                 "current_price": "150.00",
                 "notes": "",
                 "sector_benchmark_ticker": "",
-            },
+            }),
             follow_redirects=False,
         )
 
