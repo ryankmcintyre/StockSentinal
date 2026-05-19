@@ -57,6 +57,7 @@
                     </td>
                     <td>
                         <form method="post" action="/rules/{{ section.investment_type }}/{{ rule.rule_key }}" class="rules-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <label class="checkbox-inline">
                                 <input type="checkbox" name="enabled" value="1" {% if rule.enabled %}checked{% endif %}>
                                 Enabled
@@ -88,6 +89,7 @@
                                         <td>SMA-{{ cond.time_period }}</td>
                                         <td>
                                             <form method="post" action="/rules/{{ section.investment_type }}/SELL_MA_ALL/conditions/delete" style="display:inline">
+                                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                                 <input type="hidden" name="interval" value="{{ cond.interval }}">
                                                 <input type="hidden" name="time_period" value="{{ cond.time_period }}">
                                                 <button type="submit" class="btn btn-small btn-danger">Remove</button>
@@ -102,6 +104,7 @@
                             {% endif %}
 
                             <form method="post" action="/rules/{{ section.investment_type }}/SELL_MA_ALL/conditions/add" class="ma-add-form">
+                                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                                 <label>
                                     Interval:
                                     <select name="interval">

@@ -12,6 +12,7 @@ from app.database import get_authenticated_uow, get_optional_uow, get_uow
 from app.main import _market_service, app
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
+from tests.csrf_utils import csrf_form_data
 
 
 @pytest.fixture(autouse=True)
@@ -227,7 +228,11 @@ class TestRefreshLoadingCues:
             db.close()
 
         mock_refresh = mocker.patch.object(_market_service, "refresh_position")
-        resp = client.post(f"/refresh/{position_id}", follow_redirects=False)
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
         assert resp.status_code == 303
         mock_refresh.assert_not_called()
 
@@ -236,24 +241,25 @@ class TestRefreshLoadingCues:
     ):
         db = _setup_db()
         try:
-            db.add(
-                Position(
-                    ticker="AAPL",
-                    company_name="Apple Inc.",
-                    cost_basis=100.0,
-                    initial_purchase_date=date(2025, 1, 1),
-                    investment_type="long-term",
-                    current_price=115.0,
-                    notes=None,
-                )
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
             )
+            db.add(pos)
             db.commit()
+            position_id = pos.id
         finally:
             db.close()
 
-        mocker.patch("app.main._refresh_all_positions_task", return_value=None)
-        resp = client.post("/refresh", follow_redirects=False)
+        mock_refresh_all = mocker.patch("app.main._refresh_all_positions_task", return_value=None)
+        resp = client.post("/refresh", data=csrf_form_data(client), follow_redirects=False)
         assert resp.status_code == 303
+        mock_refresh_all.assert_called_once_with([position_id], "test-user-id")
 
         verify_db = _setup_db()
         try:

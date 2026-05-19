@@ -30,6 +30,7 @@
                 {% if current_user %}
                 <span class="nav-user">{{ current_user.display_name or current_user.email or "User" }}</span>
                 <form method="post" action="/auth/logout" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-small">Sign Out</button>
                 </form>
                 <a href="/add" class="btn btn-primary">+ Add Position</a>

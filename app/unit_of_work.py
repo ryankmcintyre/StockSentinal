@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
 from app.repositories import (
@@ -55,7 +55,9 @@ class SqlAlchemyUnitOfWork:
         self._session = session
         self.user_id = user_id
         self._is_postgresql = session.get_bind().dialect.name == "postgresql"
-        self._set_current_user_id()
+        self._uses_transaction_hook = False
+        self._install_current_user_id_hook()
+        self._ensure_current_user_id()
         self.positions = SqlAlchemyPositionRepository(session, user_id)
         self.key_levels = SqlAlchemyKeyLevelRepository(session, user_id)
         self.rule_configs = SqlAlchemyRuleConfigRepository(session, user_id)
@@ -74,13 +76,35 @@ class SqlAlchemyUnitOfWork:
             {"user_id": self.user_id},
         )
 
+    def _install_current_user_id_hook(self) -> None:
+        if self.user_id is None or not self._is_postgresql:
+            return
+        if not hasattr(self._session, "dispatch"):
+            return
+
+        user_id = self.user_id
+
+        @event.listens_for(self._session, "after_begin")
+        def _set_current_user_id_on_begin(_session, _transaction, connection):
+            connection.execute(
+                text("SELECT set_config('app.current_user_id', :user_id, true)"),
+                {"user_id": user_id},
+            )
+
+        self._uses_transaction_hook = True
+
+    def _ensure_current_user_id(self) -> None:
+        if self._uses_transaction_hook:
+            return
+        self._set_current_user_id()
+
     def commit(self) -> None:
         self._session.commit()
-        self._set_current_user_id()
+        self._ensure_current_user_id()
 
     def rollback(self) -> None:
         self._session.rollback()
-        self._set_current_user_id()
+        self._ensure_current_user_id()
 
     def __enter__(self) -> "SqlAlchemyUnitOfWork":
         return self

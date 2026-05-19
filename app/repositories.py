@@ -12,6 +12,7 @@ coupled to the market data service.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Optional, Protocol, Sequence
 
@@ -23,6 +24,8 @@ from app.models import (
     StrategyRuleConfig,
     User,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -126,27 +129,25 @@ class KeyLevelRepository(Protocol):
 
 
 class SqlAlchemyKeyLevelRepository:
-    """SQLAlchemy-backed KeyLevel repository."""
+    """SQLAlchemy-backed user-scoped KeyLevel repository."""
 
     def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
         self._user_id = user_id
 
-    def _base_query(self):
-        q = self._session.query(PositionKeyLevel)
-        if self._user_id is not None:
-            q = q.join(Position).filter(Position.user_id == self._user_id)
-        return q
-
     def get_by_position_and_id(
         self, position_id: int, level_id: int,
     ) -> Optional[PositionKeyLevel]:
-        return (
-            self._base_query()
+        if self._user_id is None:
+            logger.warning("Blocked key-level lookup without user context")
+            return None
+        query = (
+            self._session.query(PositionKeyLevel)
             .filter(PositionKeyLevel.id == level_id)
             .filter(PositionKeyLevel.position_id == position_id)
-            .first()
         )
+        query = query.join(Position).filter(Position.user_id == self._user_id)
+        return query.first()
 
     def add(self, key_level: PositionKeyLevel) -> None:
         self._session.add(key_level)

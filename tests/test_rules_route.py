@@ -14,6 +14,7 @@ from app.main import _market_service, app
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.unit_of_work import SqlAlchemyUnitOfWork, as_uow
 from app.rule_engine import list_rule_specs_for_investment_type
+from tests.csrf_utils import csrf_form_data
 
 
 @pytest.fixture(autouse=True)
@@ -110,6 +111,7 @@ class TestRulesPage:
     def test_post_updates_rule_configuration(self, client, _setup_db):
         resp = client.post(
             "/rules/long-term/TRIM-10PCT",
+            data=csrf_form_data(client),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -130,7 +132,7 @@ class TestRulesPage:
     def test_add_ma_condition(self, client):
         resp = client.post(
             "/rules/long-term/SELL_MA_ALL/conditions/add",
-            data={"interval": "daily", "time_period": "10"},
+            data=csrf_form_data(client, {"interval": "daily", "time_period": "10"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -143,13 +145,13 @@ class TestRulesPage:
         # First add a second condition
         client.post(
             "/rules/long-term/SELL_MA_ALL/conditions/add",
-            data={"interval": "daily", "time_period": "10"},
+            data=csrf_form_data(client, {"interval": "daily", "time_period": "10"}),
             follow_redirects=False,
         )
         # Then remove the default weekly-20
         resp = client.post(
             "/rules/long-term/SELL_MA_ALL/conditions/delete",
-            data={"interval": "weekly", "time_period": "20"},
+            data=csrf_form_data(client, {"interval": "weekly", "time_period": "20"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -162,7 +164,7 @@ class TestRulesPage:
         """Cannot remove the only remaining condition when the rule is enabled."""
         resp = client.post(
             "/rules/long-term/SELL_MA_ALL/conditions/delete",
-            data={"interval": "weekly", "time_period": "20"},
+            data=csrf_form_data(client, {"interval": "weekly", "time_period": "20"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -191,7 +193,11 @@ class TestRulesPage:
             db.close()
 
         # Attempt to enable the rule; should redirect (route catches ValueError)
-        resp = client.post("/rules/long-term/SELL_MA_ALL", follow_redirects=False)
+        resp = client.post(
+            "/rules/long-term/SELL_MA_ALL",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
         assert resp.status_code == 303
 
         # The rule must still be disabled after the rejected enable attempt
@@ -232,6 +238,7 @@ class TestRulesPage:
 
         disable_trim = client.post(
             "/rules/long-term/TRIM-10PCT",
+            data=csrf_form_data(client),
             follow_redirects=False,
         )
         assert disable_trim.status_code == 303
@@ -347,7 +354,7 @@ class TestRulesPage:
             side_effect=RuntimeError("Alpha Vantage API rate limit exceeded"),
         )
 
-        _refresh_single_position_task(position_id)
+        _refresh_single_position_task(position_id, "test-user-id")
 
         verify_db = testing_session()
         try:
@@ -382,7 +389,11 @@ class TestRulesPage:
 
         mocker.patch.object(_market_service, "refresh_position", side_effect=_raise_rate_limit)
 
-        resp = client.post(f"/refresh/{position_id}", follow_redirects=True)
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            follow_redirects=True,
+        )
         assert resp.status_code == 200
         assert "Refresh failed" in resp.text
         assert 'title="Refresh failed: Alpha Vantage API rate limit exceeded"' in resp.text
@@ -487,7 +498,7 @@ class TestExtensionAtrRules:
     def test_user_can_enable_extension_rule(self, client, _setup_db):
         resp = client.post(
             "/rules/long-term/TRIM_EXTENSION_ATR",
-            data={"enabled": "1"},
+            data=csrf_form_data(client, {"enabled": "1"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -636,7 +647,7 @@ class TestWeeklyUpperWickRule:
     def test_user_can_enable_upper_wick_rule(self, client, _setup_db):
         resp = client.post(
             "/rules/long-term/TRIM_WEEKLY_UPPER_WICK",
-            data={"enabled": "1"},
+            data=csrf_form_data(client, {"enabled": "1"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
