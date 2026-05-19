@@ -15,8 +15,8 @@ class TierLimits:
 DEFAULT_TIER = "free"
 FULL_ACCESS_TIER = "full_access"
 
-# Keep tier disclosure copy in app/templates/splash.html and app/templates/login.html
-# in sync when these limits change.
+# Public splash/login pages are intentionally static for anonymous users and do
+# not import runtime config, so keep their disclosure copy in sync when limits change.
 TIER_LIMITS: dict[str, TierLimits] = {
     DEFAULT_TIER: TierLimits(max_tickers=5, max_refreshes_per_day=5),
     FULL_ACCESS_TIER: TierLimits(max_tickers=None, max_refreshes_per_day=None),
