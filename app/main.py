@@ -901,7 +901,7 @@ def add_position(
     user_id = _get_request_user_id(request, uow)
     current_user = _get_current_user(request, uow)
     if current_user is None:
-        raise HTTPException(status_code=403)
+        raise HTTPException(status_code=401)
     try:
         check_can_add_position(current_user, uow.positions.count_all())
         check_and_consume_refresh(current_user)
@@ -1179,7 +1179,7 @@ def refresh_all(
     if position_ids:
         current_user = uow.users.get_by_id(uow.user_id) if uow.user_id else None
         if current_user is None:
-            raise HTTPException(status_code=403)
+            raise HTTPException(status_code=401)
         try:
             check_and_consume_refresh(current_user)
             uow.commit()
@@ -1207,7 +1207,7 @@ def refresh_single(
     if pos and not pos.refresh_in_progress:
         current_user = uow.users.get_by_id(uow.user_id) if uow.user_id else None
         if current_user is None:
-            raise HTTPException(status_code=403)
+            raise HTTPException(status_code=401)
         try:
             check_and_consume_refresh(current_user)
             uow.commit()

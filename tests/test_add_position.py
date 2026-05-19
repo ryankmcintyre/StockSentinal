@@ -171,7 +171,7 @@ class TestAddPositionFormRemoved:
         assert resp.status_code == 303
 
 
-class TestAddPositionTierLimits:
+class TestAddPositionRouteTierLimits:
     def _seed_positions(self, session_maker, count: int, user_id: str = "test-user-id"):
         db = session_maker()
         try:

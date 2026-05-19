@@ -402,7 +402,7 @@ class TestRefreshLoadingCues:
         session.close.assert_called_once()
 
 
-class TestRefreshTierLimits:
+class TestRefreshRouteTierLimits:
     def _seed_single_position(self, session_maker) -> int:
         db = session_maker()
         try:
