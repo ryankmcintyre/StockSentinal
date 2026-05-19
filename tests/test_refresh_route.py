@@ -281,33 +281,27 @@ class TestRefreshLoadingCues:
         finally:
             verify_db.close()
 
-    def test_startup_stale_cleanup_sets_system_task_for_postgresql(
-        self, mocker
-    ):
-        from app.main import STALE_REFRESH_SYSTEM_TASK, _clear_all_stale_refresh_flags
+    def test_startup_stale_cleanup_uses_unscoped_connection(self, mocker):
+        from app.main import _clear_all_stale_refresh_flags
 
-        executed_sql = []
         session = mocker.Mock()
         bind = mocker.Mock()
-        bind.dialect.name = "postgresql"
+        connection = mocker.Mock()
+        begin_context = mocker.MagicMock()
+        begin_context.__enter__.return_value = connection
+        bind.begin.return_value = begin_context
         session.get_bind.return_value = bind
-        session.execute.side_effect = [
-            mocker.Mock(rowcount=None),
-            mocker.Mock(rowcount=3),
-        ]
+        connection.execute.return_value = mocker.Mock(rowcount=3)
         mocker.patch("app.main.SessionLocal", return_value=session)
 
         assert _clear_all_stale_refresh_flags() == 3
 
-        for call in session.execute.call_args_list:
-            executed_sql.append(str(call.args[0]))
-        assert "set_config('app.system_task'" in executed_sql[0]
-        assert "UPDATE positions" in executed_sql[1]
-        assert session.execute.call_args_list[0].args[1] == {
-            "task_name": STALE_REFRESH_SYSTEM_TASK
-        }
-        session.commit.assert_called_once()
-        session.rollback.assert_not_called()
+        bind.begin.assert_called_once()
+        connection.execute.assert_called_once()
+        assert "UPDATE positions" in str(connection.execute.call_args.args[0])
+        assert "app.system_task" not in str(connection.execute.call_args.args[0])
+        session.execute.assert_not_called()
+        session.commit.assert_not_called()
         session.close.assert_called_once()
 
     def test_single_refresh_route_noops_when_already_in_progress(

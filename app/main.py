@@ -140,7 +140,6 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "notion": "Notion",
 }
 REFRESH_STALE_TIMEOUT_MINUTES = 5
-STALE_REFRESH_SYSTEM_TASK = "clear_stale_refresh_flags"
 
 
 def _get_request_user_id(request: Request, uow: UnitOfWork | None = None) -> str | None:
@@ -234,36 +233,26 @@ def _clear_all_stale_refresh_flags() -> int:
     """Reset stale refresh flags across all users during application startup."""
     session = SessionLocal()
     try:
-        cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
-        if session.get_bind().dialect.name == "postgresql":
-            session.execute(
-                text("SELECT set_config('app.system_task', :task_name, true)"),
-                {"task_name": STALE_REFRESH_SYSTEM_TASK},
-            )
-        result = session.execute(
+        bind = session.get_bind()
+    finally:
+        session.close()
+
+    cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    with bind.begin() as conn:
+        result = conn.execute(
             text(
                 """
                 UPDATE positions
-                SET refresh_in_progress = :not_in_progress,
+                SET refresh_in_progress = FALSE,
                     refresh_started_at = NULL
-                WHERE refresh_in_progress = :in_progress
+                WHERE refresh_in_progress = TRUE
                   AND refresh_started_at IS NOT NULL
                   AND refresh_started_at < :cutoff
                 """
             ),
-            {
-                "not_in_progress": False,
-                "in_progress": True,
-                "cutoff": cutoff,
-            },
+            {"cutoff": cutoff},
         )
-        session.commit()
         return result.rowcount or 0
-    except Exception:
-        session.rollback()
-        raise
-    finally:
-        session.close()
 
 
 def _clear_position_market_data(position: Position) -> None:

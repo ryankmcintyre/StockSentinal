@@ -17,9 +17,6 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 _CURRENT_USER_ID = "NULLIF(current_setting('app.current_user_id', true), '')"
-_STALE_REFRESH_SYSTEM_TASK = (
-    "current_setting('app.system_task', true) = 'clear_stale_refresh_flags'"
-)
 
 _POLICIES = [
     (
@@ -64,14 +61,6 @@ def upgrade() -> None:
                 WITH CHECK ({condition});
             """
         )
-    op.execute(
-        f"""
-        CREATE POLICY positions_stale_refresh_maintenance ON positions
-            FOR UPDATE
-            USING ({_STALE_REFRESH_SYSTEM_TASK})
-            WITH CHECK ({_STALE_REFRESH_SYSTEM_TASK});
-        """
-    )
 
 
 def downgrade() -> None:
@@ -80,6 +69,5 @@ def downgrade() -> None:
     if bind.dialect.name != "postgresql":
         return
 
-    op.execute("DROP POLICY IF EXISTS positions_stale_refresh_maintenance ON positions;")
     for table, policy, _condition in reversed(_POLICIES):
         op.execute(f"DROP POLICY IF EXISTS {policy} ON {table};")
