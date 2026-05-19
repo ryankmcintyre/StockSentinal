@@ -54,7 +54,7 @@ class SqlAlchemyUnitOfWork:
         self._session = session
         self.user_id = user_id
         self.positions = SqlAlchemyPositionRepository(session, user_id)
-        self.key_levels = SqlAlchemyKeyLevelRepository(session)
+        self.key_levels = SqlAlchemyKeyLevelRepository(session, user_id)
         self.rule_configs = SqlAlchemyRuleConfigRepository(session, user_id)
         self.users = SqlAlchemyUserRepository(session)
 
