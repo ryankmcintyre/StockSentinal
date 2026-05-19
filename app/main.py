@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 import httpx
@@ -38,7 +39,7 @@ from app.config import (
     has_supabase_publishable_key,
     has_session_secret_key,
 )
-from app.csrf import CSRFMiddleware, csrf_token, validate_csrf
+from app.csrf import CSRFMiddleware, csrf_token_for_template, validate_csrf
 from app.database import SessionLocal, get_authenticated_uow, get_optional_uow, get_uow, init_db
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
@@ -110,7 +111,7 @@ app = FastAPI(title="Stock Sentinel", lifespan=lifespan)
 app.add_middleware(CSRFMiddleware)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
-templates.env.globals["csrf_token"] = csrf_token
+templates.env.globals["csrf_token"] = csrf_token_for_template
 
 
 @app.exception_handler(RequiresLoginException)
@@ -168,7 +169,8 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
 
 
 def _edit_position_path(position_id: int) -> str:
-    return f"/edit/{position_id}"
+    position_id_segment = quote(str(position_id), safe="")
+    return f"/edit/{position_id_segment}"
 
 
 def _supabase_auth_configured() -> bool:

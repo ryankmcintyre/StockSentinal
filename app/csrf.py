@@ -41,7 +41,10 @@ def _is_valid_signed_token(token: str | None) -> bool:
     except (BadSignature, SignatureExpired):
         return False
     except RuntimeError:
-        logger.debug("CSRF token validation failed because signing is not configured", exc_info=True)
+        logger.debug(
+            "CSRF token validation failed: session secret key not configured",
+            exc_info=True,
+        )
         return False
     return isinstance(data, dict) and isinstance(data.get("token"), str)
 
@@ -89,7 +92,7 @@ class CSRFMiddleware(BaseHTTPMiddleware):
 
 
 @pass_context
-def csrf_token(context) -> str:
+def csrf_token_for_template(context) -> str:
     """Return the request CSRF token for Jinja templates."""
     request = context.get("request")
     if request is None:
