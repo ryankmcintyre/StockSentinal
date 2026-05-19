@@ -1,29 +1,86 @@
 """Tests for the /api/lookup/{ticker} endpoint."""
 
-from datetime import date
+from datetime import date, datetime
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, event
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 from app.alpha_vantage_client import DailyBar, SymbolSearchMatch
-from app.database import get_authenticated_uow
+from app.database import get_authenticated_uow, get_uow
 from app.main import _market_service, app
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
+from app.models import Base, Position, StrategyRuleConfig, User
+from app.unit_of_work import SqlAlchemyUnitOfWork
+
+
+@pytest.fixture(autouse=True)
+def _setup_db(monkeypatch):
+    """Use an in-memory SQLite database for each test."""
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    TestingSession = sessionmaker(bind=engine)
+    Base.metadata.create_all(bind=engine)
+
+    @event.listens_for(TestingSession.class_, "before_flush")
+    def _assign_test_user_id(session, _flush_context, _instances):
+        for obj in session.new:
+            if isinstance(obj, User) and not obj.id:
+                obj.id = "test-user-id"
+            if isinstance(obj, Position) and obj.user_id is None:
+                obj.user_id = "test-user-id"
+            if isinstance(obj, StrategyRuleConfig) and obj.user_id is None:
+                obj.user_id = "test-user-id"
+
+    db = TestingSession()
+    db.add(
+        User(
+            id="test-user-id",
+            email="test@example.com",
+            display_name="Test User",
+            created_at=datetime.now(),
+        )
+    )
+    db.commit()
+    db.close()
+
+    def override_get_uow():
+        session = TestingSession()
+        try:
+            yield SqlAlchemyUnitOfWork(session)
+        finally:
+            session.close()
+
+    def override_get_authenticated_uow():
+        session = TestingSession()
+        try:
+            yield SqlAlchemyUnitOfWork(session, user_id="test-user-id")
+        finally:
+            session.close()
+
+    monkeypatch.setattr("app.main.SessionLocal", TestingSession)
+    monkeypatch.setattr("app.main.init_db", lambda: None)
+    app.dependency_overrides[get_uow] = override_get_uow
+    app.dependency_overrides[get_authenticated_uow] = override_get_authenticated_uow
+    yield
+    app.dependency_overrides.clear()
+    engine.dispose()
 
 
 @pytest.fixture()
 def authenticated_client():
-    def mock_auth_check():
-        yield None
-
-    app.dependency_overrides[get_authenticated_uow] = mock_auth_check
     with TestClient(app) as client:
         yield client
-    app.dependency_overrides.clear()
 
 
 class TestLookupRoute:
     def test_anonymous_requests_redirect_to_login(self):
+        app.dependency_overrides.pop(get_authenticated_uow, None)
         with TestClient(app) as client:
             resp = client.get("/api/lookup/AAPL", follow_redirects=False)
 
