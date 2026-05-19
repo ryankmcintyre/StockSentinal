@@ -58,6 +58,8 @@ class SqlAlchemyPositionRepository:
     """SQLAlchemy-backed Position repository."""
 
     def __init__(self, session: Session, user_id: str) -> None:
+        if user_id is None:
+            raise ValueError("user_id is required for position repository access")
         self._session = session
         self._user_id = user_id
 
@@ -204,6 +206,8 @@ class SqlAlchemyRuleConfigRepository:
     """SQLAlchemy-backed rule config repository."""
 
     def __init__(self, session: Session, user_id: str) -> None:
+        if user_id is None:
+            raise ValueError("user_id is required for rule config repository access")
         self._session = session
         self._user_id = user_id
 

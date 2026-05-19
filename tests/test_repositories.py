@@ -7,6 +7,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.repositories import SqlAlchemyPositionRepository, SqlAlchemyRuleConfigRepository
+from app.unit_of_work import SqlAlchemyUnitOfWork
 
 
 @pytest.fixture()
@@ -37,6 +38,26 @@ def test_user_scoped_repository_constructors_require_user_id(session):
 
     with pytest.raises(TypeError):
         SqlAlchemyRuleConfigRepository(session)
+
+
+def test_user_scoped_repository_constructors_reject_none_user_id(session):
+    with pytest.raises(ValueError, match="user_id is required"):
+        SqlAlchemyPositionRepository(session, user_id=None)
+
+    with pytest.raises(ValueError, match="user_id is required"):
+        SqlAlchemyRuleConfigRepository(session, user_id=None)
+
+
+def test_unscoped_unit_of_work_allows_users_but_rejects_scoped_repositories(session):
+    uow = SqlAlchemyUnitOfWork(session)
+
+    assert uow.users is not None
+
+    with pytest.raises(ValueError, match="user_id is required"):
+        _ = uow.positions
+
+    with pytest.raises(ValueError, match="user_id is required"):
+        _ = uow.rule_configs
 
 
 def test_position_repository_filters_by_required_user_id(session):

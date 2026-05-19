@@ -54,10 +54,30 @@ class SqlAlchemyUnitOfWork:
     def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
         self.user_id = user_id
-        self.positions = SqlAlchemyPositionRepository(session, user_id)
+        self._positions = (
+            SqlAlchemyPositionRepository(session, user_id)
+            if user_id is not None
+            else None
+        )
         self.key_levels = SqlAlchemyKeyLevelRepository(session)
-        self.rule_configs = SqlAlchemyRuleConfigRepository(session, user_id)
+        self._rule_configs = (
+            SqlAlchemyRuleConfigRepository(session, user_id)
+            if user_id is not None
+            else None
+        )
         self.users = SqlAlchemyUserRepository(session)
+
+    @property
+    def positions(self) -> PositionRepository:
+        if self._positions is None:
+            raise ValueError("user_id is required for position repository access")
+        return self._positions
+
+    @property
+    def rule_configs(self) -> RuleConfigRepository:
+        if self._rule_configs is None:
+            raise ValueError("user_id is required for rule config repository access")
+        return self._rule_configs
 
     @property
     def session(self) -> Session:
