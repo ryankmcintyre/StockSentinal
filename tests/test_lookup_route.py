@@ -1,6 +1,6 @@
 """Tests for the /api/lookup/{ticker} endpoint."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +14,10 @@ from app.main import _market_service, app
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
+
+
+TEST_USER_ID = "test-user-id"
+TEST_NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 @pytest.fixture(autouse=True)
@@ -31,19 +35,19 @@ def _setup_db(monkeypatch):
     def _assign_test_user_id(session, _flush_context, _instances):
         for obj in session.new:
             if isinstance(obj, User) and not obj.id:
-                obj.id = "test-user-id"
+                obj.id = TEST_USER_ID
             if isinstance(obj, Position) and obj.user_id is None:
-                obj.user_id = "test-user-id"
+                obj.user_id = TEST_USER_ID
             if isinstance(obj, StrategyRuleConfig) and obj.user_id is None:
-                obj.user_id = "test-user-id"
+                obj.user_id = TEST_USER_ID
 
     db = TestingSession()
     db.add(
         User(
-            id="test-user-id",
+            id=TEST_USER_ID,
             email="test@example.com",
             display_name="Test User",
-            created_at=datetime.now(),
+            created_at=TEST_NOW,
         )
     )
     db.commit()
@@ -59,7 +63,7 @@ def _setup_db(monkeypatch):
     def override_get_authenticated_uow():
         session = TestingSession()
         try:
-            yield SqlAlchemyUnitOfWork(session, user_id="test-user-id")
+            yield SqlAlchemyUnitOfWork(session, user_id=TEST_USER_ID)
         finally:
             session.close()
 
