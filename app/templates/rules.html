@@ -56,9 +56,9 @@
                         <small class="text-muted">{{ rule.description }}</small>
                     </td>
                     <td>
-                         <form method="post" action="/rules/{{ section.investment_type }}/{{ rule.rule_key }}" class="rules-form">
+                        <form method="post" action="/rules/{{ section.investment_type }}/{{ rule.rule_key }}" class="rules-form">
                             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                             <label class="checkbox-inline">
+                            <label class="checkbox-inline">
                                 <input type="checkbox" name="enabled" value="1" {% if rule.enabled %}checked{% endif %}>
                                 Enabled
                             </label>
@@ -88,9 +88,9 @@
                                         <td>{{ cond.interval | capitalize }}</td>
                                         <td>SMA-{{ cond.time_period }}</td>
                                         <td>
-                                             <form method="post" action="/rules/{{ section.investment_type }}/SELL_MA_ALL/conditions/delete" style="display:inline">
+                                            <form method="post" action="/rules/{{ section.investment_type }}/SELL_MA_ALL/conditions/delete" style="display:inline">
                                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                                 <input type="hidden" name="interval" value="{{ cond.interval }}">
+                                                <input type="hidden" name="interval" value="{{ cond.interval }}">
                                                 <input type="hidden" name="time_period" value="{{ cond.time_period }}">
                                                 <button type="submit" class="btn btn-small btn-danger">Remove</button>
                                             </form>
@@ -103,9 +103,9 @@
                             <p class="text-muted">No conditions configured. Add at least one to enable sell signals.</p>
                             {% endif %}
 
-                             <form method="post" action="/rules/{{ section.investment_type }}/SELL_MA_ALL/conditions/add" class="ma-add-form">
+                            <form method="post" action="/rules/{{ section.investment_type }}/SELL_MA_ALL/conditions/add" class="ma-add-form">
                                 <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                                 <label>
+                                <label>
                                     Interval:
                                     <select name="interval">
                                         <option value="daily">Daily</option>
