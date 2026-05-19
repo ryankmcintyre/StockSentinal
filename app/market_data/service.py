@@ -612,7 +612,7 @@ class MarketDataService:
         # Refresh indicator caches for configured rules
         import app.rule_config as rule_config
 
-        rule_uow = as_uow(db)
+        rule_uow = as_uow(db, user_id=position.user_id)
         required = rule_config.get_required_indicators(rule_uow)
         if required:
             cache_errors = self.refresh_indicator_cache(
@@ -652,7 +652,7 @@ class MarketDataService:
         db.commit()
 
     def refresh_all_positions(
-        self, db: Session, force: bool = False,
+        self, db: Session, force: bool = False, user_id: str | None = None,
     ) -> int:
         """Refresh cached market data for all positions.
 
@@ -663,7 +663,10 @@ class MarketDataService:
 
         Returns the number of positions that were actually refreshed.
         """
-        positions = db.query(Position).all()
+        q = db.query(Position)
+        if user_id is not None:
+            q = q.filter(Position.user_id == user_id)
+        positions = q.all()
         logger.info(
             "Starting refresh for %d positions (force=%s)",
             len(positions), force,
@@ -679,11 +682,23 @@ class MarketDataService:
 
         import app.rule_config as rule_config
 
-        rule_uow = as_uow(db)
-        required = rule_config.get_required_indicators(rule_uow)
-        required_atr = rule_config.get_required_atr_indicators(rule_uow)
-        weekly_lookback = rule_config.get_required_weekly_bar_lookback(rule_uow)
-        daily_lookback = rule_config.get_required_daily_bar_lookback(rule_uow)
+        user_ids = {user_id} if user_id is not None else {pos.user_id for pos in positions}
+        required: set[tuple[str, int]] = set()
+        required_atr: set[tuple[str, int]] = set()
+        weekly_lookback = 0
+        daily_lookback = 0
+        for current_user_id in user_ids:
+            rule_uow = as_uow(db, user_id=current_user_id)
+            required.update(rule_config.get_required_indicators(rule_uow))
+            required_atr.update(rule_config.get_required_atr_indicators(rule_uow))
+            weekly_lookback = max(
+                weekly_lookback,
+                rule_config.get_required_weekly_bar_lookback(rule_uow),
+            )
+            daily_lookback = max(
+                daily_lookback,
+                rule_config.get_required_daily_bar_lookback(rule_uow),
+            )
 
         refresh_plan = {}
         daily_batch_tickers: set[str] = set()

@@ -714,8 +714,15 @@ def delete_sell_ma_condition(
 
 
 @app.get("/api/lookup/{ticker}")
-def lookup_ticker(ticker: str):
-    """Look up ticker matches and the latest price via the configured provider."""
+def lookup_ticker(
+    ticker: str,
+    _authenticated_uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Look up ticker matches and the latest price via the configured provider.
+
+    Dependency injection of ``_authenticated_uow`` enforces authentication before
+    allowing access to this quota-consuming endpoint.
+    """
     api_key = get_market_data_api_key()
     if not api_key:
         return JSONResponse(
@@ -924,7 +931,7 @@ def add_key_level(
             "Added key level $%.2f for position id=%d %s",
             level_price, position_id, pos.ticker,
         )
-    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
+    return RedirectResponse(url=f"/edit/{pos.id}", status_code=303)
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/delete")
@@ -940,7 +947,8 @@ def delete_key_level(
         uow.key_levels.delete(kl)
         uow.commit()
         logger.info("Deleted key level id=%d for position id=%d", level_id, position_id)
-    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
+        return RedirectResponse(url=f"/edit/{kl.position_id}", status_code=303)
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/toggle")
@@ -955,7 +963,8 @@ def toggle_key_level(
     if kl:
         kl.is_active = not kl.is_active
         uow.commit()
-    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
+        return RedirectResponse(url=f"/edit/{kl.position_id}", status_code=303)
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/delete/{position_id}")
@@ -978,12 +987,12 @@ def delete_position(
 # ---------------------------------------------------------------------------
 
 
-def _refresh_all_positions_task(position_ids: list[int], user_id: str | None):
+def _refresh_all_positions_task(position_ids: list[int], user_id: str):
     """Run a full market data refresh in the background with its own DB session."""
     uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
     try:
         try:
-            _market_service.refresh_all_positions(uow.session)
+            _market_service.refresh_all_positions(uow.session, user_id=user_id)
         except Exception as exc:
             logger.warning("Background refresh-all failed", exc_info=True)
             detail = str(exc).strip() or exc.__class__.__name__
@@ -996,7 +1005,7 @@ def _refresh_all_positions_task(position_ids: list[int], user_id: str | None):
         uow.session.close()
 
 
-def _refresh_single_position_task(position_id: int, user_id: str | None):
+def _refresh_single_position_task(position_id: int, user_id: str):
     """Run a single-position market data refresh in the background with its own DB session."""
     uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
     pos = None
