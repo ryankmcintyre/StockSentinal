@@ -652,7 +652,7 @@ class MarketDataService:
         db.commit()
 
     def refresh_all_positions(
-        self, db: Session, force: bool = False,
+        self, db: Session, force: bool = False, user_id: str | None = None,
     ) -> int:
         """Refresh cached market data for all positions.
 
@@ -663,7 +663,10 @@ class MarketDataService:
 
         Returns the number of positions that were actually refreshed.
         """
-        positions = db.query(Position).all()
+        q = db.query(Position)
+        if user_id is not None:
+            q = q.filter(Position.user_id == user_id)
+        positions = q.all()
         logger.info(
             "Starting refresh for %d positions (force=%s)",
             len(positions), force,
@@ -679,7 +682,7 @@ class MarketDataService:
 
         import app.rule_config as rule_config
 
-        user_ids = {pos.user_id for pos in positions}
+        user_ids = {user_id} if user_id is not None else {pos.user_id for pos in positions}
         required: set[tuple[str, int]] = set()
         required_atr: set[tuple[str, int]] = set()
         weekly_lookback = 0

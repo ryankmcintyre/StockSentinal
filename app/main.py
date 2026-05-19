@@ -944,8 +944,7 @@ def _refresh_all_positions_task(position_ids: list[int], user_id: str):
     uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
     try:
         try:
-            for pos in uow.positions.get_by_ids(position_ids):
-                _market_service.refresh_position(pos, uow.session)
+            _market_service.refresh_all_positions(uow.session, user_id=user_id)
         except Exception as exc:
             logger.warning("Background refresh-all failed", exc_info=True)
             detail = str(exc).strip() or exc.__class__.__name__

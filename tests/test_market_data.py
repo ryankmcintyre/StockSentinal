@@ -375,6 +375,21 @@ class TestRefreshAllPositions:
         assert daily_refresh.call_count == 2
         assert weekly_refresh.call_count == 1
 
+    def test_user_id_scopes_refresh_all_query(self, mocker):
+        positions = [FakePosition(ticker="AAPL", investment_type="long-term")]
+        db = mocker.Mock()
+        db.query.return_value.filter.return_value.all.return_value = positions
+
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        daily_refresh = mocker.patch.object(self.service, "_refresh_daily")
+
+        refreshed = self.service.refresh_all_positions(db, user_id="test-user-id")
+
+        assert refreshed == 1
+        db.query.return_value.filter.assert_called_once()
+        daily_refresh.assert_called_once()
+
     def test_preloads_twelve_data_style_batches_before_refreshing_positions(self, mocker):
         from datetime import timedelta
 
