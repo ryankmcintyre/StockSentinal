@@ -12,6 +12,7 @@ coupled to the market data service.
 
 from __future__ import annotations
 
+import logging
 from datetime import datetime
 from typing import Optional, Protocol, Sequence
 
@@ -23,6 +24,8 @@ from app.models import (
     StrategyRuleConfig,
     User,
 )
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -136,6 +139,7 @@ class SqlAlchemyKeyLevelRepository:
         self, position_id: int, level_id: int,
     ) -> Optional[PositionKeyLevel]:
         if self._user_id is None:
+            logger.warning("Blocked key-level lookup without user context")
             return None
         query = (
             self._session.query(PositionKeyLevel)

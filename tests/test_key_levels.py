@@ -93,6 +93,10 @@ def _seed_key_level_with_user(
     user_id: str,
     is_active: bool = True,
 ) -> tuple[int, int]:
+    """Create a position and key level for a user.
+
+    Returns ``(position_id, key_level_id)``.
+    """
     db = session_maker()
     try:
         db.merge(User(id=user_id, email=f"{user_id}@example.com"))
