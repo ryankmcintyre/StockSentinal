@@ -612,7 +612,7 @@ class MarketDataService:
         # Refresh indicator caches for configured rules
         import app.rule_config as rule_config
 
-        rule_uow = as_uow(db, user_id=getattr(position, "user_id", None))
+        rule_uow = as_uow(db, user_id=position.user_id)
         required = rule_config.get_required_indicators(rule_uow)
         if required:
             cache_errors = self.refresh_indicator_cache(
@@ -679,7 +679,7 @@ class MarketDataService:
 
         import app.rule_config as rule_config
 
-        user_ids = {getattr(pos, "user_id", None) for pos in positions}
+        user_ids = {pos.user_id for pos in positions}
         required: set[tuple[str, int]] = set()
         required_atr: set[tuple[str, int]] = set()
         weekly_lookback = 0
