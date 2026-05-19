@@ -257,7 +257,7 @@ def _clear_all_stale_refresh_flags() -> int:
                 "cutoff": cutoff,
             },
         )
-        return result.rowcount or 0
+        return result.rowcount
 
 
 def _clear_position_market_data(position: Position) -> None:
