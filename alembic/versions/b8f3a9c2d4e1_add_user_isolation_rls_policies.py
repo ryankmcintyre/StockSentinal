@@ -1,7 +1,7 @@
 """add user isolation rls policies
 
 Revision ID: b8f3a9c2d4e1
-Revises: a1b2c3d4e5f6
+Revises: b7c8d9e0f1a2
 Create Date: 2026-05-19 20:32:36.685000
 
 """
@@ -11,7 +11,7 @@ from alembic import op
 
 
 revision: str = 'b8f3a9c2d4e1'
-down_revision: Union[str, Sequence[str], None] = 'a1b2c3d4e5f6'
+down_revision: Union[str, Sequence[str], None] = 'b7c8d9e0f1a2'
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
