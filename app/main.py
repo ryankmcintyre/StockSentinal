@@ -2,7 +2,6 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
-from urllib.parse import quote
 
 from dotenv import load_dotenv
 import httpx
@@ -96,13 +95,9 @@ _market_service = MarketDataService(_provider)
 async def lifespan(app: FastAPI):
     logger.info("Starting Stock Sentinel — initializing database")
     init_db()
-    uow = SqlAlchemyUnitOfWork(SessionLocal())
-    try:
-        cleared = _clear_stale_refresh_flags(uow)
-        if cleared:
-            logger.info("Cleared %d stale refresh-in-progress flags", cleared)
-    finally:
-        uow.session.close()
+    cleared = _clear_all_stale_refresh_flags()
+    if cleared:
+        logger.info("Cleared %d stale refresh-in-progress flags", cleared)
     logger.info("Database initialized, application ready")
     yield
 
@@ -168,11 +163,6 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
     return uow.users.get_by_id(user_id)
 
 
-def _url_safe_edit_position_path(position_id: int) -> str:
-    position_id_segment = quote(str(int(position_id)), safe="")
-    return f"/edit/{position_id_segment}"
-
-
 def _supabase_auth_configured() -> bool:
     """Return True when auth routes have the required server-side config."""
     return (
@@ -231,6 +221,27 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
         pos.refresh_started_at = None
     uow.commit()
     return len(stale_positions)
+
+
+def _clear_all_stale_refresh_flags() -> int:
+    """Reset stale in-progress flags for every user during application startup."""
+    session = SessionLocal()
+    try:
+        cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+        stale_positions = (
+            session.query(Position)
+            .filter(Position.refresh_in_progress.is_(True))
+            .filter(Position.refresh_started_at.is_not(None))
+            .filter(Position.refresh_started_at < cutoff)
+            .all()
+        )
+        for pos in stale_positions:
+            pos.refresh_in_progress = False
+            pos.refresh_started_at = None
+        session.commit()
+        return len(stale_positions)
+    finally:
+        session.close()
 
 
 def _clear_position_market_data(position: Position) -> None:
@@ -691,8 +702,11 @@ def lookup_ticker(
     ticker: str,
     _authenticated_uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
-    """Look up ticker matches and the latest price via the configured provider."""
-    # _authenticated_uow is intentionally unused; resolving it gates this quota-consuming endpoint.
+    """Look up ticker matches and the latest price via the configured provider.
+
+    Dependency injection of ``_authenticated_uow`` enforces authentication before
+    allowing access to this quota-consuming endpoint.
+    """
     api_key = get_market_data_api_key()
     if not api_key:
         return JSONResponse(
@@ -808,7 +822,7 @@ def add_position(
     if api_key:
         uow.positions.refresh_instance(pos)
         _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
-        background_tasks.add_task(_refresh_single_position_task, pos.id)
+        background_tasks.add_task(_refresh_single_position_task, pos.id, user_id)
 
     return RedirectResponse(url="/", status_code=303)
 
@@ -869,7 +883,7 @@ def edit_position(
     uow.commit()
     if ticker_changed and get_market_data_api_key():
         _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
-        background_tasks.add_task(_refresh_single_position_task, pos.id)
+        background_tasks.add_task(_refresh_single_position_task, pos.id, uow.user_id)
     logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, current_price)
     return RedirectResponse(url="/", status_code=303)
 
@@ -901,7 +915,7 @@ def add_key_level(
             "Added key level $%.2f for position id=%d %s",
             level_price, position_id, pos.ticker,
         )
-    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
+    return RedirectResponse(url=f"/edit/{pos.id}", status_code=303)
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/delete")
@@ -917,7 +931,8 @@ def delete_key_level(
         uow.key_levels.delete(kl)
         uow.commit()
         logger.info("Deleted key level id=%d for position id=%d", level_id, position_id)
-    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
+        return RedirectResponse(url=f"/edit/{kl.position_id}", status_code=303)
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/toggle")
@@ -932,7 +947,8 @@ def toggle_key_level(
     if kl:
         kl.is_active = not kl.is_active
         uow.commit()
-    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
+        return RedirectResponse(url=f"/edit/{kl.position_id}", status_code=303)
+    return RedirectResponse(url="/", status_code=303)
 
 
 @app.post("/delete/{position_id}")
@@ -955,12 +971,12 @@ def delete_position(
 # ---------------------------------------------------------------------------
 
 
-def _refresh_all_positions_task(position_ids: list[int]):
+def _refresh_all_positions_task(position_ids: list[int], user_id: str):
     """Run a full market data refresh in the background with its own DB session."""
-    uow = SqlAlchemyUnitOfWork(SessionLocal())
+    uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
     try:
         try:
-            _market_service.refresh_all_positions(uow.session)
+            _market_service.refresh_all_positions(uow.session, user_id=user_id)
         except Exception as exc:
             logger.warning("Background refresh-all failed", exc_info=True)
             detail = str(exc).strip() or exc.__class__.__name__
@@ -973,9 +989,9 @@ def _refresh_all_positions_task(position_ids: list[int]):
         uow.session.close()
 
 
-def _refresh_single_position_task(position_id: int):
+def _refresh_single_position_task(position_id: int, user_id: str):
     """Run a single-position market data refresh in the background with its own DB session."""
-    uow = SqlAlchemyUnitOfWork(SessionLocal())
+    uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
     pos = None
     try:
         _mark_positions_refresh_state(uow, [position_id], in_progress=True)
@@ -1013,7 +1029,7 @@ def refresh_all(
     position_ids = uow.positions.list_all_ids()
     if position_ids:
         _mark_positions_refresh_state(uow, position_ids, in_progress=True)
-        background_tasks.add_task(_refresh_all_positions_task, position_ids)
+        background_tasks.add_task(_refresh_all_positions_task, position_ids, uow.user_id)
     return RedirectResponse(url="/", status_code=303)
 
 

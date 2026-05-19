@@ -47,16 +47,43 @@ class SqlAlchemyUnitOfWork:
     explicitly — an uncommitted session is rolled back on close.
 
     Pass ``user_id`` to scope position and rule-config queries to a specific user.
-    Background tasks that operate across all users should omit ``user_id``.
+    Omitting ``user_id`` is only appropriate for user-repository operations such
+    as auth bootstrap flows.
     """
 
     def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
         self.user_id = user_id
-        self.positions = SqlAlchemyPositionRepository(session, user_id)
+        self._positions = (
+            SqlAlchemyPositionRepository(session, user_id)
+            if user_id is not None
+            else None
+        )
         self.key_levels = SqlAlchemyKeyLevelRepository(session, user_id)
-        self.rule_configs = SqlAlchemyRuleConfigRepository(session, user_id)
+        self._rule_configs = (
+            SqlAlchemyRuleConfigRepository(session, user_id)
+            if user_id is not None
+            else None
+        )
         self.users = SqlAlchemyUserRepository(session)
+
+    @property
+    def positions(self) -> PositionRepository:
+        if self._positions is None:
+            raise ValueError(
+                "Cannot access positions without user_id. "
+                "Create UnitOfWork with user_id parameter to access user-scoped repositories"
+            )
+        return self._positions
+
+    @property
+    def rule_configs(self) -> RuleConfigRepository:
+        if self._rule_configs is None:
+            raise ValueError(
+                "Cannot access rule_configs without user_id. "
+                "Create UnitOfWork with user_id parameter to access user-scoped repositories"
+            )
+        return self._rule_configs
 
     @property
     def session(self) -> Session:
@@ -75,6 +102,6 @@ class SqlAlchemyUnitOfWork:
         self._session.close()
 
 
-def as_uow(session: Session) -> SqlAlchemyUnitOfWork:
+def as_uow(session: Session, user_id: str | None = None) -> SqlAlchemyUnitOfWork:
     """Wrap an existing SQLAlchemy session in the default unit-of-work."""
-    return SqlAlchemyUnitOfWork(session)
+    return SqlAlchemyUnitOfWork(session, user_id=user_id)

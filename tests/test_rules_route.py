@@ -177,7 +177,7 @@ class TestRulesPage:
         db = _setup_db()
         try:
             from app.rule_config import ensure_strategy_rule_defaults
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             # Clear conditions so the rule has an empty params_json
             row = (
                 db.query(StrategyRuleConfig)
@@ -354,7 +354,7 @@ class TestRulesPage:
             side_effect=RuntimeError("Alpha Vantage API rate limit exceeded"),
         )
 
-        _refresh_single_position_task(position_id)
+        _refresh_single_position_task(position_id, "test-user-id")
 
         verify_db = testing_session()
         try:
@@ -418,7 +418,7 @@ class TestRulesPage:
 
             # Trigger defaults seeding (which should clean up deprecated keys)
             from app.rule_config import ensure_strategy_rule_defaults
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
 
             old_rows = (
                 db.query(StrategyRuleConfig)
@@ -443,7 +443,7 @@ class TestRulesPage:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
 
             for investment_type in ("long-term", "short-term"):
                 expected_sort_order_by_key = {
@@ -480,7 +480,7 @@ class TestExtensionAtrRules:
         db = _setup_db()
         try:
             from app.rule_config import ensure_strategy_rule_defaults
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key.in_(
@@ -526,18 +526,18 @@ class TestExtensionAtrRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             # Disable SELL_MA_ALL to isolate extension-rule indicator demands.
-            update_strategy_rule_config(as_uow(db), "long-term", "SELL_MA_ALL", enabled=False)
-            update_strategy_rule_config(as_uow(db), "short-term", "SELL_MA_ALL", enabled=False)
+            update_strategy_rule_config(as_uow(db, user_id="test-user-id"), "long-term", "SELL_MA_ALL", enabled=False)
+            update_strategy_rule_config(as_uow(db, user_id="test-user-id"), "short-term", "SELL_MA_ALL", enabled=False)
 
-            assert get_required_indicators(as_uow(db)) == set()
-            assert get_required_atr_indicators(as_uow(db)) == set()
+            assert get_required_indicators(as_uow(db, user_id="test-user-id")) == set()
+            assert get_required_atr_indicators(as_uow(db, user_id="test-user-id")) == set()
 
-            update_strategy_rule_config(as_uow(db), "long-term", "SELL_EXTENSION_ATR", enabled=True)
+            update_strategy_rule_config(as_uow(db, user_id="test-user-id"), "long-term", "SELL_EXTENSION_ATR", enabled=True)
 
-            assert get_required_indicators(as_uow(db)) == {("daily", 50)}
-            assert get_required_atr_indicators(as_uow(db)) == {("daily", 14)}
+            assert get_required_indicators(as_uow(db, user_id="test-user-id")) == {("daily", 50)}
+            assert get_required_atr_indicators(as_uow(db, user_id="test-user-id")) == {("daily", 14)}
         finally:
             db.close()
 
@@ -550,10 +550,10 @@ class TestExtensionAtrRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
-            update_strategy_rule_config(as_uow(db), "long-term", "SELL_MA_ALL", enabled=False)
-            update_strategy_rule_config(as_uow(db), "short-term", "SELL_MA_ALL", enabled=False)
-            assert get_required_atr_indicators(as_uow(db)) == set()
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
+            update_strategy_rule_config(as_uow(db, user_id="test-user-id"), "long-term", "SELL_MA_ALL", enabled=False)
+            update_strategy_rule_config(as_uow(db, user_id="test-user-id"), "short-term", "SELL_MA_ALL", enabled=False)
+            assert get_required_atr_indicators(as_uow(db, user_id="test-user-id")) == set()
         finally:
             db.close()
 
@@ -604,8 +604,8 @@ class TestExtensionAtrRules:
             db.commit()
             # Enable the extension sell rule; disable SELL_MA_ALL to avoid
             # interfering signals on this synthetic position.
-            update_strategy_rule_config(as_uow(db), "long-term", "SELL_MA_ALL", enabled=False)
-            update_strategy_rule_config(as_uow(db), "long-term", "SELL_EXTENSION_ATR", enabled=True)
+            update_strategy_rule_config(as_uow(db, user_id="test-user-id"), "long-term", "SELL_MA_ALL", enabled=False)
+            update_strategy_rule_config(as_uow(db, user_id="test-user-id"), "long-term", "SELL_EXTENSION_ATR", enabled=True)
         finally:
             db.close()
 
@@ -632,7 +632,7 @@ class TestWeeklyUpperWickRule:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key == "TRIM_WEEKLY_UPPER_WICK")
@@ -673,8 +673,8 @@ class TestWeeklyUpperWickRule:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
-            assert get_required_weekly_bar_lookback(as_uow(db)) == 0
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
+            assert get_required_weekly_bar_lookback(as_uow(db, user_id="test-user-id")) == 0
         finally:
             db.close()
 
@@ -687,11 +687,11 @@ class TestWeeklyUpperWickRule:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             update_strategy_rule_config(
-                as_uow(db), "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
+                as_uow(db, user_id="test-user-id"), "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
             )
-            assert get_required_weekly_bar_lookback(as_uow(db)) == 26
+            assert get_required_weekly_bar_lookback(as_uow(db, user_id="test-user-id")) == 26
         finally:
             db.close()
 
@@ -730,9 +730,9 @@ class TestWeeklyUpperWickRule:
             )
             db.commit()
             # Disable SELL_MA_ALL to avoid interference; enable upper-wick rule.
-            update_strategy_rule_config(as_uow(db), "long-term", "SELL_MA_ALL", enabled=False)
+            update_strategy_rule_config(as_uow(db, user_id="test-user-id"), "long-term", "SELL_MA_ALL", enabled=False)
             update_strategy_rule_config(
-                as_uow(db), "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
+                as_uow(db, user_id="test-user-id"), "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
             )
         finally:
             db.close()
@@ -760,7 +760,7 @@ class TestDistributionClusterRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key.in_(
@@ -783,12 +783,12 @@ class TestDistributionClusterRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             update_strategy_rule_config(
-                as_uow(db), "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
+                as_uow(db, user_id="test-user-id"), "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
             )
             # max(baseline=20, cluster_window=8) = 20
-            assert get_required_weekly_bar_lookback(as_uow(db)) == 20
+            assert get_required_weekly_bar_lookback(as_uow(db, user_id="test-user-id")) == 20
         finally:
             db.close()
 
@@ -826,9 +826,9 @@ class TestDistributionClusterRules:
                 ))
                 d -= _td(weeks=1)
             db.commit()
-            update_strategy_rule_config(as_uow(db), "long-term", "SELL_MA_ALL", enabled=False)
+            update_strategy_rule_config(as_uow(db, user_id="test-user-id"), "long-term", "SELL_MA_ALL", enabled=False)
             update_strategy_rule_config(
-                as_uow(db), "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
+                as_uow(db, user_id="test-user-id"), "long-term", "SELL_WEEKLY_DISTRIBUTION_CLUSTER", enabled=True
             )
         finally:
             db.close()
@@ -855,7 +855,7 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key.in_(
@@ -878,11 +878,11 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             update_strategy_rule_config(
-                as_uow(db), "long-term", "TRIM_WEEKLY_FIRST_LOWER_HIGH", enabled=True
+                as_uow(db, user_id="test-user-id"), "long-term", "TRIM_WEEKLY_FIRST_LOWER_HIGH", enabled=True
             )
-            assert get_required_weekly_bar_lookback(as_uow(db)) == 30
+            assert get_required_weekly_bar_lookback(as_uow(db, user_id="test-user-id")) == 30
         finally:
             db.close()
 
@@ -901,7 +901,7 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key == "TRIM_RELATIVE_WEAKNESS_VS_SECTOR")
@@ -922,12 +922,12 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
-            assert get_required_daily_bar_lookback(as_uow(db)) == 0
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
+            assert get_required_daily_bar_lookback(as_uow(db, user_id="test-user-id")) == 0
             update_strategy_rule_config(
-                as_uow(db), "long-term", "TRIM_RELATIVE_WEAKNESS_VS_SECTOR", enabled=True
+                as_uow(db, user_id="test-user-id"), "long-term", "TRIM_RELATIVE_WEAKNESS_VS_SECTOR", enabled=True
             )
-            assert get_required_daily_bar_lookback(as_uow(db)) == 63
+            assert get_required_daily_bar_lookback(as_uow(db, user_id="test-user-id")) == 63
         finally:
             db.close()
 
@@ -942,7 +942,7 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             rows = (
                 db.query(StrategyRuleConfig)
                 .filter(StrategyRuleConfig.rule_key == "SELL_FAILED_BREAKOUT_RECLAIM")
@@ -963,10 +963,10 @@ class TestLowerHighLowerLowRules:
 
         db = _setup_db()
         try:
-            ensure_strategy_rule_defaults(as_uow(db), user_id="test-user-id")
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
             update_strategy_rule_config(
-                as_uow(db), "long-term", "SELL_FAILED_BREAKOUT_RECLAIM", enabled=True
+                as_uow(db, user_id="test-user-id"), "long-term", "SELL_FAILED_BREAKOUT_RECLAIM", enabled=True
             )
-            assert get_required_weekly_bar_lookback(as_uow(db)) >= 52
+            assert get_required_weekly_bar_lookback(as_uow(db, user_id="test-user-id")) >= 52
         finally:
             db.close()
