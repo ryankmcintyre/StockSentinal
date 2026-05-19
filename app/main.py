@@ -168,7 +168,7 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
     return uow.users.get_by_id(user_id)
 
 
-def _edit_position_path(position_id: int) -> str:
+def _url_safe_edit_position_path(position_id: int) -> str:
     position_id_segment = quote(str(int(position_id)), safe="")
     return f"/edit/{position_id_segment}"
 
@@ -897,7 +897,7 @@ def add_key_level(
             "Added key level $%.2f for position id=%d %s",
             level_price, position_id, pos.ticker,
         )
-    return RedirectResponse(url=_edit_position_path(position_id), status_code=303)
+    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/delete")
@@ -913,7 +913,7 @@ def delete_key_level(
         uow.key_levels.delete(kl)
         uow.commit()
         logger.info("Deleted key level id=%d for position id=%d", level_id, position_id)
-    return RedirectResponse(url=_edit_position_path(position_id), status_code=303)
+    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/toggle")
@@ -928,7 +928,7 @@ def toggle_key_level(
     if kl:
         kl.is_active = not kl.is_active
         uow.commit()
-    return RedirectResponse(url=_edit_position_path(position_id), status_code=303)
+    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
 
 
 @app.post("/delete/{position_id}")
