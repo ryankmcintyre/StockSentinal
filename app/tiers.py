@@ -52,7 +52,7 @@ def check_can_add_position(user: User, current_position_count: int) -> None:
 
 
 def check_and_consume_refresh(user: User) -> None:
-    """Check the daily refresh budget and increment it. Caller must commit."""
+    """Check the daily refresh budget and increment the counter if under limit. Caller must commit."""
     limits = limits_for(user)
     if limits.max_refreshes_per_day is None:
         return

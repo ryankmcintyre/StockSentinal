@@ -1,6 +1,6 @@
 """Tests for refresh route and refresh-status API endpoint."""
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -427,7 +427,7 @@ class TestRefreshTierLimits:
             user = db.query(User).filter(User.id == "test-user-id").one()
             user.tier = tier
             user.refresh_count_today = count
-            user.refresh_count_date = datetime.now().date()
+            user.refresh_count_date = datetime.now(timezone.utc).date()
             db.commit()
         finally:
             db.close()
