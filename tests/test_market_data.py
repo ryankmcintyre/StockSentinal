@@ -36,6 +36,7 @@ class FakePosition:
         weekly_sma_20=None,
         weekly_retrieved_at=None,
         sector_benchmark_ticker=None,
+        user_id="test-user-id",
     ):
         self.ticker = ticker
         self.investment_type = investment_type
@@ -49,6 +50,7 @@ class FakePosition:
         self.weekly_sma_20 = weekly_sma_20
         self.weekly_retrieved_at = weekly_retrieved_at
         self.sector_benchmark_ticker = sector_benchmark_ticker
+        self.user_id = user_id
 
 
 # ---------------------------------------------------------------------------

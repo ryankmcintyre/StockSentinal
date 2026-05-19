@@ -57,23 +57,18 @@ class PositionRepository(Protocol):
 class SqlAlchemyPositionRepository:
     """SQLAlchemy-backed Position repository."""
 
-    def __init__(self, session: Session, user_id: str | None = None) -> None:
+    def __init__(self, session: Session, user_id: str) -> None:
         self._session = session
         self._user_id = user_id
 
     def _base_query(self):
-        q = self._session.query(Position)
-        if self._user_id is not None:
-            q = q.filter(Position.user_id == self._user_id)
-        return q
+        return self._session.query(Position).filter(Position.user_id == self._user_id)
 
     def list_all(self) -> Sequence[Position]:
         return self._base_query().all()
 
     def list_all_ids(self) -> list[int]:
-        q = self._session.query(Position.id)
-        if self._user_id is not None:
-            q = q.filter(Position.user_id == self._user_id)
+        q = self._session.query(Position.id).filter(Position.user_id == self._user_id)
         return [pid for (pid,) in q.all()]
 
     def get_by_id(self, position_id: int) -> Optional[Position]:
@@ -208,15 +203,14 @@ class RuleConfigRepository(Protocol):
 class SqlAlchemyRuleConfigRepository:
     """SQLAlchemy-backed rule config repository."""
 
-    def __init__(self, session: Session, user_id: str | None = None) -> None:
+    def __init__(self, session: Session, user_id: str) -> None:
         self._session = session
         self._user_id = user_id
 
     def _base_query(self):
-        q = self._session.query(StrategyRuleConfig)
-        if self._user_id is not None:
-            q = q.filter(StrategyRuleConfig.user_id == self._user_id)
-        return q
+        return self._session.query(StrategyRuleConfig).filter(
+            StrategyRuleConfig.user_id == self._user_id
+        )
 
     def list_by_investment_type(
         self, investment_type: str,

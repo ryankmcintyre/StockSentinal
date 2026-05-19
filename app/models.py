@@ -60,7 +60,7 @@ class Position(Base):
     # the relative-weakness rule is skipped when missing.
     sector_benchmark_ticker = Column(String, nullable=True)
 
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = relationship("User", back_populates="positions")
 
     # Manually identified historical key levels (issue #23 — failed
@@ -204,7 +204,7 @@ class StrategyRuleConfig(Base):
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     investment_type = Column(String, nullable=False)  # "long-term" or "short-term"
     rule_key = Column(String, nullable=False)
     enabled = Column(Boolean, nullable=False, default=True)

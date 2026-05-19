@@ -94,13 +94,9 @@ _market_service = MarketDataService(_provider)
 async def lifespan(app: FastAPI):
     logger.info("Starting Stock Sentinel — initializing database")
     init_db()
-    uow = SqlAlchemyUnitOfWork(SessionLocal())
-    try:
-        cleared = _clear_stale_refresh_flags(uow)
-        if cleared:
-            logger.info("Cleared %d stale refresh-in-progress flags", cleared)
-    finally:
-        uow.session.close()
+    cleared = _clear_all_stale_refresh_flags()
+    if cleared:
+        logger.info("Cleared %d stale refresh-in-progress flags", cleared)
     logger.info("Database initialized, application ready")
     yield
 
@@ -222,6 +218,27 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
         pos.refresh_started_at = None
     uow.commit()
     return len(stale_positions)
+
+
+def _clear_all_stale_refresh_flags() -> int:
+    """Reset stale in-progress flags for every user during application startup."""
+    session = SessionLocal()
+    try:
+        cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+        stale_positions = (
+            session.query(Position)
+            .filter(Position.refresh_in_progress.is_(True))
+            .filter(Position.refresh_started_at.is_not(None))
+            .filter(Position.refresh_started_at < cutoff)
+            .all()
+        )
+        for pos in stale_positions:
+            pos.refresh_in_progress = False
+            pos.refresh_started_at = None
+        session.commit()
+        return len(stale_positions)
+    finally:
+        session.close()
 
 
 def _clear_position_market_data(position: Position) -> None:
@@ -791,7 +808,7 @@ def add_position(
     if api_key:
         uow.positions.refresh_instance(pos)
         _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
-        background_tasks.add_task(_refresh_single_position_task, pos.id)
+        background_tasks.add_task(_refresh_single_position_task, pos.id, user_id)
 
     return RedirectResponse(url="/", status_code=303)
 
@@ -851,7 +868,7 @@ def edit_position(
     uow.commit()
     if ticker_changed and get_market_data_api_key():
         _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
-        background_tasks.add_task(_refresh_single_position_task, pos.id)
+        background_tasks.add_task(_refresh_single_position_task, pos.id, uow.user_id)
     logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, current_price)
     return RedirectResponse(url="/", status_code=303)
 
@@ -922,12 +939,13 @@ def delete_position(position_id: int, uow: UnitOfWork = Depends(get_authenticate
 # ---------------------------------------------------------------------------
 
 
-def _refresh_all_positions_task(position_ids: list[int]):
+def _refresh_all_positions_task(position_ids: list[int], user_id: str):
     """Run a full market data refresh in the background with its own DB session."""
-    uow = SqlAlchemyUnitOfWork(SessionLocal())
+    uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
     try:
         try:
-            _market_service.refresh_all_positions(uow.session)
+            for pos in uow.positions.get_by_ids(position_ids):
+                _market_service.refresh_position(pos, uow.session)
         except Exception as exc:
             logger.warning("Background refresh-all failed", exc_info=True)
             detail = str(exc).strip() or exc.__class__.__name__
@@ -940,9 +958,9 @@ def _refresh_all_positions_task(position_ids: list[int]):
         uow.session.close()
 
 
-def _refresh_single_position_task(position_id: int):
+def _refresh_single_position_task(position_id: int, user_id: str):
     """Run a single-position market data refresh in the background with its own DB session."""
-    uow = SqlAlchemyUnitOfWork(SessionLocal())
+    uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
     pos = None
     try:
         _mark_positions_refresh_state(uow, [position_id], in_progress=True)
@@ -976,7 +994,7 @@ def refresh_all(background_tasks: BackgroundTasks, uow: UnitOfWork = Depends(get
     position_ids = uow.positions.list_all_ids()
     if position_ids:
         _mark_positions_refresh_state(uow, position_ids, in_progress=True)
-        background_tasks.add_task(_refresh_all_positions_task, position_ids)
+        background_tasks.add_task(_refresh_all_positions_task, position_ids, uow.user_id)
     return RedirectResponse(url="/", status_code=303)
 
 

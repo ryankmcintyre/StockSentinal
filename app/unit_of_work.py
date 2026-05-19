@@ -47,7 +47,8 @@ class SqlAlchemyUnitOfWork:
     explicitly — an uncommitted session is rolled back on close.
 
     Pass ``user_id`` to scope position and rule-config queries to a specific user.
-    Background tasks that operate across all users should omit ``user_id``.
+    Omitting ``user_id`` is only appropriate for user-repository operations such
+    as auth bootstrap flows.
     """
 
     def __init__(self, session: Session, user_id: str | None = None) -> None:
@@ -75,6 +76,6 @@ class SqlAlchemyUnitOfWork:
         self._session.close()
 
 
-def as_uow(session: Session) -> SqlAlchemyUnitOfWork:
+def as_uow(session: Session, user_id: str | None = None) -> SqlAlchemyUnitOfWork:
     """Wrap an existing SQLAlchemy session in the default unit-of-work."""
-    return SqlAlchemyUnitOfWork(session)
+    return SqlAlchemyUnitOfWork(session, user_id=user_id)
