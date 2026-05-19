@@ -135,14 +135,14 @@ class SqlAlchemyKeyLevelRepository:
     def get_by_position_and_id(
         self, position_id: int, level_id: int,
     ) -> Optional[PositionKeyLevel]:
-        q = (
+        query = (
             self._session.query(PositionKeyLevel)
             .filter(PositionKeyLevel.id == level_id)
             .filter(PositionKeyLevel.position_id == position_id)
         )
         if self._user_id is not None:
-            q = q.join(Position).filter(Position.user_id == self._user_id)
-        return q.first()
+            query = query.join(Position).filter(Position.user_id == self._user_id)
+        return query.first()
 
     def add(self, key_level: PositionKeyLevel) -> None:
         self._session.add(key_level)
