@@ -687,8 +687,8 @@ class MarketDataService:
         required_atr: set[tuple[str, int]] = set()
         weekly_lookback = 0
         daily_lookback = 0
-        for user_id in user_ids:
-            rule_uow = as_uow(db, user_id=user_id)
+        for current_user_id in user_ids:
+            rule_uow = as_uow(db, user_id=current_user_id)
             required.update(rule_config.get_required_indicators(rule_uow))
             required_atr.update(rule_config.get_required_atr_indicators(rule_uow))
             weekly_lookback = max(
