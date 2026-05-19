@@ -11,6 +11,7 @@
 </section>
 
 <form method="post" action="/add" class="position-form" data-api-submit="true">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     {# Keep the asterisk visual-only because required inputs are already announced accessibly. #}
     <p class="form-legend"><span class="required-indicator" aria-hidden="true">*</span> Required field</p>
     <div class="form-group">

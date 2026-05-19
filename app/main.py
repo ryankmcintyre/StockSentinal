@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 import httpx
@@ -38,6 +39,7 @@ from app.config import (
     has_supabase_publishable_key,
     has_session_secret_key,
 )
+from app.csrf import CSRFMiddleware, csrf_token_for_template, validate_csrf
 from app.database import SessionLocal, get_authenticated_uow, get_optional_uow, get_uow, init_db
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
@@ -106,8 +108,10 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Stock Sentinel", lifespan=lifespan)
+app.add_middleware(CSRFMiddleware)
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
+templates.env.globals["csrf_token"] = csrf_token_for_template
 
 
 @app.exception_handler(RequiresLoginException)
@@ -162,6 +166,11 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
     if not user_id:
         return None
     return uow.users.get_by_id(user_id)
+
+
+def _url_safe_edit_position_path(position_id: int) -> str:
+    position_id_segment = quote(str(int(position_id)), safe="")
+    return f"/edit/{position_id_segment}"
 
 
 def _supabase_auth_configured() -> bool:
@@ -512,7 +521,7 @@ def oauth_callback(
 
 
 @app.post("/auth/logout")
-def logout():
+def logout(_csrf: None = Depends(validate_csrf)):
     """Clear the session cookie and redirect to login."""
     response = RedirectResponse(url="/auth/login", status_code=303)
     response.delete_cookie(key=SESSION_COOKIE_NAME)
@@ -623,6 +632,7 @@ def update_rule(
     investment_type: str,
     rule_key: str,
     enabled: str | None = Form(None),
+    _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Update enablement for a strategy rule."""
@@ -647,6 +657,7 @@ def add_sell_ma_condition(
     investment_type: str,
     interval: str = Form(...),
     time_period: int = Form(...),
+    _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Add an MA condition to the SELL_MA_ALL rule for a strategy."""
@@ -663,6 +674,7 @@ def delete_sell_ma_condition(
     investment_type: str,
     interval: str = Form(...),
     time_period: int = Form(...),
+    _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Remove an MA condition from the SELL_MA_ALL rule for a strategy."""
@@ -736,6 +748,7 @@ def add_position(
     investment_type: str = Form(...),
     notes: str = Form(""),
     sector_benchmark_ticker: str = Form(""),
+    _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Create a new position and redirect to portfolio.
@@ -825,6 +838,7 @@ def edit_position(
     current_price: float = Form(...),
     notes: str = Form(""),
     sector_benchmark_ticker: str = Form(""),
+    _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Update an existing position and redirect to portfolio.
@@ -862,6 +876,7 @@ def add_key_level(
     level_price: float = Form(...),
     label: str = Form(""),
     notes: str = Form(""),
+    _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Add a manually-identified key level to a position (issue #23)."""
@@ -882,32 +897,46 @@ def add_key_level(
             "Added key level $%.2f for position id=%d %s",
             level_price, position_id, pos.ticker,
         )
-    return RedirectResponse(url=f"/edit/{position_id}", status_code=303)
+    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/delete")
-def delete_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(get_authenticated_uow)):
+def delete_key_level(
+    position_id: int,
+    level_id: int,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
     """Delete a key level from a position."""
     kl = uow.key_levels.get_by_position_and_id(position_id, level_id)
     if kl:
         uow.key_levels.delete(kl)
         uow.commit()
         logger.info("Deleted key level id=%d for position id=%d", level_id, position_id)
-    return RedirectResponse(url=f"/edit/{position_id}", status_code=303)
+    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
 
 
 @app.post("/edit/{position_id}/key-levels/{level_id}/toggle")
-def toggle_key_level(position_id: int, level_id: int, uow: UnitOfWork = Depends(get_authenticated_uow)):
+def toggle_key_level(
+    position_id: int,
+    level_id: int,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
     """Toggle the is_active flag on a key level."""
     kl = uow.key_levels.get_by_position_and_id(position_id, level_id)
     if kl:
         kl.is_active = not kl.is_active
         uow.commit()
-    return RedirectResponse(url=f"/edit/{position_id}", status_code=303)
+    return RedirectResponse(url=_url_safe_edit_position_path(position_id), status_code=303)
 
 
 @app.post("/delete/{position_id}")
-def delete_position(position_id: int, uow: UnitOfWork = Depends(get_authenticated_uow)):
+def delete_position(
+    position_id: int,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
     """Delete a position and redirect to portfolio."""
     pos = uow.positions.get_by_id(position_id)
     if pos:
@@ -967,7 +996,11 @@ def _refresh_single_position_task(position_id: int):
 
 
 @app.post("/refresh")
-def refresh_all(background_tasks: BackgroundTasks, uow: UnitOfWork = Depends(get_authenticated_uow)):
+def refresh_all(
+    background_tasks: BackgroundTasks,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
     """Refresh cached market data for all positions (respects staleness checks)."""
     _clear_stale_refresh_flags(uow)
     if uow.positions.has_any_refresh_in_progress():
@@ -983,6 +1016,7 @@ def refresh_all(background_tasks: BackgroundTasks, uow: UnitOfWork = Depends(get
 @app.post("/refresh/{position_id}")
 def refresh_single(
     position_id: int,
+    _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Refresh cached market data for a single position inline.

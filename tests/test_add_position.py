@@ -16,6 +16,7 @@ from app.main import _market_service, app
 from app.market_data.exceptions import MarketDataError
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
+from tests.csrf_utils import csrf_form_data
 
 
 @pytest.fixture(autouse=True)
@@ -96,7 +97,7 @@ class TestAddPositionFetchesPrice:
             patch("app.main.get_market_data_api_key", return_value="fake_key"),
             patch.object(_market_service, "fetch_daily_series", return_value=fake_bars) as mock_fetch,
         ):
-            resp = client.post("/add", data=FORM_DATA_BASE, follow_redirects=False)
+            resp = client.post("/add", data=csrf_form_data(client, FORM_DATA_BASE), follow_redirects=False)
 
         assert resp.status_code == 303
         mock_fetch.assert_called_once_with("AAPL")
@@ -104,7 +105,7 @@ class TestAddPositionFetchesPrice:
     def test_falls_back_to_zero_when_no_api_key(self, client):
         """When the API key is not configured, current_price should default to 0."""
         with patch("app.main.get_market_data_api_key", return_value=None):
-            resp = client.post("/add", data=FORM_DATA_BASE, follow_redirects=False)
+            resp = client.post("/add", data=csrf_form_data(client, FORM_DATA_BASE), follow_redirects=False)
 
         assert resp.status_code == 303
 
@@ -118,7 +119,7 @@ class TestAddPositionFetchesPrice:
                 side_effect=MarketDataError("boom"),
             ),
         ):
-            resp = client.post("/add", data=FORM_DATA_BASE, follow_redirects=False)
+            resp = client.post("/add", data=csrf_form_data(client, FORM_DATA_BASE), follow_redirects=False)
 
         assert resp.status_code == 303
 
@@ -164,7 +165,7 @@ class TestAddPositionFormRemoved:
         ignored — the price comes from Alpha Vantage, not the user."""
         data = {**FORM_DATA_BASE, "current_price": "999.99"}
         with patch("app.main.get_market_data_api_key", return_value=None):
-            resp = client.post("/add", data=data, follow_redirects=False)
+            resp = client.post("/add", data=csrf_form_data(client, data), follow_redirects=False)
 
         # Should still succeed (extra form fields are ignored by FastAPI)
         assert resp.status_code == 303
