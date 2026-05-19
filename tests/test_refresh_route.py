@@ -228,7 +228,11 @@ class TestRefreshLoadingCues:
             db.close()
 
         mock_refresh = mocker.patch.object(_market_service, "refresh_position")
-        resp = client.post(f"/refresh/{position_id}", data=csrf_form_data(client), follow_redirects=False)
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
         assert resp.status_code == 303
         mock_refresh.assert_not_called()
 

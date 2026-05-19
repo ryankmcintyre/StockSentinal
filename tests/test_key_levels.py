@@ -176,7 +176,11 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        client.post(f"/edit/{pos_id}/key-levels/{kl_id}/toggle", data=csrf_form_data(client), follow_redirects=False)
+        client.post(
+            f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
 
         db = _setup_db()
         try:
@@ -187,7 +191,11 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        client.post(f"/edit/{pos_id}/key-levels/{kl_id}/toggle", data=csrf_form_data(client), follow_redirects=False)
+        client.post(
+            f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
 
         db = _setup_db()
         try:
@@ -210,7 +218,11 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        client.post(f"/delete/{pos_id}", data=csrf_form_data(client), follow_redirects=False)
+        client.post(
+            f"/delete/{pos_id}",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
 
         db = _setup_db()
         try:
