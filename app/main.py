@@ -10,6 +10,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, Form, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import text
 
 load_dotenv()
 
@@ -39,7 +40,14 @@ from app.config import (
     has_session_secret_key,
 )
 from app.csrf import CSRFMiddleware, csrf_token_for_template, validate_csrf
-from app.database import SessionLocal, get_authenticated_uow, get_optional_uow, get_uow, init_db
+from app.database import (
+    SessionLocal,
+    engine,
+    get_authenticated_uow,
+    get_optional_uow,
+    get_uow,
+    init_db,
+)
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 from app.market_data.service import MarketDataService
@@ -163,6 +171,11 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
     return uow.users.get_by_id(user_id)
 
 
+def _url_safe_edit_position_path(position_id: int) -> str:
+    position_id_segment = str(int(position_id))
+    return f"/edit/{position_id_segment}"
+
+
 def _supabase_auth_configured() -> bool:
     """Return True when auth routes have the required server-side config."""
     return (
@@ -224,24 +237,27 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
 
 
 def _clear_all_stale_refresh_flags() -> int:
-    """Reset stale in-progress flags for every user during application startup."""
-    session = SessionLocal()
-    try:
-        cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
-        stale_positions = (
-            session.query(Position)
-            .filter(Position.refresh_in_progress.is_(True))
-            .filter(Position.refresh_started_at.is_not(None))
-            .filter(Position.refresh_started_at < cutoff)
-            .all()
+    """Reset stale refresh flags across all users during application startup."""
+    cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    with engine.begin() as conn:
+        result = conn.execute(
+            text(
+                """
+                UPDATE positions
+                SET refresh_in_progress = :not_in_progress,
+                    refresh_started_at = NULL
+                WHERE refresh_in_progress = :in_progress
+                  AND refresh_started_at IS NOT NULL
+                  AND refresh_started_at < :cutoff
+                """
+            ),
+            {
+                "not_in_progress": False,
+                "in_progress": True,
+                "cutoff": cutoff,
+            },
         )
-        for pos in stale_positions:
-            pos.refresh_in_progress = False
-            pos.refresh_started_at = None
-        session.commit()
-        return len(stale_positions)
-    finally:
-        session.close()
+        return result.rowcount if result.rowcount is not None else 0
 
 
 def _clear_position_market_data(position: Position) -> None:

@@ -205,6 +205,99 @@ class TestRefreshLoadingCues:
         finally:
             verify_db.close()
 
+    def test_startup_stale_cleanup_clears_positions_for_all_users(
+        self, _setup_db, mocker
+    ):
+        from app.main import _clear_all_stale_refresh_flags
+
+        db = _setup_db()
+        try:
+            db.add_all(
+                [
+                    User(
+                        id="alice-user-id",
+                        email="alice@example.com",
+                        display_name="Alice",
+                        created_at=datetime.now(),
+                    ),
+                    User(
+                        id="bob-user-id",
+                        email="bob@example.com",
+                        display_name="Bob",
+                        created_at=datetime.now(),
+                    ),
+                    Position(
+                        ticker="AAPL",
+                        company_name="Apple Inc.",
+                        cost_basis=100.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=115.0,
+                        user_id="alice-user-id",
+                        refresh_in_progress=True,
+                        refresh_started_at=datetime.now() - timedelta(minutes=6),
+                    ),
+                    Position(
+                        ticker="MSFT",
+                        company_name="Microsoft Corp.",
+                        cost_basis=200.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=215.0,
+                        user_id="bob-user-id",
+                        refresh_in_progress=True,
+                        refresh_started_at=datetime.now() - timedelta(minutes=6),
+                    ),
+                    Position(
+                        ticker="NVDA",
+                        company_name="NVIDIA Corp.",
+                        cost_basis=300.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=315.0,
+                        user_id="test-user-id",
+                        refresh_in_progress=True,
+                        refresh_started_at=datetime.now(),
+                    ),
+                ]
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        mocker.patch("app.main.engine", _setup_db.kw["bind"])
+
+        assert _clear_all_stale_refresh_flags() == 2
+
+        verify_db = _setup_db()
+        try:
+            positions = {pos.ticker: pos for pos in verify_db.query(Position).all()}
+            assert positions["AAPL"].refresh_in_progress is False
+            assert positions["AAPL"].refresh_started_at is None
+            assert positions["MSFT"].refresh_in_progress is False
+            assert positions["MSFT"].refresh_started_at is None
+            assert positions["NVDA"].refresh_in_progress is True
+            assert positions["NVDA"].refresh_started_at is not None
+        finally:
+            verify_db.close()
+
+    def test_startup_stale_cleanup_uses_unscoped_connection(self, mocker):
+        from app.main import _clear_all_stale_refresh_flags
+
+        engine = mocker.Mock()
+        connection = mocker.Mock()
+        begin_context = mocker.MagicMock()
+        begin_context.__enter__.return_value = connection
+        engine.begin.return_value = begin_context
+        connection.execute.return_value = mocker.Mock(rowcount=3)
+        mocker.patch("app.main.engine", engine)
+
+        assert _clear_all_stale_refresh_flags() == 3
+
+        engine.begin.assert_called_once()
+        connection.execute.assert_called_once()
+        assert "UPDATE positions" in str(connection.execute.call_args.args[0])
+
     def test_single_refresh_route_noops_when_already_in_progress(
         self, client, _setup_db, mocker
     ):
@@ -241,24 +334,25 @@ class TestRefreshLoadingCues:
     ):
         db = _setup_db()
         try:
-            db.add(
-                Position(
-                    ticker="AAPL",
-                    company_name="Apple Inc.",
-                    cost_basis=100.0,
-                    initial_purchase_date=date(2025, 1, 1),
-                    investment_type="long-term",
-                    current_price=115.0,
-                    notes=None,
-                )
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
             )
+            db.add(pos)
             db.commit()
+            position_id = pos.id
         finally:
             db.close()
 
-        mocker.patch("app.main._refresh_all_positions_task", return_value=None)
+        mock_refresh_all = mocker.patch("app.main._refresh_all_positions_task", return_value=None)
         resp = client.post("/refresh", data=csrf_form_data(client), follow_redirects=False)
         assert resp.status_code == 303
+        mock_refresh_all.assert_called_once_with([position_id], "test-user-id")
 
         verify_db = _setup_db()
         try:
@@ -268,3 +362,41 @@ class TestRefreshLoadingCues:
             assert pos.refresh_started_at is not None
         finally:
             verify_db.close()
+
+    def test_refresh_all_background_task_uses_user_scoped_uow(self, mocker):
+        from app.main import _refresh_all_positions_task
+
+        created_user_ids = []
+        expected_position_ids = [123]
+        session = mocker.Mock()
+
+        class FakePositions:
+            def get_by_ids(self, position_ids):
+                assert position_ids == expected_position_ids
+                return []
+
+        class FakeUow:
+            def __init__(self, _session, user_id=None):
+                created_user_ids.append(user_id)
+                self.session = session
+                self.positions = FakePositions()
+
+            def commit(self):
+                pass
+
+            def rollback(self):
+                pass
+
+        mocker.patch("app.main.SessionLocal", return_value=session)
+        mocker.patch("app.main.SqlAlchemyUnitOfWork", FakeUow)
+        refresh_all = mocker.patch.object(
+            _market_service,
+            "refresh_all_positions",
+            return_value=0,
+        )
+
+        _refresh_all_positions_task(expected_position_ids, "test-user-id")
+
+        assert created_user_ids == ["test-user-id"]
+        refresh_all.assert_called_once_with(session, user_id="test-user-id")
+        session.close.assert_called_once()

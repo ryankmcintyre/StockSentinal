@@ -254,14 +254,11 @@ class TestKeyLevelRoutes:
 
         db = _setup_db()
         try:
-            kl = (
-                db.query(PositionKeyLevel)
-                .join(Position)
-                .filter(PositionKeyLevel.id == kl_id)
-                .first()
-            )
-            assert kl is not None
-            assert kl.position.user_id == "alice-user-id"
+            retrieved_kl = db.query(PositionKeyLevel).filter(
+                PositionKeyLevel.id == kl_id
+            ).first()
+            assert retrieved_kl is not None
+            assert retrieved_kl.position.user_id == "alice-user-id"
         finally:
             db.close()
 
@@ -281,15 +278,12 @@ class TestKeyLevelRoutes:
 
         db = _setup_db()
         try:
-            kl = (
-                db.query(PositionKeyLevel)
-                .join(Position)
-                .filter(PositionKeyLevel.id == kl_id)
-                .first()
-            )
-            assert kl is not None
-            assert kl.position.user_id == "alice-user-id"
-            assert kl.is_active is True
+            retrieved_kl = db.query(PositionKeyLevel).filter(
+                PositionKeyLevel.id == kl_id
+            ).first()
+            assert retrieved_kl is not None
+            assert retrieved_kl.position.user_id == "alice-user-id"
+            assert retrieved_kl.is_active is True
         finally:
             db.close()
 

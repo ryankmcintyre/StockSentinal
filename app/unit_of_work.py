@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Protocol
 
+from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
 from app.repositories import (
@@ -16,6 +18,8 @@ from app.repositories import (
     SqlAlchemyUserRepository,
     UserRepository,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class UnitOfWork(Protocol):
@@ -54,6 +58,10 @@ class SqlAlchemyUnitOfWork:
     def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
         self.user_id = user_id
+        self._is_postgresql = session.get_bind().dialect.name == "postgresql"
+        self._uses_transaction_hook = False
+        self._install_current_user_id_hook()
+        self._ensure_current_user_id()
         self._positions = (
             SqlAlchemyPositionRepository(session, user_id)
             if user_id is not None
@@ -89,11 +97,48 @@ class SqlAlchemyUnitOfWork:
     def session(self) -> Session:
         return self._session
 
+    def _set_current_user_id(self) -> None:
+        if self.user_id is None or not self._is_postgresql:
+            return
+
+        self._session.execute(
+            text("SELECT set_config('app.current_user_id', :user_id, true)"),
+            {"user_id": self.user_id},
+        )
+
+    def _install_current_user_id_hook(self) -> None:
+        if self.user_id is None or not self._is_postgresql:
+            return
+        if not hasattr(self._session, "dispatch"):
+            logger.debug(
+                "Skipping app.current_user_id transaction hook because session has no dispatch"
+            )
+            return
+
+        user_id = self.user_id
+        assert user_id is not None
+
+        @event.listens_for(self._session, "after_begin")
+        def _set_current_user_id_on_begin(_session, _transaction, connection):
+            connection.execute(
+                text("SELECT set_config('app.current_user_id', :user_id, true)"),
+                {"user_id": user_id},
+            )
+
+        self._uses_transaction_hook = True
+
+    def _ensure_current_user_id(self) -> None:
+        if self._uses_transaction_hook:
+            return
+        self._set_current_user_id()
+
     def commit(self) -> None:
         self._session.commit()
+        self._ensure_current_user_id()
 
     def rollback(self) -> None:
         self._session.rollback()
+        self._ensure_current_user_id()
 
     def __enter__(self) -> "SqlAlchemyUnitOfWork":
         return self
