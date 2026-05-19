@@ -70,13 +70,19 @@ class SqlAlchemyUnitOfWork:
     @property
     def positions(self) -> PositionRepository:
         if self._positions is None:
-            raise ValueError("Cannot access positions: UnitOfWork requires user_id")
+            raise ValueError(
+                "Cannot access positions without user_id. "
+                "Create UnitOfWork with user_id parameter to access user-scoped repositories"
+            )
         return self._positions
 
     @property
     def rule_configs(self) -> RuleConfigRepository:
         if self._rule_configs is None:
-            raise ValueError("Cannot access rule_configs: UnitOfWork requires user_id")
+            raise ValueError(
+                "Cannot access rule_configs without user_id. "
+                "Create UnitOfWork with user_id parameter to access user-scoped repositories"
+            )
         return self._rule_configs
 
     @property

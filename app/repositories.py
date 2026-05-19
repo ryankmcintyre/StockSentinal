@@ -28,7 +28,7 @@ from app.models import (
 def _require_user_id(user_id: str | None) -> str:
     """Validate user-scoped repositories are never constructed without a user."""
     if user_id is None:
-        raise ValueError("user_id is required")
+        raise ValueError("user_id is required for user-scoped repository construction")
     return user_id
 
 
