@@ -25,6 +25,12 @@ from app.models import (
 )
 
 
+def _require_user_id(user_id: str | None) -> str:
+    if user_id is None:
+        raise ValueError("user_id is required")
+    return user_id
+
+
 # ---------------------------------------------------------------------------
 # Position repository
 # ---------------------------------------------------------------------------
@@ -57,11 +63,9 @@ class PositionRepository(Protocol):
 class SqlAlchemyPositionRepository:
     """SQLAlchemy-backed Position repository."""
 
-    def __init__(self, session: Session, user_id: str | None) -> None:
-        if user_id is None:
-            raise ValueError("user_id is required")
+    def __init__(self, session: Session, user_id: str) -> None:
         self._session = session
-        self._user_id = user_id
+        self._user_id = _require_user_id(user_id)
 
     def _base_query(self):
         return self._session.query(Position).filter(Position.user_id == self._user_id)
@@ -205,11 +209,9 @@ class RuleConfigRepository(Protocol):
 class SqlAlchemyRuleConfigRepository:
     """SQLAlchemy-backed rule config repository."""
 
-    def __init__(self, session: Session, user_id: str | None) -> None:
-        if user_id is None:
-            raise ValueError("user_id is required")
+    def __init__(self, session: Session, user_id: str) -> None:
         self._session = session
-        self._user_id = user_id
+        self._user_id = _require_user_id(user_id)
 
     def _base_query(self):
         return self._session.query(StrategyRuleConfig).filter(
