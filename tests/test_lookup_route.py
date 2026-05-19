@@ -13,10 +13,10 @@ from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 
 @pytest.fixture()
 def authenticated_client():
-    def mock_authenticated_uow():
+    def mock_auth_check():
         yield None
 
-    app.dependency_overrides[get_authenticated_uow] = mock_authenticated_uow
+    app.dependency_overrides[get_authenticated_uow] = mock_auth_check
     with TestClient(app) as client:
         yield client
     app.dependency_overrides.clear()

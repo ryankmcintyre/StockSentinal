@@ -677,10 +677,10 @@ def delete_sell_ma_condition(
 @app.get("/api/lookup/{ticker}")
 def lookup_ticker(
     ticker: str,
-    _auth_check: UnitOfWork = Depends(get_authenticated_uow),
+    _authenticated_uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
     """Look up ticker matches and the latest price via the configured provider."""
-    # _auth_check is intentionally unused; its dependency gates this quota-consuming endpoint.
+    # _authenticated_uow is intentionally unused; resolving it gates this quota-consuming endpoint.
     api_key = get_market_data_api_key()
     if not api_key:
         return JSONResponse(
