@@ -53,10 +53,10 @@ def test_unscoped_unit_of_work_allows_users_but_rejects_scoped_repositories(sess
 
     assert uow.users is not None
 
-    with pytest.raises(ValueError, match="user_id is required"):
+    with pytest.raises(ValueError, match="Cannot access positions"):
         _ = uow.positions
 
-    with pytest.raises(ValueError, match="user_id is required"):
+    with pytest.raises(ValueError, match="Cannot access rule_configs"):
         _ = uow.rule_configs
 
 
