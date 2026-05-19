@@ -128,14 +128,21 @@ class KeyLevelRepository(Protocol):
 class SqlAlchemyKeyLevelRepository:
     """SQLAlchemy-backed KeyLevel repository."""
 
-    def __init__(self, session: Session) -> None:
+    def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
+        self._user_id = user_id
+
+    def _base_query(self):
+        q = self._session.query(PositionKeyLevel)
+        if self._user_id is not None:
+            q = q.join(Position).filter(Position.user_id == self._user_id)
+        return q
 
     def get_by_position_and_id(
         self, position_id: int, level_id: int,
     ) -> Optional[PositionKeyLevel]:
         return (
-            self._session.query(PositionKeyLevel)
+            self._base_query()
             .filter(PositionKeyLevel.id == level_id)
             .filter(PositionKeyLevel.position_id == position_id)
             .first()

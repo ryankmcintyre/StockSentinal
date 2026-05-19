@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.repositories import (
@@ -53,8 +54,10 @@ class SqlAlchemyUnitOfWork:
     def __init__(self, session: Session, user_id: str | None = None) -> None:
         self._session = session
         self.user_id = user_id
+        self._is_postgresql = session.get_bind().dialect.name == "postgresql"
+        self._set_current_user_id()
         self.positions = SqlAlchemyPositionRepository(session, user_id)
-        self.key_levels = SqlAlchemyKeyLevelRepository(session)
+        self.key_levels = SqlAlchemyKeyLevelRepository(session, user_id)
         self.rule_configs = SqlAlchemyRuleConfigRepository(session, user_id)
         self.users = SqlAlchemyUserRepository(session)
 
@@ -62,11 +65,22 @@ class SqlAlchemyUnitOfWork:
     def session(self) -> Session:
         return self._session
 
+    def _set_current_user_id(self) -> None:
+        if self.user_id is None or not self._is_postgresql:
+            return
+
+        self._session.execute(
+            text("SELECT set_config('app.current_user_id', :user_id, true)"),
+            {"user_id": self.user_id},
+        )
+
     def commit(self) -> None:
         self._session.commit()
+        self._set_current_user_id()
 
     def rollback(self) -> None:
         self._session.rollback()
+        self._set_current_user_id()
 
     def __enter__(self) -> "SqlAlchemyUnitOfWork":
         return self

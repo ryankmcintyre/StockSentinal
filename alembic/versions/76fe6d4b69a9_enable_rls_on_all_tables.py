@@ -32,10 +32,8 @@ _TABLES = [
 def upgrade() -> None:
     """Enable Row-Level Security on all tables (PostgreSQL only).
 
-    With RLS enabled and no permissive policies, the Supabase public REST API
-    (PostgREST / anon role) is blocked from reading or writing any data.
-    The application's direct database connection uses the postgres superuser,
-    which bypasses RLS entirely, so app behaviour is unaffected.
+    This migration turns RLS on for the existing tables.  Per-user policies
+    are added in a later migration after the user_id columns exist.
     """
     bind = op.get_bind()
     if bind.dialect.name != "postgresql":
