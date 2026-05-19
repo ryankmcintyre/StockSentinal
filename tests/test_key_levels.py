@@ -88,7 +88,7 @@ def _seed_position(SessionMaker, **overrides) -> int:
         db.close()
 
 
-def _create_key_level_for_user(
+def _seed_key_level_with_user(
     session_maker,
     user_id: str,
     is_active: bool = True,
@@ -96,6 +96,7 @@ def _create_key_level_for_user(
     db = session_maker()
     try:
         db.add(User(id=user_id, email=f"{user_id}@example.com"))
+        db.flush()
         pos = Position(
             ticker="AAPL",
             company_name="Apple Inc.",
@@ -228,7 +229,7 @@ class TestKeyLevelRoutes:
             db.close()
 
     def test_delete_key_level_for_other_user_is_noop(self, _setup_db, client):
-        pos_id, kl_id = _create_key_level_for_user(_setup_db, "alice-user-id")
+        pos_id, kl_id = _seed_key_level_with_user(_setup_db, "alice-user-id")
 
         resp = client.post(
             f"/edit/{pos_id}/key-levels/{kl_id}/delete",
@@ -245,7 +246,7 @@ class TestKeyLevelRoutes:
             db.close()
 
     def test_toggle_key_level_for_other_user_is_noop(self, _setup_db, client):
-        pos_id, kl_id = _create_key_level_for_user(
+        pos_id, kl_id = _seed_key_level_with_user(
             _setup_db,
             "alice-user-id",
             is_active=True,
