@@ -88,8 +88,12 @@ def _seed_position(SessionMaker, **overrides) -> int:
         db.close()
 
 
-def _seed_key_level_for_user(SessionMaker, user_id: str, is_active: bool = True) -> tuple[int, int]:
-    db = SessionMaker()
+def _seed_key_level_for_user(
+    session_maker,
+    user_id: str,
+    is_active: bool = True,
+) -> tuple[int, int]:
+    db = session_maker()
     try:
         db.add(User(id=user_id, email=f"{user_id}@example.com"))
         pos = Position(
