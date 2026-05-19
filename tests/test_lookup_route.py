@@ -91,7 +91,7 @@ class TestLookupRoute:
         assert resp.status_code == 303
         assert resp.headers["location"] == "/auth/login"
 
-        assert app.dependency_overrides[get_authenticated_uow] is (
+        assert app.dependency_overrides[get_authenticated_uow] == (
             authenticated_uow_override
         )
 
