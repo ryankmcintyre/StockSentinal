@@ -139,7 +139,11 @@ class SqlAlchemyKeyLevelRepository:
         self, position_id: int, level_id: int,
     ) -> Optional[PositionKeyLevel]:
         if self._user_id is None:
-            logger.warning("Blocked key-level lookup without user context")
+            logger.warning(
+                "Blocked key-level lookup without user context: position_id=%d level_id=%d",
+                position_id,
+                level_id,
+            )
             return None
         query = (
             self._session.query(PositionKeyLevel)
