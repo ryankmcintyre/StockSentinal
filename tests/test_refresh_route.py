@@ -269,3 +269,40 @@ class TestRefreshLoadingCues:
             assert pos.refresh_started_at is not None
         finally:
             verify_db.close()
+
+    def test_refresh_all_background_task_uses_user_scoped_uow(self, mocker):
+        from app.main import _refresh_all_positions_task
+
+        created_user_ids = []
+        session = mocker.Mock()
+
+        class FakePositions:
+            def get_by_ids(self, position_ids):
+                assert position_ids == [123]
+                return []
+
+        class FakeUow:
+            def __init__(self, _session, user_id=None):
+                created_user_ids.append(user_id)
+                self.session = session
+                self.positions = FakePositions()
+
+            def commit(self):
+                pass
+
+            def rollback(self):
+                pass
+
+        mocker.patch("app.main.SessionLocal", return_value=session)
+        mocker.patch("app.main.SqlAlchemyUnitOfWork", FakeUow)
+        refresh_all = mocker.patch.object(
+            _market_service,
+            "refresh_all_positions",
+            return_value=0,
+        )
+
+        _refresh_all_positions_task([123], "test-user-id")
+
+        assert created_user_ids == ["test-user-id"]
+        refresh_all.assert_called_once_with(session)
+        session.close.assert_called_once()
