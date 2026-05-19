@@ -38,6 +38,7 @@
         data-api-submit="true"
         data-confirm-message="Refreshing all market data may take several minutes if you have many positions. Continue?"
     >
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
         <button
             type="submit"
             class="btn btn-small"
@@ -180,6 +181,7 @@
                 <a href="/edit/{{ pos.id }}" class="btn btn-small">Edit</a>
                 {% if api_configured %}
                 <form method="post" action="/refresh/{{ pos.id }}" class="inline-form" data-api-submit="true">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button
                         type="submit"
                         class="btn btn-small"
@@ -190,6 +192,7 @@
                 {% endif %}
                 <form method="post" action="/delete/{{ pos.id }}" class="inline-form"
                       onsubmit="return confirm('Delete {{ pos.ticker }}?')">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-small btn-danger">Delete</button>
                 </form>
             </td>

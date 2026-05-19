@@ -16,6 +16,7 @@ from app.database import get_uow
 from app.main import app
 from app.models import Base, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
+from tests.csrf_utils import csrf_form_data
 
 
 @pytest.fixture(autouse=True)
@@ -78,7 +79,7 @@ def test_login_redirects_if_already_logged_in(client):
 
 
 def test_logout_clears_cookie(client):
-    resp = client.post("/auth/logout")
+    resp = client.post("/auth/logout", data=csrf_form_data(client))
     assert resp.status_code == 303
     assert resp.headers["location"] == "/auth/login"
     assert SESSION_COOKIE_NAME not in resp.cookies or resp.cookies[SESSION_COOKIE_NAME] == ""

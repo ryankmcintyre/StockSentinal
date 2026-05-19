@@ -59,7 +59,7 @@ class SqlAlchemyUnitOfWork:
             if user_id is not None
             else None
         )
-        self.key_levels = SqlAlchemyKeyLevelRepository(session)
+        self.key_levels = SqlAlchemyKeyLevelRepository(session, user_id)
         self._rule_configs = (
             SqlAlchemyRuleConfigRepository(session, user_id)
             if user_id is not None

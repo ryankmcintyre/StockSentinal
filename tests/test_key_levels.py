@@ -13,6 +13,7 @@ from app.database import get_authenticated_uow, get_uow
 from app.main import app
 from app.models import Base, Position, PositionKeyLevel, StrategyRuleConfig, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
+from tests.csrf_utils import csrf_form_data
 
 
 @pytest.fixture(autouse=True)
@@ -88,12 +89,48 @@ def _seed_position(SessionMaker, **overrides) -> int:
         db.close()
 
 
+def _seed_key_level_with_user(
+    session_maker,
+    user_id: str,
+    is_active: bool = True,
+) -> tuple[int, int]:
+    """Create a position and key level for a user.
+
+    Returns ``(position_id, key_level_id)``.
+    """
+    db = session_maker()
+    try:
+        db.merge(User(id=user_id, email=f"{user_id}@example.com"))
+        db.flush()
+        pos = Position(
+            ticker="AAPL",
+            company_name="Apple Inc.",
+            cost_basis=100.0,
+            initial_purchase_date=date(2024, 1, 1),
+            investment_type="long-term",
+            current_price=150.0,
+            user_id=user_id,
+        )
+        db.add(pos)
+        db.commit()
+        kl = PositionKeyLevel(
+            position_id=pos.id,
+            level_price=100.0,
+            is_active=is_active,
+        )
+        db.add(kl)
+        db.commit()
+        return pos.id, kl.id
+    finally:
+        db.close()
+
+
 class TestKeyLevelRoutes:
     def test_add_key_level(self, _setup_db, client):
         pos_id = _seed_position(_setup_db)
         resp = client.post(
             f"/edit/{pos_id}/key-levels/add",
-            data={"level_price": "120.5", "label": "2024 high", "notes": "from chart"},
+            data=csrf_form_data(client, {"level_price": "120.5", "label": "2024 high", "notes": "from chart"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -116,7 +153,7 @@ class TestKeyLevelRoutes:
         pos_id = _seed_position(_setup_db)
         resp = client.post(
             f"/edit/{pos_id}/key-levels/add",
-            data={"level_price": "0", "label": "bad"},
+            data=csrf_form_data(client, {"level_price": "0", "label": "bad"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -132,7 +169,7 @@ class TestKeyLevelRoutes:
     def test_add_to_unknown_position_redirects_to_root(self, _setup_db, client):
         resp = client.post(
             "/edit/99999/key-levels/add",
-            data={"level_price": "100"},
+            data=csrf_form_data(client, {"level_price": "100"}),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -151,6 +188,7 @@ class TestKeyLevelRoutes:
 
         resp = client.post(
             f"/edit/{pos_id}/key-levels/{kl_id}/delete",
+            data=csrf_form_data(client),
             follow_redirects=False,
         )
         assert resp.status_code == 303
@@ -174,7 +212,11 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        client.post(f"/edit/{pos_id}/key-levels/{kl_id}/toggle", follow_redirects=False)
+        client.post(
+            f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
 
         db = _setup_db()
         try:
@@ -185,7 +227,11 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        client.post(f"/edit/{pos_id}/key-levels/{kl_id}/toggle", follow_redirects=False)
+        client.post(
+            f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
 
         db = _setup_db()
         try:
@@ -195,6 +241,107 @@ class TestKeyLevelRoutes:
             assert kl.is_active is True
         finally:
             db.close()
+
+    def test_delete_key_level_for_other_user_is_noop(self, _setup_db, client):
+        pos_id, kl_id = _seed_key_level_with_user(_setup_db, "alice-user-id")
+
+        resp = client.post(
+            f"/edit/{pos_id}/key-levels/{kl_id}/delete",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        db = _setup_db()
+        try:
+            kl = (
+                db.query(PositionKeyLevel)
+                .join(Position)
+                .filter(PositionKeyLevel.id == kl_id)
+                .first()
+            )
+            assert kl is not None
+            assert kl.position.user_id == "alice-user-id"
+        finally:
+            db.close()
+
+    def test_toggle_key_level_for_other_user_is_noop(self, _setup_db, client):
+        pos_id, kl_id = _seed_key_level_with_user(
+            _setup_db,
+            "alice-user-id",
+            is_active=True,
+        )
+
+        resp = client.post(
+            f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
+        assert resp.status_code == 303
+
+        db = _setup_db()
+        try:
+            kl = (
+                db.query(PositionKeyLevel)
+                .join(Position)
+                .filter(PositionKeyLevel.id == kl_id)
+                .first()
+            )
+            assert kl is not None
+            assert kl.position.user_id == "alice-user-id"
+            assert kl.is_active is True
+        finally:
+            db.close()
+
+    def test_delete_key_level_requires_authentication(self, _setup_db, client):
+        pos_id = _seed_position(_setup_db)
+        db = _setup_db()
+        try:
+            kl = PositionKeyLevel(position_id=pos_id, level_price=100.0)
+            db.add(kl)
+            db.commit()
+            kl_id = kl.id
+        finally:
+            db.close()
+
+        original_override = app.dependency_overrides.pop(get_authenticated_uow, None)
+        try:
+            resp = client.post(
+                f"/edit/{pos_id}/key-levels/{kl_id}/delete",
+                data=csrf_form_data(client),
+                follow_redirects=False,
+            )
+        finally:
+            if original_override is not None:
+                app.dependency_overrides[get_authenticated_uow] = original_override
+
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
+
+    def test_toggle_key_level_requires_authentication(self, _setup_db, client):
+        pos_id = _seed_position(_setup_db)
+        db = _setup_db()
+        try:
+            kl = PositionKeyLevel(position_id=pos_id, level_price=100.0)
+            db.add(kl)
+            db.commit()
+            kl_id = kl.id
+        finally:
+            db.close()
+
+        original_override = app.dependency_overrides.pop(get_authenticated_uow, None)
+        try:
+            resp = client.post(
+                f"/edit/{pos_id}/key-levels/{kl_id}/toggle",
+                data=csrf_form_data(client),
+                follow_redirects=False,
+            )
+        finally:
+            if original_override is not None:
+                app.dependency_overrides[get_authenticated_uow] = original_override
+
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/auth/login"
 
     def test_delete_position_cascades_to_key_levels(self, _setup_db, client):
         pos_id = _seed_position(_setup_db)
@@ -208,7 +355,11 @@ class TestKeyLevelRoutes:
         finally:
             db.close()
 
-        client.post(f"/delete/{pos_id}", follow_redirects=False)
+        client.post(
+            f"/delete/{pos_id}",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
 
         db = _setup_db()
         try:
@@ -288,7 +439,7 @@ class TestKeyLevelRoutes:
 
         resp = client.post(
             f"/edit/{pos_id}",
-            data={
+            data=csrf_form_data(client, {
                 "ticker": " msft ",
                 "company_name": " Microsoft Corporation ",
                 "cost_basis": "110.00",
@@ -297,7 +448,7 @@ class TestKeyLevelRoutes:
                 "current_price": "125.50",
                 "notes": " updated notes ",
                 "sector_benchmark_ticker": " xlk ",
-            },
+            }),
             follow_redirects=False,
         )
 
@@ -336,7 +487,7 @@ class TestKeyLevelRoutes:
 
         resp = client.post(
             f"/edit/{pos_id}",
-            data={
+            data=csrf_form_data(client, {
                 "ticker": "msft",
                 "company_name": "Microsoft Corporation",
                 "cost_basis": "100.00",
@@ -345,7 +496,7 @@ class TestKeyLevelRoutes:
                 "current_price": "150.00",
                 "notes": "",
                 "sector_benchmark_ticker": "",
-            },
+            }),
             follow_redirects=False,
         )
 
