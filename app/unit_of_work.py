@@ -70,13 +70,13 @@ class SqlAlchemyUnitOfWork:
     @property
     def positions(self) -> PositionRepository:
         if self._positions is None:
-            raise ValueError("user_id is required for position repository access")
+            raise ValueError("user_id is required")
         return self._positions
 
     @property
     def rule_configs(self) -> RuleConfigRepository:
         if self._rule_configs is None:
-            raise ValueError("user_id is required for rule config repository access")
+            raise ValueError("user_id is required")
         return self._rule_configs
 
     @property
