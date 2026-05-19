@@ -80,9 +80,17 @@ def authenticated_client():
 
 class TestLookupRoute:
     def test_anonymous_requests_redirect_to_login(self):
-        app.dependency_overrides.pop(get_authenticated_uow, None)
-        with TestClient(app) as client:
-            resp = client.get("/api/lookup/AAPL", follow_redirects=False)
+        authenticated_uow_override = app.dependency_overrides.pop(
+            get_authenticated_uow, None
+        )
+        try:
+            with TestClient(app) as client:
+                resp = client.get("/api/lookup/AAPL", follow_redirects=False)
+        finally:
+            if authenticated_uow_override is not None:
+                app.dependency_overrides[get_authenticated_uow] = (
+                    authenticated_uow_override
+                )
 
         assert resp.status_code == 303
         assert resp.headers["location"] == "/auth/login"
