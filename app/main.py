@@ -532,18 +532,25 @@ def email_auth_confirm(
     uow: UnitOfWork = Depends(get_uow),
 ):
     """Handle Supabase email auth redirect — verify token_hash and create session."""
+
+    def _fail(error: str) -> RedirectResponse:
+        """Return a terminal failure redirect, always clearing the PKCE cookie."""
+        resp = RedirectResponse(url=f"/auth/login?error={error}", status_code=303)
+        resp.delete_cookie(key=PKCE_COOKIE_NAME)
+        return resp
+
     if not token_hash or type != "email":
         logger.warning("Email confirm: missing token_hash or invalid type")
-        return RedirectResponse(url="/auth/login?error=invalid_link", status_code=303)
+        return _fail("invalid_link")
 
     if not _supabase_auth_configured():
-        return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
+        return _fail("not_configured")
 
     pkce_cookie = request.cookies.get(PKCE_COOKIE_NAME)
     code_verifier = decode_pkce_cookie(pkce_cookie) if pkce_cookie else None
     if not code_verifier:
         logger.warning("Email confirm: missing or invalid PKCE cookie")
-        return RedirectResponse(url="/auth/login?error=invalid_state", status_code=303)
+        return _fail("invalid_state")
 
     supabase_url = get_supabase_url()
     supabase_publishable_key = get_supabase_publishable_key()
@@ -566,23 +573,23 @@ def email_auth_confirm(
             exc.response.status_code,
             exc.response.text,
         )
-        return RedirectResponse(url="/auth/login?error=token_exchange_failed", status_code=303)
+        return _fail("token_exchange_failed")
     except Exception:
         logger.warning("Email token verification failed", exc_info=True)
-        return RedirectResponse(url="/auth/login?error=token_exchange_failed", status_code=303)
+        return _fail("token_exchange_failed")
 
     access_token = token_data.get("access_token")
     if not access_token:
         logger.warning("Email confirm: no access_token in response")
-        return RedirectResponse(url="/auth/login?error=no_token", status_code=303)
+        return _fail("no_token")
 
     claims = verify_supabase_jwt(access_token)
     if not claims:
-        return RedirectResponse(url="/auth/login?error=invalid_token", status_code=303)
+        return _fail("invalid_token")
 
     user_id = claims.get("sub")
     if not user_id:
-        return RedirectResponse(url="/auth/login?error=no_subject", status_code=303)
+        return _fail("no_subject")
 
     email_claim = claims.get("email")
     user_meta = claims.get("user_metadata") or {}
