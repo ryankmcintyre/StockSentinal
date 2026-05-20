@@ -2,6 +2,7 @@ import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from pathlib import Path
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 import httpx
@@ -506,7 +507,7 @@ def email_auth_request(
         logger.warning("Email OTP request failed", exc_info=True)
         return RedirectResponse(url="/auth/login?error=email_send_failed", status_code=303)
 
-    return RedirectResponse(url=f"/auth/login?email_sent=1&email={email}", status_code=303)
+    return RedirectResponse(url=f"/auth/login?email_sent=1&email={quote(email, safe='')}", status_code=303)
 
 
 @app.post("/auth/email/verify")
@@ -547,19 +548,19 @@ def email_auth_verify(
             exc.response.text,
         )
         return RedirectResponse(
-            url=f"/auth/login?error=invalid_code&email={email}", status_code=303
+            url=f"/auth/login?error=invalid_code&email={quote(email, safe='')}", status_code=303
         )
     except Exception:
         logger.warning("Email OTP verification failed", exc_info=True)
         return RedirectResponse(
-            url=f"/auth/login?error=invalid_code&email={email}", status_code=303
+            url=f"/auth/login?error=invalid_code&email={quote(email, safe='')}", status_code=303
         )
 
     access_token = token_data.get("access_token")
     if not access_token:
         logger.warning("Email OTP verify: no access_token in response")
         return RedirectResponse(
-            url=f"/auth/login?error=no_token&email={email}", status_code=303
+            url=f"/auth/login?error=no_token&email={quote(email, safe='')}", status_code=303
         )
 
     claims = verify_supabase_jwt(access_token)

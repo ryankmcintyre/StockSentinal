@@ -81,7 +81,7 @@ def test_email_auth_request_sends_otp(client, monkeypatch):
 
     assert resp.status_code == 303
     assert "email_sent=1" in resp.headers["location"]
-    assert "email=newuser%40example.com" in resp.headers["location"] or "email=newuser@example.com" in resp.headers["location"]
+    assert "email=newuser%40example.com" in resp.headers["location"]
     assert len(post_calls) == 1
     assert "/auth/v1/otp" in post_calls[0][0][0]
     payload = post_calls[0][1]["json"]
