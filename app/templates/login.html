@@ -20,6 +20,25 @@
             </a>
             {% endfor %}
         </div>
+
+        <div class="login-divider"><span>or</span></div>
+
+        {% if email_sent %}
+        <div class="alert alert-success">
+            Check your email for a sign-in link. It may take a minute to arrive.
+        </div>
+        {% else %}
+        <form method="post" action="/auth/email" class="login-email-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <label for="email">Sign in with email</label>
+            <input type="email" id="email" name="email" placeholder="you@example.com" required>
+            <button type="submit" class="btn btn-primary btn-login">Send sign-in link</button>
+            <p class="login-email-note">
+                Works for both new and existing users — no password needed.
+            </p>
+        </form>
+        {% endif %}
+
         <p class="login-tier-note">
             New here? You'll start on the <strong>Free</strong> tier — up to
             5 tickers and 5 refreshes per day.

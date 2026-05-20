@@ -823,6 +823,60 @@ h3 {
     font-size: 0.85rem;
 }
 
+.login-divider {
+    display: flex;
+    align-items: center;
+    margin: 1.25rem 0;
+    color: #8a949e;
+    font-size: 0.85rem;
+}
+
+.login-divider::before,
+.login-divider::after {
+    content: "";
+    flex: 1;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.login-divider span {
+    padding: 0 0.75rem;
+}
+
+.login-email-form label {
+    display: block;
+    margin-bottom: 0.4rem;
+    font-weight: 600;
+    font-size: 0.9rem;
+}
+
+.login-email-form input[type="email"] {
+    width: 100%;
+    padding: 0.55rem 0.75rem;
+    border: 1px solid #cfd8e0;
+    border-radius: 6px;
+    font-size: 0.95rem;
+    margin-bottom: 0.75rem;
+    box-sizing: border-box;
+}
+
+.login-email-form input[type="email"]:focus {
+    outline: none;
+    border-color: #3b82f6;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.15);
+}
+
+.login-email-note {
+    margin-top: 0.5rem;
+    color: #52606d;
+    font-size: 0.8rem;
+}
+
+.alert-success {
+    background: #e8f5e9;
+    border-color: #a5d6a7;
+    color: #2e7d32;
+}
+
 .alert {
     margin-top: 1.25rem;
     padding: 0.85rem 1rem;

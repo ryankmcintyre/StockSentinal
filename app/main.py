@@ -425,6 +425,7 @@ def login_page(request: Request):
         {"id": p, "label": _PROVIDER_DISPLAY_NAMES.get(p, p.title())}
         for p in provider_ids
     ]
+    email_sent = request.query_params.get("email_sent") == "1"
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -432,6 +433,7 @@ def login_page(request: Request):
             "supabase_configured": supabase_configured,
             "providers": providers_with_labels,
             "current_user": None,
+            "email_sent": email_sent,
         },
     )
 
@@ -468,6 +470,132 @@ def oauth_authorize(provider: str, request: Request):
         samesite="lax",
         secure=is_https(request),
     )
+    return response
+
+
+@app.post("/auth/email")
+def email_auth_request(
+    request: Request,
+    email: str = Form(...),
+    _csrf: None = Depends(validate_csrf),
+):
+    """Request an email OTP / magic link from Supabase."""
+    if not _supabase_auth_configured():
+        return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
+
+    supabase_url = get_supabase_url()
+    supabase_publishable_key = get_supabase_publishable_key()
+
+    base_url = str(request.base_url).rstrip("/")
+    redirect_to = f"{base_url}/auth/confirm"
+
+    try:
+        resp = httpx.post(
+            f"{supabase_url}/auth/v1/otp",
+            headers={
+                "apikey": supabase_publishable_key,
+                "Content-Type": "application/json",
+            },
+            json={
+                "email": email,
+                "create_user": True,
+                "code_challenge_method": "s256",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+    except Exception:
+        logger.warning("Email OTP request failed", exc_info=True)
+        return RedirectResponse(url="/auth/login?error=email_send_failed", status_code=303)
+
+    return RedirectResponse(url="/auth/login?email_sent=1", status_code=303)
+
+
+@app.get("/auth/confirm")
+def email_auth_confirm(
+    request: Request,
+    token_hash: str | None = None,
+    type: str | None = None,
+    uow: UnitOfWork = Depends(get_uow),
+):
+    """Handle Supabase email auth redirect — verify token_hash and create session."""
+    if not token_hash or type != "email":
+        logger.warning("Email confirm: missing token_hash or invalid type")
+        return RedirectResponse(url="/auth/login?error=invalid_link", status_code=303)
+
+    if not _supabase_auth_configured():
+        return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
+
+    supabase_url = get_supabase_url()
+    supabase_publishable_key = get_supabase_publishable_key()
+
+    try:
+        resp = httpx.post(
+            f"{supabase_url}/auth/v1/token?grant_type=pkce",
+            headers={
+                "apikey": supabase_publishable_key,
+                "Content-Type": "application/json",
+            },
+            json={"token_hash": token_hash, "type": "email"},
+            timeout=10,
+        )
+        resp.raise_for_status()
+        token_data = resp.json()
+    except httpx.HTTPStatusError as exc:
+        logger.warning(
+            "Email token verification failed with status=%s body=%s",
+            exc.response.status_code,
+            exc.response.text,
+        )
+        return RedirectResponse(url="/auth/login?error=token_exchange_failed", status_code=303)
+    except Exception:
+        logger.warning("Email token verification failed", exc_info=True)
+        return RedirectResponse(url="/auth/login?error=token_exchange_failed", status_code=303)
+
+    access_token = token_data.get("access_token")
+    if not access_token:
+        logger.warning("Email confirm: no access_token in response")
+        return RedirectResponse(url="/auth/login?error=no_token", status_code=303)
+
+    claims = verify_supabase_jwt(access_token)
+    if not claims:
+        return RedirectResponse(url="/auth/login?error=invalid_token", status_code=303)
+
+    user_id = claims.get("sub")
+    if not user_id:
+        return RedirectResponse(url="/auth/login?error=no_subject", status_code=303)
+
+    email_claim = claims.get("email")
+    user_meta = claims.get("user_metadata") or {}
+    display_name = (
+        user_meta.get("full_name")
+        or user_meta.get("name")
+        or user_meta.get("preferred_username")
+        or email_claim
+    )
+
+    user = uow.users.get_by_id(user_id)
+    if user is None:
+        user = User(id=user_id, email=email_claim, display_name=display_name)
+        uow.users.add(user)
+    else:
+        if email_claim and user.email != email_claim:
+            user.email = email_claim
+        if display_name and user.display_name != display_name:
+            user.display_name = display_name
+    uow.commit()
+
+    session_value = encode_session_cookie(user_id)
+    response = RedirectResponse(url="/", status_code=303)
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=session_value,
+        max_age=SESSION_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=is_https(request),
+    )
+    logger.info("User %s logged in via email auth", user_id)
     return response
 
 
