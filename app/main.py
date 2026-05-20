@@ -499,6 +499,7 @@ def email_auth_request(
             json={
                 "email": email,
                 "create_user": True,
+                # Tells Supabase to include token_hash in the email link
                 "code_challenge_method": "s256",
             },
             timeout=10,
