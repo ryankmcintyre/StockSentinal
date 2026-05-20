@@ -486,6 +486,8 @@ def email_auth_request(
     supabase_url = get_supabase_url()
     supabase_publishable_key = get_supabase_publishable_key()
 
+    code_verifier, code_challenge = generate_pkce_pair()
+
     base_url = str(request.base_url).rstrip("/")
     redirect_to = f"{base_url}/auth/confirm"
 
@@ -499,7 +501,7 @@ def email_auth_request(
             json={
                 "email": email,
                 "create_user": True,
-                # Tells Supabase to include token_hash in the email link
+                "code_challenge": code_challenge,
                 "code_challenge_method": "s256",
             },
             timeout=10,
@@ -509,7 +511,16 @@ def email_auth_request(
         logger.warning("Email OTP request failed", exc_info=True)
         return RedirectResponse(url="/auth/login?error=email_send_failed", status_code=303)
 
-    return RedirectResponse(url="/auth/login?email_sent=1", status_code=303)
+    response = RedirectResponse(url="/auth/login?email_sent=1", status_code=303)
+    response.set_cookie(
+        key=PKCE_COOKIE_NAME,
+        value=encode_pkce_cookie(code_verifier),
+        max_age=PKCE_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=is_https(request),
+    )
+    return response
 
 
 @app.get("/auth/confirm")
@@ -527,6 +538,12 @@ def email_auth_confirm(
     if not _supabase_auth_configured():
         return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
 
+    pkce_cookie = request.cookies.get(PKCE_COOKIE_NAME)
+    code_verifier = decode_pkce_cookie(pkce_cookie) if pkce_cookie else None
+    if not code_verifier:
+        logger.warning("Email confirm: missing or invalid PKCE cookie")
+        return RedirectResponse(url="/auth/login?error=invalid_state", status_code=303)
+
     supabase_url = get_supabase_url()
     supabase_publishable_key = get_supabase_publishable_key()
 
@@ -537,7 +554,7 @@ def email_auth_confirm(
                 "apikey": supabase_publishable_key,
                 "Content-Type": "application/json",
             },
-            json={"token_hash": token_hash, "type": "email"},
+            json={"token_hash": token_hash, "type": "email", "code_verifier": code_verifier},
             timeout=10,
         )
         resp.raise_for_status()
@@ -596,6 +613,7 @@ def email_auth_confirm(
         samesite="lax",
         secure=is_https(request),
     )
+    response.delete_cookie(key=PKCE_COOKIE_NAME)
     logger.info("User %s logged in via email auth", user_id)
     return response
 
