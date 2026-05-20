@@ -62,7 +62,7 @@ def _setup_db():
     with patch("app.main._refresh_single_position_task", return_value=None):
         app.dependency_overrides[get_uow] = override_get_uow
         app.dependency_overrides[get_authenticated_uow] = override_get_authenticated_uow
-        yield
+        yield TestingSession
         app.dependency_overrides.clear()
     engine.dispose()
 
@@ -168,4 +168,62 @@ class TestAddPositionFormRemoved:
             resp = client.post("/add", data=csrf_form_data(client, data), follow_redirects=False)
 
         # Should still succeed (extra form fields are ignored by FastAPI)
+        assert resp.status_code == 303
+
+
+class TestAddPositionRouteTierLimits:
+    def _seed_positions(self, session_maker, count: int, user_id: str = "test-user-id"):
+        db = session_maker()
+        try:
+            for idx in range(count):
+                db.add(
+                    Position(
+                        ticker=f"T{idx}",
+                        company_name=f"Ticker {idx}",
+                        cost_basis=100.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=110.0,
+                        user_id=user_id,
+                    )
+                )
+            db.commit()
+        finally:
+            db.close()
+
+    def _set_user_access(self, session_maker, **updates):
+        db = session_maker()
+        try:
+            user = db.query(User).filter(User.id == "test-user-id").one()
+            for key, value in updates.items():
+                setattr(user, key, value)
+            db.commit()
+        finally:
+            db.close()
+
+    def test_free_user_cannot_add_sixth_ticker(self, client, _setup_db):
+        self._seed_positions(_setup_db, 5)
+
+        with patch("app.main.get_market_data_api_key", return_value=None):
+            resp = client.post("/add", data=csrf_form_data(client, FORM_DATA_BASE))
+
+        assert resp.status_code == 200
+        assert "5-ticker limit on the free tier" in resp.text
+
+    def test_full_access_user_can_add_sixth_ticker(self, client, _setup_db):
+        self._seed_positions(_setup_db, 5)
+        self._set_user_access(_setup_db, tier="full_access")
+
+        with patch("app.main.get_market_data_api_key", return_value=None):
+            resp = client.post("/add", data=csrf_form_data(client, FORM_DATA_BASE), follow_redirects=False)
+
+        assert resp.status_code == 303
+
+    def test_admin_user_can_add_sixth_ticker(self, client, _setup_db):
+        self._seed_positions(_setup_db, 5)
+        self._set_user_access(_setup_db, is_admin=True)
+
+        with patch("app.main.get_market_data_api_key", return_value=None):
+            resp = client.post("/add", data=csrf_form_data(client, FORM_DATA_BASE), follow_redirects=False)
+
         assert resp.status_code == 303

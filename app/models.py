@@ -19,6 +19,12 @@ class User(Base):
     email = Column(String, nullable=True)
     display_name = Column(String, nullable=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
+    # SECURITY: only writable from app.main.admin_* handlers. Do not assign from request data.
+    tier = Column(String, nullable=False, default="free")
+    # SECURITY: only writable from app.main.admin_* handlers. Do not assign from request data.
+    is_admin = Column(Boolean, nullable=False, default=False)
+    refresh_count_today = Column(Integer, nullable=False, default=0)
+    refresh_count_date = Column(Date, nullable=True)
 
     positions = relationship("Position", back_populates="user", cascade="all, delete-orphan")
     strategy_rule_configs = relationship(

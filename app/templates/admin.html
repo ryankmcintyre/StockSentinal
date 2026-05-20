@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}Admin — Stock Sentinel{% endblock %}
+{% block content %}
+
+<section class="page-header page-header-compact">
+    <div>
+        <p class="page-eyebrow">Admin</p>
+        <h1>User Management</h1>
+    </div>
+    <p class="page-subtitle">Review users and manage their access tier.</p>
+</section>
+
+<table class="positions-table">
+    <thead>
+        <tr>
+            <th>Email</th>
+            <th>Tier</th>
+            <th>Admin</th>
+            <th>Join Date</th>
+            <th>Positions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in users %}
+        <tr>
+            <td>{{ row.user.email or row.user.id }}</td>
+            <td>
+                <form method="post" action="/admin/users/{{ row.user.id }}/tier" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <select name="tier" aria-label="Tier for {{ row.user.email or row.user.id }}">
+                        {% for tier in tiers %}
+                        <option value="{{ tier }}" {% if row.user.tier == tier %}selected{% endif %}>{{ tier }}</option>
+                        {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-small">Save</button>
+                </form>
+            </td>
+            <td>
+                <form method="post" action="/admin/users/{{ row.user.id }}/admin" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <label>
+                        <input type="checkbox" name="is_admin" value="true" {% if row.user.is_admin %}checked{% endif %}>
+                        Admin
+                    </label>
+                    <button type="submit" class="btn btn-small">Save</button>
+                </form>
+            </td>
+            <td>{{ row.user.created_at.date() if row.user.created_at else "—" }}</td>
+            <td>{{ row.position_count }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+{% endblock %}

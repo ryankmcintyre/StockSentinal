@@ -6,7 +6,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 import httpx
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Form, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -44,6 +44,7 @@ from app.database import (
     SessionLocal,
     engine,
     get_authenticated_uow,
+    get_admin_uow,
     get_optional_uow,
     get_uow,
     init_db,
@@ -71,6 +72,7 @@ from app.rule_engine import (
     get_verdict,
 )
 from app.schemas import InvestmentType, Verdict
+from app.tiers import TIER_LIMITS, TierLimitExceeded, check_and_consume_refresh, check_can_add_position
 
 log_level = get_log_level()
 logging.basicConfig(
@@ -147,6 +149,10 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "notion": "Notion",
 }
 REFRESH_STALE_TIMEOUT_MINUTES = 5
+FLASH_MESSAGES = {
+    "refresh_limit": "You've used 5 of 5 refreshes today. Your limit resets at midnight UTC.",
+    "admin_updated": "Admin user settings updated.",
+}
 
 
 def _get_request_user_id(request: Request, uow: UnitOfWork | None = None) -> str | None:
@@ -169,6 +175,19 @@ def _get_current_user(request: Request, uow: UnitOfWork) -> User | None:
     if not user_id:
         return None
     return uow.users.get_by_id(user_id)
+
+
+def _flash_message(request: Request) -> str | None:
+    code = request.query_params.get("flash")
+    return FLASH_MESSAGES.get(code) if code else None
+
+
+def _redirect_with_refresh_limit_flash() -> RedirectResponse:
+    return RedirectResponse(url="/?flash=refresh_limit", status_code=303)
+
+
+def _admin_redirect_with_flash() -> RedirectResponse:
+    return RedirectResponse(url="/admin?flash=admin_updated", status_code=303)
 
 
 def _url_safe_edit_position_path(position_id: int) -> str:
@@ -622,6 +641,7 @@ def _portfolio_response(request: Request, uow: UnitOfWork):
             "market_data_provider_name": get_market_data_provider_display_name(),
             "any_refresh_in_progress": any_refresh_in_progress,
             "current_user": current_user,
+            "flash": _flash_message(request),
         },
     )
 
@@ -635,6 +655,8 @@ def add_position_form(request: Request, uow: UnitOfWork = Depends(get_authentica
         {
             "investment_types": InvestmentType,
             "current_user": _get_current_user(request, uow),
+            "error": None,
+            "form": None,
         },
     )
 
@@ -711,6 +733,91 @@ def delete_sell_ma_condition(
             "Failed to remove MA condition for %s: %s", investment_type, errors,
         )
     return RedirectResponse(url="/rules", status_code=303)
+
+
+# ---------------------------------------------------------------------------
+# Admin routes
+# ---------------------------------------------------------------------------
+
+
+@app.get("/admin")
+def admin_page(request: Request, uow: UnitOfWork = Depends(get_admin_uow)):
+    users = [
+        {"user": user, "position_count": position_count}
+        for user, position_count in uow.users.list_with_position_counts()
+    ]
+    return templates.TemplateResponse(
+        request,
+        "admin.html",
+        {
+            "users": users,
+            "tiers": sorted(TIER_LIMITS),
+            "current_user": _get_current_user(request, uow),
+            "flash": _flash_message(request),
+        },
+    )
+
+
+@app.post("/admin/users/{user_id}/tier")
+def admin_update_tier(
+    user_id: str,
+    tier: str = Form(...),
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_admin_uow),
+):
+    if tier not in TIER_LIMITS:
+        raise HTTPException(status_code=400, detail="Unknown tier")
+    actor = uow.users.get_by_id(uow.user_id) if uow.user_id else None
+    target = uow.users.get_by_id(user_id)
+    if target is None:
+        raise HTTPException(status_code=404)
+    before = target.tier
+    target.tier = tier
+    uow.commit()
+    logger.warning(
+        "Admin user mutation",
+        extra={
+            "actor_id": actor.id if actor else None,
+            "actor_email": actor.email if actor else None,
+            "target_id": target.id,
+            "target_email": target.email,
+            "action": "update_tier",
+            "before": before,
+            "after": tier,
+        },
+    )
+    return _admin_redirect_with_flash()
+
+
+@app.post("/admin/users/{user_id}/admin")
+def admin_update_admin_flag(
+    user_id: str,
+    is_admin: bool = Form(False),
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_admin_uow),
+):
+    actor = uow.users.get_by_id(uow.user_id) if uow.user_id else None
+    target = uow.users.get_by_id(user_id)
+    if target is None:
+        raise HTTPException(status_code=404)
+    before = bool(target.is_admin)
+    if before and not is_admin and uow.users.count_admins(for_update=True) <= 1:
+        raise HTTPException(status_code=400, detail="Cannot remove the last admin")
+    target.is_admin = is_admin
+    uow.commit()
+    logger.warning(
+        "Admin user mutation",
+        extra={
+            "actor_id": actor.id if actor else None,
+            "actor_email": actor.email if actor else None,
+            "target_id": target.id,
+            "target_email": target.email,
+            "action": "update_admin",
+            "before": before,
+            "after": is_admin,
+        },
+    )
+    return _admin_redirect_with_flash()
 
 
 @app.get("/api/lookup/{ticker}")
@@ -792,6 +899,32 @@ def add_position(
     (SMA values and weekly data for long-term positions).
     """
     user_id = _get_request_user_id(request, uow)
+    current_user = _get_current_user(request, uow)
+    if current_user is None:
+        raise HTTPException(status_code=401)
+    try:
+        check_can_add_position(current_user, uow.positions.count_all())
+        check_and_consume_refresh(current_user)
+    except TierLimitExceeded as exc:
+        return templates.TemplateResponse(
+            request,
+            "add_position.html",
+            {
+                "investment_types": InvestmentType,
+                "current_user": current_user,
+                "error": exc.message,
+                "form": {
+                    "ticker": ticker,
+                    "company_name": company_name,
+                    "cost_basis": cost_basis,
+                    "initial_purchase_date": initial_purchase_date,
+                    "investment_type": investment_type,
+                    "notes": notes,
+                    "sector_benchmark_ticker": sector_benchmark_ticker,
+                },
+            },
+            status_code=200,
+        )
     clean_ticker = ticker.strip().upper()
     clean_benchmark = sector_benchmark_ticker.strip().upper() or None
     current_price = 0.0
@@ -1044,6 +1177,15 @@ def refresh_all(
 
     position_ids = uow.positions.list_all_ids()
     if position_ids:
+        current_user = uow.users.get_by_id(uow.user_id) if uow.user_id else None
+        if current_user is None:
+            raise HTTPException(status_code=401)
+        try:
+            check_and_consume_refresh(current_user)
+            uow.commit()
+        except TierLimitExceeded:
+            uow.rollback()
+            return _redirect_with_refresh_limit_flash()
         _mark_positions_refresh_state(uow, position_ids, in_progress=True)
         background_tasks.add_task(_refresh_all_positions_task, position_ids, uow.user_id)
     return RedirectResponse(url="/", status_code=303)
@@ -1063,6 +1205,15 @@ def refresh_single(
     _clear_stale_refresh_flags(uow)
     pos = uow.positions.get_by_id(position_id)
     if pos and not pos.refresh_in_progress:
+        current_user = uow.users.get_by_id(uow.user_id) if uow.user_id else None
+        if current_user is None:
+            raise HTTPException(status_code=401)
+        try:
+            check_and_consume_refresh(current_user)
+            uow.commit()
+        except TierLimitExceeded:
+            uow.rollback()
+            return _redirect_with_refresh_limit_flash()
         _mark_positions_refresh_state(uow, [position_id], in_progress=True)
         try:
             _market_service.refresh_position(pos, uow.session)

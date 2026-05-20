@@ -1,6 +1,6 @@
 import logging
 
-from fastapi import Request
+from fastapi import HTTPException, Request
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
@@ -154,6 +154,24 @@ def get_authenticated_uow(request: Request):
     session = SessionLocal()
     uow = SqlAlchemyUnitOfWork(session, user_id=user_id)
     try:
+        yield uow
+    finally:
+        session.close()
+
+
+def get_admin_uow(request: Request):
+    """Yield an authenticated UnitOfWork only for database-confirmed admin users."""
+    from app.auth import RequiresLoginException, get_current_user_id
+
+    user_id = get_current_user_id(request)
+    if user_id is None:
+        raise RequiresLoginException()
+    session = SessionLocal()
+    uow = SqlAlchemyUnitOfWork(session, user_id=user_id)
+    try:
+        user = uow.users.get_by_id(user_id)
+        if user is None or not user.is_admin:
+            raise HTTPException(status_code=403)
         yield uow
     finally:
         session.close()
