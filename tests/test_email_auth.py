@@ -11,7 +11,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app import auth as auth_module
-from app.auth import SESSION_COOKIE_NAME, encode_session_cookie
+from app.auth import PKCE_COOKIE_NAME, SESSION_COOKIE_NAME, encode_pkce_cookie, encode_session_cookie
 from app.database import get_uow
 from app.main import app
 from app.models import Base, User
@@ -83,7 +83,13 @@ def test_email_auth_request_sends_otp(client, monkeypatch):
     assert "email_sent=1" in resp.headers["location"]
     assert len(post_calls) == 1
     assert "/auth/v1/otp" in post_calls[0][0][0]
-    assert post_calls[0][1]["json"]["email"] == "newuser@example.com"
+    payload = post_calls[0][1]["json"]
+    assert payload["email"] == "newuser@example.com"
+    assert "code_challenge" in payload
+    assert len(payload["code_challenge"]) > 32
+    assert payload["code_challenge_method"] == "s256"
+    # PKCE cookie should be set on the response
+    assert PKCE_COOKIE_NAME in resp.cookies
 
 
 def test_email_auth_request_not_configured(client, monkeypatch):
@@ -135,6 +141,67 @@ def test_email_confirm_invalid_type(client):
     assert "error=invalid_link" in resp.headers["location"]
 
 
+def test_email_confirm_missing_pkce_cookie(client, monkeypatch):
+    """Redirects with error when PKCE cookie is missing on confirm."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    resp = client.get("/auth/confirm?token_hash=abc123&type=email")
+    assert resp.status_code == 303
+    assert "error=invalid_state" in resp.headers["location"]
+
+
+def test_email_confirm_invalid_pkce_cookie(client, monkeypatch):
+    """Redirects with error when PKCE cookie is invalid/tampered."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    resp = client.get(
+        "/auth/confirm?token_hash=abc123&type=email",
+        cookies={PKCE_COOKIE_NAME: "tampered-cookie-value"},
+    )
+    assert resp.status_code == 303
+    assert "error=invalid_state" in resp.headers["location"]
+
+
+def test_email_confirm_sends_code_verifier(client, monkeypatch):
+    """Confirm route sends code_verifier from PKCE cookie to Supabase."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    post_calls = []
+
+    import httpx as httpx_lib
+
+    mock_response = Mock()
+    mock_response.status_code = 400
+    mock_response.text = "invalid token"
+    mock_response.raise_for_status.side_effect = httpx_lib.HTTPStatusError(
+        "bad request", request=Mock(), response=mock_response
+    )
+
+    def mock_post(*args, **kwargs):
+        post_calls.append((args, kwargs))
+        return mock_response
+
+    monkeypatch.setattr("app.main.httpx.post", mock_post)
+
+    pkce_cookie = encode_pkce_cookie("my-secret-verifier")
+    resp = client.get(
+        "/auth/confirm?token_hash=test123&type=email",
+        cookies={PKCE_COOKIE_NAME: pkce_cookie},
+    )
+    assert resp.status_code == 303
+    assert len(post_calls) == 1
+    payload = post_calls[0][1]["json"]
+    assert payload["code_verifier"] == "my-secret-verifier"
+    assert payload["token_hash"] == "test123"
+    assert payload["type"] == "email"
+
+
 def test_email_confirm_token_exchange_failure(client, monkeypatch):
     """Redirects with error when Supabase rejects the token_hash."""
     monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
@@ -152,9 +219,45 @@ def test_email_confirm_token_exchange_failure(client, monkeypatch):
 
     monkeypatch.setattr("app.main.httpx.post", lambda *a, **kw: mock_response)
 
-    resp = client.get("/auth/confirm?token_hash=expired123&type=email")
+    pkce_cookie = encode_pkce_cookie("test-verifier")
+    resp = client.get(
+        "/auth/confirm?token_hash=expired123&type=email",
+        cookies={PKCE_COOKIE_NAME: pkce_cookie},
+    )
     assert resp.status_code == 303
     assert "error=token_exchange_failed" in resp.headers["location"]
+    # PKCE cookie must be cleared on failure
+    set_cookie_header = resp.headers.get("set-cookie", "")
+    assert PKCE_COOKIE_NAME in set_cookie_header
+    assert 'Max-Age=0' in set_cookie_header or "expires=" in set_cookie_header.lower()
+
+
+def test_email_confirm_clears_pkce_cookie_on_invalid_token(client, monkeypatch):
+    """PKCE cookie is cleared even when JWT verification fails."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    token_response = Mock()
+    token_response.raise_for_status.return_value = None
+    token_response.json.return_value = {"access_token": "invalid.jwt.token"}
+
+    jwks_response = Mock()
+    jwks_response.raise_for_status.return_value = None
+    jwks_response.json.return_value = {"keys": []}
+
+    monkeypatch.setattr("app.main.httpx.post", lambda *a, **kw: token_response)
+    monkeypatch.setattr("app.auth.httpx.get", lambda *a, **kw: jwks_response)
+
+    pkce_cookie = encode_pkce_cookie("test-verifier")
+    resp = client.get(
+        "/auth/confirm?token_hash=bad123&type=email",
+        cookies={PKCE_COOKIE_NAME: pkce_cookie},
+    )
+    assert resp.status_code == 303
+    assert "error=invalid_token" in resp.headers["location"]
+    # PKCE cookie must be cleared on failure
+    assert PKCE_COOKIE_NAME in resp.headers.get("set-cookie", "")
 
 
 def test_email_confirm_success_new_user(client, monkeypatch):
@@ -207,7 +310,11 @@ def test_email_confirm_success_new_user(client, monkeypatch):
     monkeypatch.setattr("app.main.httpx.post", lambda *a, **kw: token_response)
     monkeypatch.setattr("app.auth.httpx.get", lambda *a, **kw: jwks_response)
 
-    resp = client.get("/auth/confirm?token_hash=valid123&type=email")
+    pkce_cookie = encode_pkce_cookie("test-verifier")
+    resp = client.get(
+        "/auth/confirm?token_hash=valid123&type=email",
+        cookies={PKCE_COOKIE_NAME: pkce_cookie},
+    )
     assert resp.status_code == 303
     assert resp.headers["location"] == "/"
     assert resp.cookies.get(SESSION_COOKIE_NAME)
@@ -263,7 +370,11 @@ def test_email_confirm_success_existing_user(client, monkeypatch):
     monkeypatch.setattr("app.main.httpx.post", lambda *a, **kw: token_response)
     monkeypatch.setattr("app.auth.httpx.get", lambda *a, **kw: jwks_response)
 
-    resp = client.get("/auth/confirm?token_hash=valid456&type=email")
+    pkce_cookie = encode_pkce_cookie("test-verifier")
+    resp = client.get(
+        "/auth/confirm?token_hash=valid456&type=email",
+        cookies={PKCE_COOKIE_NAME: pkce_cookie},
+    )
     assert resp.status_code == 303
     assert resp.headers["location"] == "/"
     assert resp.cookies.get(SESSION_COOKIE_NAME)
@@ -287,7 +398,11 @@ def test_email_confirm_invalid_jwt(client, monkeypatch):
     monkeypatch.setattr("app.main.httpx.post", lambda *a, **kw: token_response)
     monkeypatch.setattr("app.auth.httpx.get", lambda *a, **kw: jwks_response)
 
-    resp = client.get("/auth/confirm?token_hash=bad123&type=email")
+    pkce_cookie = encode_pkce_cookie("test-verifier")
+    resp = client.get(
+        "/auth/confirm?token_hash=bad123&type=email",
+        cookies={PKCE_COOKIE_NAME: pkce_cookie},
+    )
     assert resp.status_code == 303
     assert "error=invalid_token" in resp.headers["location"]
 
