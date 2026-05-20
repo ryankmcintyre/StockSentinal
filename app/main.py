@@ -426,6 +426,7 @@ def login_page(request: Request):
         for p in provider_ids
     ]
     email_sent = request.query_params.get("email_sent") == "1"
+    otp_email = request.query_params.get("email", "")
     return templates.TemplateResponse(
         request,
         "login.html",
@@ -434,6 +435,7 @@ def login_page(request: Request):
             "providers": providers_with_labels,
             "current_user": None,
             "email_sent": email_sent,
+            "otp_email": otp_email,
         },
     )
 
@@ -479,17 +481,12 @@ def email_auth_request(
     email: str = Form(...),
     _csrf: None = Depends(validate_csrf),
 ):
-    """Request an email OTP / magic link from Supabase."""
+    """Request an email OTP code from Supabase."""
     if not _supabase_auth_configured():
         return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
 
     supabase_url = get_supabase_url()
     supabase_publishable_key = get_supabase_publishable_key()
-
-    code_verifier, code_challenge = generate_pkce_pair()
-
-    base_url = str(request.base_url).rstrip("/")
-    redirect_to = f"{base_url}/auth/confirm"
 
     try:
         resp = httpx.post(
@@ -501,9 +498,6 @@ def email_auth_request(
             json={
                 "email": email,
                 "create_user": True,
-                # PKCE: Supabase uses code_challenge to bind the OTP to our verifier
-                "code_challenge": code_challenge,
-                "code_challenge_method": "s256",
             },
             timeout=10,
         )
@@ -512,84 +506,69 @@ def email_auth_request(
         logger.warning("Email OTP request failed", exc_info=True)
         return RedirectResponse(url="/auth/login?error=email_send_failed", status_code=303)
 
-    response = RedirectResponse(url="/auth/login?email_sent=1", status_code=303)
-    response.set_cookie(
-        key=PKCE_COOKIE_NAME,
-        value=encode_pkce_cookie(code_verifier),
-        max_age=PKCE_MAX_AGE_SECONDS,
-        httponly=True,
-        samesite="lax",
-        secure=is_https(request),
-    )
-    return response
+    return RedirectResponse(url=f"/auth/login?email_sent=1&email={email}", status_code=303)
 
 
-@app.get("/auth/confirm")
-def email_auth_confirm(
+@app.post("/auth/email/verify")
+def email_auth_verify(
     request: Request,
-    token_hash: str | None = None,
-    type: str | None = None,
+    email: str = Form(...),
+    otp_code: str = Form(...),
+    _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_uow),
 ):
-    """Handle Supabase email auth redirect — verify token_hash and create session."""
-
-    def _fail(error: str) -> RedirectResponse:
-        """Return a terminal failure redirect, always clearing the PKCE cookie."""
-        resp = RedirectResponse(url=f"/auth/login?error={error}", status_code=303)
-        resp.delete_cookie(key=PKCE_COOKIE_NAME)
-        return resp
-
-    if not token_hash or type != "email":
-        logger.warning("Email confirm: missing token_hash or invalid type")
-        return _fail("invalid_link")
-
+    """Verify a 6-digit email OTP code via Supabase and create an app session."""
     if not _supabase_auth_configured():
-        return _fail("not_configured")
-
-    pkce_cookie = request.cookies.get(PKCE_COOKIE_NAME)
-    code_verifier = decode_pkce_cookie(pkce_cookie) if pkce_cookie else None
-    if not code_verifier:
-        logger.warning("Email confirm: missing or invalid PKCE cookie")
-        return _fail("invalid_state")
+        return RedirectResponse(url="/auth/login?error=not_configured", status_code=303)
 
     supabase_url = get_supabase_url()
     supabase_publishable_key = get_supabase_publishable_key()
 
     try:
         resp = httpx.post(
-            f"{supabase_url}/auth/v1/token?grant_type=pkce",
+            f"{supabase_url}/auth/v1/verify",
             headers={
                 "apikey": supabase_publishable_key,
                 "Content-Type": "application/json",
             },
-            json={"token_hash": token_hash, "type": "email", "code_verifier": code_verifier},
+            json={
+                "email": email,
+                "token": otp_code,
+                "type": "email",
+            },
             timeout=10,
         )
         resp.raise_for_status()
         token_data = resp.json()
     except httpx.HTTPStatusError as exc:
         logger.warning(
-            "Email token verification failed with status=%s body=%s",
+            "Email OTP verification failed with status=%s body=%s",
             exc.response.status_code,
             exc.response.text,
         )
-        return _fail("token_exchange_failed")
+        return RedirectResponse(
+            url=f"/auth/login?error=invalid_code&email={email}", status_code=303
+        )
     except Exception:
-        logger.warning("Email token verification failed", exc_info=True)
-        return _fail("token_exchange_failed")
+        logger.warning("Email OTP verification failed", exc_info=True)
+        return RedirectResponse(
+            url=f"/auth/login?error=invalid_code&email={email}", status_code=303
+        )
 
     access_token = token_data.get("access_token")
     if not access_token:
-        logger.warning("Email confirm: no access_token in response")
-        return _fail("no_token")
+        logger.warning("Email OTP verify: no access_token in response")
+        return RedirectResponse(
+            url=f"/auth/login?error=no_token&email={email}", status_code=303
+        )
 
     claims = verify_supabase_jwt(access_token)
     if not claims:
-        return _fail("invalid_token")
+        return RedirectResponse(url="/auth/login?error=invalid_token", status_code=303)
 
     user_id = claims.get("sub")
     if not user_id:
-        return _fail("no_subject")
+        return RedirectResponse(url="/auth/login?error=no_subject", status_code=303)
 
     email_claim = claims.get("email")
     user_meta = claims.get("user_metadata") or {}
@@ -621,8 +600,7 @@ def email_auth_confirm(
         samesite="lax",
         secure=is_https(request),
     )
-    response.delete_cookie(key=PKCE_COOKIE_NAME)
-    logger.info("User %s logged in via email auth", user_id)
+    logger.info("User %s logged in via email OTP", user_id)
     return response
 
 

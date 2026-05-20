@@ -76,7 +76,7 @@ Set these to enable multi-user mode. Leave `SUPABASE_URL` empty for single-user 
 | Variable | Required when | Notes |
 |---|---|---|
 | `SUPABASE_URL` | enabling auth | Your project URL, e.g. `https://abcd.supabase.co`. |
-| `SUPABASE_PUBLISHABLE_KEY` | `SUPABASE_URL` set | Used for the PKCE code-for-session exchange. |
+| `SUPABASE_PUBLISHABLE_KEY` | `SUPABASE_URL` set | Used for Supabase auth API calls (OTP and OAuth). |
 | `SESSION_SECRET_KEY` | `SUPABASE_URL` set | Long random string; signs the app's session cookie. The app **refuses to start** with auth enabled if this is missing. |
 | `SUPABASE_AUTH_PROVIDERS` | optional | Comma-separated list of social providers. Defaults to `google`. |
 
@@ -84,30 +84,32 @@ Set these to enable multi-user mode. Leave `SUPABASE_URL` empty for single-user 
 
 1. Create a Supabase project; copy the project URL and the **publishable** anon key.
 2. **Authentication → Providers → Google** — enable Google and paste your Google OAuth client ID + secret.
-3. **Authentication → Providers → Email** — ensure Email auth is enabled (for magic-link / OTP sign-in).
+3. **Authentication → Providers → Email** — ensure Email auth is enabled (for OTP code sign-in).
 4. **Authentication → URL Configuration**:
    - **Site URL**: your production URL (e.g. `https://www.stocksentinal.com`).
-   - **Redirect URLs**: add every host the app runs on, including `http://localhost:8000/auth/callback` and `http://localhost:8000/auth/confirm` for local dev, and any custom domain equivalents.
+   - **Redirect URLs**: add every host the app runs on, including `http://localhost:8000/auth/callback` for local dev, and any custom domain equivalents.
 5. **Google Cloud Console → Credentials → OAuth client**: add `https://<your-project>.supabase.co/auth/v1/callback` as an authorized redirect URI. (Google redirects to Supabase, not to your app, so your custom domain doesn't need to be listed here.)
 
-#### Email Magic Link template
+#### Email OTP template
 
-In Supabase Dashboard → **Authentication → Email Templates → Magic Link**, use the following:
+In Supabase Dashboard → **Authentication → Email Templates → Magic Link**, replace the default template with the following to send a 6-digit code instead of a clickable link:
 
-**Subject:** `Your StockSentinal sign-in link`
+**Subject:** `Your StockSentinal sign-in code`
 
 **Body:**
 
 ```html
-<h2>Sign in to StockSentinal</h2>
-<p>Click the link below to sign in or create your account:</p>
-<p>
-  <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email">
-    Sign in to StockSentinal
-  </a>
+<h2>StockSentinal sign-in code</h2>
+<p>Use this code to sign in or create your account:</p>
+<p style="font-size: 28px; font-weight: bold; letter-spacing: 4px;">
+  {{ .Token }}
 </p>
-<p>This link can only be used once and will expire automatically.</p>
+<p>This code expires automatically. If you didn't request it, you can ignore this email.</p>
 ```
+
+#### OTP expiration
+
+In Supabase Dashboard → **Authentication → Providers → Email → Email OTP Expiration**, set the OTP lifetime. The default is 60 seconds; a value of 300–600 seconds (5–10 minutes) is recommended for this app.
 
 ## Docker
 
