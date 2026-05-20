@@ -84,10 +84,30 @@ Set these to enable multi-user mode. Leave `SUPABASE_URL` empty for single-user 
 
 1. Create a Supabase project; copy the project URL and the **publishable** anon key.
 2. **Authentication → Providers → Google** — enable Google and paste your Google OAuth client ID + secret.
-3. **Authentication → URL Configuration**:
+3. **Authentication → Providers → Email** — ensure Email auth is enabled (for magic-link / OTP sign-in).
+4. **Authentication → URL Configuration**:
    - **Site URL**: your production URL (e.g. `https://www.stocksentinal.com`).
-   - **Redirect URLs**: add every host the app runs on, including `http://localhost:8000/auth/callback` for local dev and any custom domain.
-4. **Google Cloud Console → Credentials → OAuth client**: add `https://<your-project>.supabase.co/auth/v1/callback` as an authorized redirect URI. (Google redirects to Supabase, not to your app, so your custom domain doesn't need to be listed here.)
+   - **Redirect URLs**: add every host the app runs on, including `http://localhost:8000/auth/callback` and `http://localhost:8000/auth/confirm` for local dev, and any custom domain equivalents.
+5. **Google Cloud Console → Credentials → OAuth client**: add `https://<your-project>.supabase.co/auth/v1/callback` as an authorized redirect URI. (Google redirects to Supabase, not to your app, so your custom domain doesn't need to be listed here.)
+
+#### Email Magic Link template
+
+In Supabase Dashboard → **Authentication → Email Templates → Magic Link**, use the following:
+
+**Subject:** `Your StockSentinal sign-in link`
+
+**Body:**
+
+```html
+<h2>Sign in to StockSentinal</h2>
+<p>Click the link below to sign in or create your account:</p>
+<p>
+  <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=email">
+    Sign in to StockSentinal
+  </a>
+</p>
+<p>This link can only be used once and will expire automatically.</p>
+```
 
 ## Docker
 
