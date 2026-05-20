@@ -501,6 +501,7 @@ def email_auth_request(
             json={
                 "email": email,
                 "create_user": True,
+                # PKCE: Supabase uses code_challenge to bind the OTP to our verifier
                 "code_challenge": code_challenge,
                 "code_challenge_method": "s256",
             },
