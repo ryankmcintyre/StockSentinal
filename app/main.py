@@ -419,6 +419,12 @@ def health_check():
     return {"status": "ok", "app": "Stock Sentinel"}
 
 
+@app.get("/privacy")
+def privacy_page(request: Request):
+    """Serve the privacy statement — no authentication required."""
+    return templates.TemplateResponse(request, "privacy.html", {"current_user": None})
+
+
 @app.get("/auth/login")
 def login_page(request: Request):
     """Show the login page with sign-in options."""

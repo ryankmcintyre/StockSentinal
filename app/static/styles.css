@@ -1010,3 +1010,65 @@ h3 {
     font-size: 0.82rem;
     color: #8898aa;
 }
+
+/* ---- Site footer ---- */
+.site-footer {
+    border-top: 1px solid #e8ecf0;
+    text-align: center;
+    padding: 1rem 1.5rem;
+    font-size: 0.82rem;
+    color: #8898aa;
+}
+
+.site-footer a {
+    color: #8898aa;
+    text-decoration: underline;
+}
+
+.site-footer a:hover {
+    color: #52606d;
+}
+
+/* ---- Privacy page ---- */
+.privacy-page {
+    max-width: 720px;
+    margin: 2.5rem auto;
+    padding: 0 1.5rem 3rem;
+}
+
+.privacy-page h1 {
+    font-size: 1.6rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 0.25rem;
+}
+
+.privacy-updated {
+    font-size: 0.85rem;
+    color: #8898aa;
+    margin-bottom: 1.75rem;
+}
+
+.privacy-page h2 {
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin-top: 1.75rem;
+    margin-bottom: 0.5rem;
+}
+
+.privacy-page p,
+.privacy-page li {
+    font-size: 0.95rem;
+    color: #374151;
+    line-height: 1.7;
+}
+
+.privacy-page ul {
+    padding-left: 1.4rem;
+    margin: 0.25rem 0 0.5rem;
+}
+
+.privacy-page a {
+    color: #1a73e8;
+}

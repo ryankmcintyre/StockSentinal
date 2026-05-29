@@ -151,3 +151,28 @@ def test_authenticated_get_root_returns_portfolio(auth_client):
     assert "portfolio" in resp.text.lower() or "positions" in resp.text.lower()
     # Splash-specific headline should not appear
     assert "splash-headline" not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# /privacy
+# ---------------------------------------------------------------------------
+
+
+def test_privacy_page_accessible_without_auth(client):
+    resp = client.get("/privacy")
+    assert resp.status_code == 200
+    assert "Privacy Statement" in resp.text
+
+
+def test_privacy_page_contains_key_sections(client):
+    resp = client.get("/privacy")
+    assert "What data is collected" in resp.text
+    assert "How it is stored" in resp.text
+    assert "Contact" in resp.text
+
+
+def test_privacy_link_in_every_page_footer(client):
+    for path in ["/privacy", "/auth/login"]:
+        resp = client.get(path)
+        assert resp.status_code == 200
+        assert 'href="/privacy"' in resp.text, f"Privacy link missing on {path}"
