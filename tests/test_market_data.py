@@ -79,6 +79,40 @@ class TestLastCompletedTradingDay:
         result = last_completed_trading_day(date(2026, 4, 22))
         assert result == date(2026, 4, 21)
 
+    # --- time-aware (now= path) ---
+
+    def test_weekday_after_close_returns_today(self):
+        # Wednesday at 4:30 PM ET — market closed, today counts
+        now = datetime(2026, 4, 22, 16, 30, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_day(now=now) == date(2026, 4, 22)
+
+    def test_weekday_before_close_returns_yesterday(self):
+        # Wednesday at 10:00 AM ET — market still open
+        now = datetime(2026, 4, 22, 10, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_day(now=now) == date(2026, 4, 21)
+
+    def test_weekday_at_exactly_close_returns_today(self):
+        # Wednesday exactly at 4:00 PM ET
+        now = datetime(2026, 4, 22, 16, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_day(now=now) == date(2026, 4, 22)
+
+    def test_friday_after_close_returns_friday(self):
+        now = datetime(2026, 4, 17, 17, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_day(now=now) == date(2026, 4, 17)
+
+    def test_monday_before_close_returns_friday(self):
+        now = datetime(2026, 4, 20, 9, 30, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_day(now=now) == date(2026, 4, 17)
+
+    def test_saturday_returns_friday_regardless_of_time(self):
+        now = datetime(2026, 4, 18, 20, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_day(now=now) == date(2026, 4, 17)
+
+    def test_naive_datetime_treated_as_et(self):
+        # Naive datetime at 5 PM on a Wednesday → treated as ET, market closed
+        now = datetime(2026, 4, 22, 17, 0)
+        assert last_completed_trading_day(now=now) == date(2026, 4, 22)
+
 
 # ---------------------------------------------------------------------------
 # last_completed_trading_week_end
@@ -105,6 +139,35 @@ class TestLastCompletedTradingWeekEnd:
     def test_thursday_returns_previous_friday(self):
         result = last_completed_trading_week_end(date(2026, 4, 16))  # Thursday
         assert result == date(2026, 4, 10)
+
+    # --- time-aware (now= path) ---
+
+    def test_friday_after_close_returns_this_friday(self):
+        # Friday at 4:30 PM ET — this week's close is done
+        now = datetime(2026, 4, 17, 16, 30, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_week_end(now=now) == date(2026, 4, 17)
+
+    def test_friday_before_close_returns_previous_friday(self):
+        # Friday at 2:00 PM ET — week not yet closed
+        now = datetime(2026, 4, 17, 14, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_week_end(now=now) == date(2026, 4, 10)
+
+    def test_friday_at_exactly_close_returns_this_friday(self):
+        now = datetime(2026, 4, 17, 16, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_week_end(now=now) == date(2026, 4, 17)
+
+    def test_thursday_after_close_returns_previous_friday(self):
+        # Thursday after close — week still not over
+        now = datetime(2026, 4, 16, 17, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_week_end(now=now) == date(2026, 4, 10)
+
+    def test_saturday_returns_this_week_friday_regardless_of_time(self):
+        now = datetime(2026, 4, 18, 9, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_week_end(now=now) == date(2026, 4, 17)
+
+    def test_monday_before_close_returns_previous_friday(self):
+        now = datetime(2026, 4, 20, 10, 0, tzinfo=__import__("zoneinfo").ZoneInfo("America/New_York"))
+        assert last_completed_trading_week_end(now=now) == date(2026, 4, 17)
 
 
 # ---------------------------------------------------------------------------
