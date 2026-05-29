@@ -360,3 +360,51 @@ def test_login_page_shows_otp_form_after_email_sent(client, monkeypatch):
     assert 'name="otp_code"' in resp.text
     assert "Verify code" in resp.text
     assert "/auth/email/verify" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# New-member notification triggered by email verify
+# ---------------------------------------------------------------------------
+
+
+def test_email_verify_triggers_notification_for_new_user(client, monkeypatch):
+    """Successful OTP verify for a brand-new user fires send_new_member_notification."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    _make_jwt_fixtures(monkeypatch, sub="brand-new-user", email="brandnew@example.com")
+
+    notified = []
+    monkeypatch.setattr(
+        "app.main.send_new_member_notification",
+        lambda email, name: notified.append((email, name)),
+    )
+
+    form_data = csrf_form_data(client, {"email": "brandnew@example.com", "otp_code": "111111"})
+    resp = client.post("/auth/email/verify", data=form_data)
+
+    assert resp.status_code == 303
+    assert len(notified) == 1
+    assert notified[0][0] == "brandnew@example.com"
+
+
+def test_email_verify_does_not_notify_for_existing_user(client, monkeypatch):
+    """OTP verify for a returning user does NOT fire send_new_member_notification."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    _make_jwt_fixtures(monkeypatch, sub="existing-user", email="user@example.com")
+
+    notified = []
+    monkeypatch.setattr(
+        "app.main.send_new_member_notification",
+        lambda email, name: notified.append((email, name)),
+    )
+
+    form_data = csrf_form_data(client, {"email": "user@example.com", "otp_code": "222222"})
+    resp = client.post("/auth/email/verify", data=form_data)
+
+    assert resp.status_code == 303
+    assert notified == []

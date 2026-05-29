@@ -216,3 +216,97 @@ def test_protected_route_redirects_to_login(client):
     resp = client.get("/add")
     assert resp.status_code == 303
     assert resp.headers["location"] == "/auth/login"
+
+
+# ---------------------------------------------------------------------------
+# New-member notification triggered by OAuth callback
+# ---------------------------------------------------------------------------
+
+
+def _make_oauth_jwt_fixtures(monkeypatch, sub="oauth-user", email="oauth@example.com"):
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from jose import jwt
+
+    def b64url_uint(value: int) -> str:
+        raw = value.to_bytes((value.bit_length() + 7) // 8, "big")
+        return base64.urlsafe_b64encode(raw).rstrip(b"=").decode()
+
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    private_pem = private_key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    )
+    public_numbers = private_key.public_key().public_numbers()
+    jwk = {
+        "kty": "RSA",
+        "kid": "test-key",
+        "use": "sig",
+        "alg": "RS256",
+        "n": b64url_uint(public_numbers.n),
+        "e": b64url_uint(public_numbers.e),
+    }
+    token = jwt.encode(
+        {"sub": sub, "email": email, "user_metadata": {"full_name": "OAuth User"}},
+        private_pem,
+        algorithm="RS256",
+        headers={"kid": "test-key"},
+    )
+    token_response = Mock()
+    token_response.raise_for_status.return_value = None
+    token_response.json.return_value = {"access_token": token}
+    jwks_response = Mock()
+    jwks_response.raise_for_status.return_value = None
+    jwks_response.json.return_value = {"keys": [jwk]}
+
+    monkeypatch.setattr("app.main.httpx.post", lambda *a, **kw: token_response)
+    monkeypatch.setattr("app.auth.httpx.get", lambda *a, **kw: jwks_response)
+
+
+def test_oauth_callback_triggers_notification_for_new_user(client, monkeypatch):
+    """OAuth callback for a brand-new user fires send_new_member_notification."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    _make_oauth_jwt_fixtures(monkeypatch, sub="brand-new-oauth-user", email="newoauth@example.com")
+
+    notified = []
+    monkeypatch.setattr(
+        "app.main.send_new_member_notification",
+        lambda email, name: notified.append((email, name)),
+    )
+
+    pkce_cookie = encode_pkce_cookie("verifier")
+    resp = client.get(
+        "/auth/callback?code=somecode",
+        cookies={PKCE_COOKIE_NAME: pkce_cookie},
+    )
+    assert resp.status_code == 303
+    assert len(notified) == 1
+    assert notified[0][0] == "newoauth@example.com"
+
+
+def test_oauth_callback_does_not_notify_for_existing_user(client, monkeypatch):
+    """OAuth callback for a returning user does NOT fire send_new_member_notification."""
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_PUBLISHABLE_KEY", "sb_publishable_test")
+    monkeypatch.setenv("SESSION_SECRET_KEY", "test-session-secret")
+
+    # "existing-user" is seeded in the test DB fixture
+    _make_oauth_jwt_fixtures(monkeypatch, sub="existing-user", email="user@example.com")
+
+    notified = []
+    monkeypatch.setattr(
+        "app.main.send_new_member_notification",
+        lambda email, name: notified.append((email, name)),
+    )
+
+    pkce_cookie = encode_pkce_cookie("verifier")
+    resp = client.get(
+        "/auth/callback?code=somecode",
+        cookies={PKCE_COOKIE_NAME: pkce_cookie},
+    )
+    assert resp.status_code == 303
+    assert notified == []
