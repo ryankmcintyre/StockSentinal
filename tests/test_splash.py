@@ -176,3 +176,4 @@ def test_privacy_link_in_every_page_footer(client):
         resp = client.get(path)
         assert resp.status_code == 200
         assert 'href="/privacy"' in resp.text, f"Privacy link missing on {path}"
+        assert 'href="mailto:admin@stocksentinal.com"' in resp.text, f"Contact link missing on {path}"
