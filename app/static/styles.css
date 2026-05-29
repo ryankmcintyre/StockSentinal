@@ -1072,3 +1072,8 @@ h3 {
 .privacy-page a {
     color: #1a73e8;
 }
+
+.footer-sep {
+    margin: 0 0.5rem;
+    color: #c8d0db;
+}
