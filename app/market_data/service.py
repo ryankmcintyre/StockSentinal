@@ -139,7 +139,7 @@ class _FetchCache:
         try:
             fetched = batch_method(missing, interval, time_period)
         except Exception:
-            logger.exception("Batch ATR preload failed for %s SMA period", interval)
+            logger.exception("Batch ATR preload failed for %s ATR-%d", interval, time_period)
             return
         for ticker, points in fetched.items():
             self._atr[(ticker.upper(), interval, time_period)] = points
