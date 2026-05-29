@@ -209,3 +209,62 @@ def get_supabase_auth_providers() -> list[str]:
     """
     raw = os.environ.get("SUPABASE_AUTH_PROVIDERS", "google").strip()
     return [p.strip() for p in raw.split(",") if p.strip()]
+
+
+# ---------------------------------------------------------------------------
+# Email / notification config
+# ---------------------------------------------------------------------------
+
+
+def get_smtp_host() -> str | None:
+    """Return the SMTP server hostname, or None if not configured."""
+    return _get_env_var("SMTP_HOST")
+
+
+def get_smtp_port() -> int:
+    """Return the SMTP server port (default 587 for STARTTLS)."""
+    raw = _get_env_var("SMTP_PORT")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return 587
+
+
+def get_smtp_username() -> str | None:
+    """Return the SMTP authentication username, or None if not set."""
+    return _get_env_var("SMTP_USERNAME")
+
+
+def get_smtp_password() -> str | None:
+    """Return the SMTP authentication password, or None if not set."""
+    return _get_env_var("SMTP_PASSWORD")
+
+
+def get_notify_from_email() -> str | None:
+    """Return the 'From' address for outgoing notification emails.
+
+    Falls back to SMTP_USERNAME if NOTIFY_FROM_EMAIL is not set.
+    """
+    return _get_env_var("NOTIFY_FROM_EMAIL") or _get_env_var("SMTP_USERNAME")
+
+
+def get_notify_admin_emails() -> list[str]:
+    """Return the list of admin email addresses to notify on new member sign-ups.
+
+    Read from NOTIFY_ADMIN_EMAIL as a comma-separated list of addresses.
+    Returns an empty list when not configured (notifications are skipped).
+    """
+    raw = _get_env_var("NOTIFY_ADMIN_EMAIL")
+    if not raw:
+        return []
+    return [addr.strip() for addr in raw.split(",") if addr.strip()]
+
+
+def is_email_notifications_configured() -> bool:
+    """Return True when the minimum email notification settings are present.
+
+    Requires SMTP_HOST and at least one address in NOTIFY_ADMIN_EMAIL.
+    """
+    return bool(get_smtp_host() and get_notify_admin_emails())

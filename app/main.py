@@ -40,6 +40,7 @@ from app.config import (
     has_supabase_publishable_key,
     has_session_secret_key,
 )
+from app.notifications import send_new_member_notification
 from app.csrf import CSRFMiddleware, csrf_token_for_template, validate_csrf
 from app.database import (
     SessionLocal,
@@ -516,6 +517,7 @@ def email_auth_request(
 @app.post("/auth/email/verify")
 def email_auth_verify(
     request: Request,
+    background_tasks: BackgroundTasks,
     email: str = Form(...),
     otp_code: str = Form(...),
     _csrf: None = Depends(validate_csrf),
@@ -584,6 +586,7 @@ def email_auth_verify(
     )
 
     user = uow.users.get_by_id(user_id)
+    is_new_user = user is None
     if user is None:
         user = User(id=user_id, email=email_claim, display_name=display_name)
         uow.users.add(user)
@@ -593,6 +596,11 @@ def email_auth_verify(
         if display_name and user.display_name != display_name:
             user.display_name = display_name
     uow.commit()
+
+    if is_new_user:
+        background_tasks.add_task(
+            send_new_member_notification, email_claim, display_name
+        )
 
     session_value = encode_session_cookie(user_id)
     response = RedirectResponse(url="/", status_code=303)
@@ -611,6 +619,7 @@ def email_auth_verify(
 @app.get("/auth/callback")
 def oauth_callback(
     request: Request,
+    background_tasks: BackgroundTasks,
     code: str | None = None,
     uow: UnitOfWork = Depends(get_uow),
 ):
@@ -678,6 +687,7 @@ def oauth_callback(
     )
 
     user = uow.users.get_by_id(user_id)
+    is_new_user = user is None
     if user is None:
         user = User(id=user_id, email=email, display_name=display_name)
         uow.users.add(user)
@@ -687,6 +697,11 @@ def oauth_callback(
         if display_name and user.display_name != display_name:
             user.display_name = display_name
     uow.commit()
+
+    if is_new_user:
+        background_tasks.add_task(
+            send_new_member_notification, email, display_name
+        )
 
     session_value = encode_session_cookie(user_id)
     response = RedirectResponse(url="/", status_code=303)
