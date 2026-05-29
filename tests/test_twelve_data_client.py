@@ -13,6 +13,7 @@ from app.market_data.exceptions import (
 from app.twelve_data_client import (
     _get,
     fetch_atr,
+    fetch_atr_batch,
     fetch_company_name,
     fetch_daily_series_batch,
     fetch_ticker_matches,
@@ -307,6 +308,58 @@ class TestFetchAtr:
             ATRPoint(date=date(2026, 4, 16), atr=2.30),
             ATRPoint(date=date(2026, 4, 15), atr=2.10),
         ]
+
+    def test_batch_parses_multiple_symbols_in_single_request(self, mocker):
+        fake_data = {
+            "AAPL": {
+                "meta": {"symbol": "AAPL"},
+                "values": [{"datetime": "2026-04-17", "atr": "3.10"}],
+            },
+            "MSFT": {
+                "meta": {"symbol": "MSFT"},
+                "values": [{"datetime": "2026-04-17", "atr": "4.20"}],
+            },
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mock_get = mocker.patch(
+            "app.twelve_data_client.requests.get", return_value=mock_resp
+        )
+
+        atr_by_symbol = fetch_atr_batch(
+            [" aapl ", "MSFT", "AAPL"], "daily", 14, "fake_key"
+        )
+
+        assert mock_get.call_count == 1
+        assert mock_get.call_args.kwargs["params"]["symbol"] == "AAPL,MSFT"
+        assert mock_get.call_args.kwargs["params"]["interval"] == "1day"
+        assert mock_get.call_args.kwargs["params"]["time_period"] == "14"
+        assert atr_by_symbol["AAPL"] == [ATRPoint(date=date(2026, 4, 17), atr=3.10)]
+        assert atr_by_symbol["MSFT"] == [ATRPoint(date=date(2026, 4, 17), atr=4.20)]
+
+    def test_batch_skips_symbol_level_errors(self, mocker):
+        fake_data = {
+            "AAPL": {
+                "meta": {"symbol": "AAPL"},
+                "values": [{"datetime": "2026-04-17", "atr": "3.10"}],
+            },
+            "ZZZZ": {
+                "status": "error",
+                "code": 400,
+                "message": "Symbol not found: ZZZZ",
+            },
+        }
+        mock_resp = mocker.Mock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = fake_data
+        mock_resp.raise_for_status = mocker.Mock()
+        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+
+        atr_by_symbol = fetch_atr_batch(["AAPL", "ZZZZ"], "daily", 14, "fake_key")
+
+        assert set(atr_by_symbol) == {"AAPL"}
 
 
 class TestFetchTickerMatches:
