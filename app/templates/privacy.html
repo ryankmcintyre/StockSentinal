@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+
+{% block title %}Privacy Statement — Stock Sentinel{% endblock %}
+
+{% block content %}
+<div class="privacy-page">
+    <h1>Privacy Statement</h1>
+    <p class="privacy-updated">Last updated: May 2025</p>
+
+    <p>
+        Stock Sentinel is a personal portfolio tool. This statement explains what
+        personal data the app collects, why, and how it is handled.
+    </p>
+
+    <h2>What data is collected</h2>
+    <ul>
+        <li><strong>Email address</strong> — provided when you sign in via email OTP or a social provider (Google, GitHub, etc.).</li>
+        <li><strong>Display name</strong> — your name or username as returned by your identity provider, or your email address if no name is available.</li>
+        <li><strong>Portfolio data</strong> — stock tickers, cost basis, prices, and notes that you enter manually.</li>
+    </ul>
+
+    <h2>Why it is collected</h2>
+    <ul>
+        <li>Your email and display name are used solely to identify your account and associate your portfolio data with you.</li>
+        <li>The site owner may receive a one-time email notification when a new account is created, containing your email address and display name, so the owner knows someone new has joined.</li>
+    </ul>
+
+    <h2>How it is stored</h2>
+    <ul>
+        <li>Authentication is handled by <a href="https://supabase.com" target="_blank" rel="noopener">Supabase</a>. Your credentials are never stored directly by this app.</li>
+        <li>Your email, display name, and portfolio data are stored in a PostgreSQL database managed by Supabase.</li>
+        <li>Data is not sold, rented, or shared with any third party for marketing or analytics purposes.</li>
+    </ul>
+
+    <h2>Data retention</h2>
+    <p>
+        Your data is retained for as long as your account exists. You can request
+        deletion of your account and all associated data by contacting the site owner
+        at the address below.
+    </p>
+
+    <h2>Your rights</h2>
+    <p>
+        You may request access to, correction of, or deletion of your personal data
+        at any time. To do so, contact the site owner directly.
+    </p>
+
+    <h2>Contact</h2>
+    <p>
+        For any privacy-related questions or requests, please reach out via the
+        email address associated with this site's Supabase project or through the
+        GitHub repository.
+    </p>
+</div>
+{% endblock %}
