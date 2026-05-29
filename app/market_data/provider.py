@@ -30,6 +30,7 @@ from app.config import (
 )
 from app.twelve_data_client import (
     fetch_atr as _td_fetch_atr,
+    fetch_atr_batch as _td_fetch_atr_batch,
     fetch_company_name as _td_fetch_company_name,
     fetch_ticker_matches as _td_fetch_ticker_matches,
     fetch_daily_series_batch as _td_fetch_daily_series_batch,
@@ -207,5 +208,14 @@ class TwelveDataProvider:
         self._wait_for_slot()
         return _td_fetch_atr(
             symbol, interval=interval, time_period=time_period,
+            api_key=self._get_api_key(),
+        )
+
+    def fetch_atr_batch(
+        self, symbols: list[str], interval: str, time_period: int,
+    ) -> dict[str, list[ATRPoint]]:
+        self._wait_for_slot()
+        return _td_fetch_atr_batch(
+            symbols, interval=interval, time_period=time_period,
             api_key=self._get_api_key(),
         )

@@ -178,19 +178,24 @@ def _normalize_symbols(symbols: list[str]) -> list[str]:
     return normalized
 
 
-def _fetch_time_series_batch(
+def _fetch_batch(
+    path: str,
+    extra_params: dict[str, Any],
     symbols: list[str],
-    interval: str,
     api_key: str,
 ) -> dict[str, dict[str, Any]]:
-    """Fetch raw time-series payloads for one or more symbols."""
+    """Fetch raw payloads for one or more symbols from a Twelve Data endpoint.
+
+    Sends a single comma-separated multi-symbol request. Per-symbol error
+    payloads are logged and skipped so one bad ticker never fails the batch.
+    """
     normalized = _normalize_symbols(symbols)
     if not normalized:
         return {}
 
     data = _get(
-        "/time_series",
-        {"symbol": ",".join(normalized), "interval": interval},
+        path,
+        {**extra_params, "symbol": ",".join(normalized)},
         api_key,
     )
 
@@ -214,6 +219,15 @@ def _fetch_time_series_batch(
                 continue
         results[symbol] = payload
     return results
+
+
+def _fetch_time_series_batch(
+    symbols: list[str],
+    interval: str,
+    api_key: str,
+) -> dict[str, dict[str, Any]]:
+    """Fetch raw time-series payloads for one or more symbols."""
+    return _fetch_batch("/time_series", {"interval": interval}, symbols, api_key)
 
 
 def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:
@@ -294,6 +308,23 @@ def fetch_sma(
     return points
 
 
+def _parse_atr_points(data: dict[str, Any]) -> list[ATRPoint]:
+    """Parse ATR points from a Twelve Data ATR payload (most-recent-first)."""
+    values = data.get("values", [])
+    if not values:
+        raise MarketDataError("Unexpected response structure: missing 'values' key")
+
+    points = [
+        ATRPoint(
+            date=_parse_date(value["datetime"]),
+            atr=float(value["atr"]),
+        )
+        for value in values
+    ]
+    points.sort(key=lambda point: point.date, reverse=True)
+    return points
+
+
 def fetch_atr(
     symbol: str,
     interval: str,
@@ -311,20 +342,34 @@ def fetch_atr(
         api_key,
     )
 
-    values = data.get("values", [])
-    if not values:
-        raise MarketDataError("Unexpected response structure: missing 'values' key")
-
-    points = [
-        ATRPoint(
-            date=_parse_date(value["datetime"]),
-            atr=float(value["atr"]),
-        )
-        for value in values
-    ]
-    points.sort(key=lambda point: point.date, reverse=True)
+    points = _parse_atr_points(data)
     logger.debug(
         "Fetched %d ATR-%d (%s) points for %s from Twelve Data",
         len(points), time_period, interval, symbol,
     )
     return points
+
+
+def fetch_atr_batch(
+    symbols: list[str],
+    interval: str,
+    time_period: int,
+    api_key: str,
+) -> dict[str, list[ATRPoint]]:
+    """Fetch ATR values for multiple symbols in a single request."""
+    payloads = _fetch_batch(
+        "/atr",
+        {
+            "interval": _normalize_interval(interval),
+            "time_period": str(time_period),
+        },
+        symbols,
+        api_key,
+    )
+    results: dict[str, list[ATRPoint]] = {}
+    for symbol, payload in payloads.items():
+        try:
+            results[symbol] = _parse_atr_points(payload)
+        except MarketDataError as exc:
+            logger.warning("Skipping ATR batch payload for %s: %s", symbol, exc)
+    return results

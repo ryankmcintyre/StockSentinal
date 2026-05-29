@@ -150,6 +150,9 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "notion": "Notion",
 }
 REFRESH_STALE_TIMEOUT_MINUTES = 5
+# Client poll ceiling: keep polling past the backend stale timeout (plus a
+# margin) so the UI never gives up while a refresh is genuinely still running.
+REFRESH_POLL_TIMEOUT_MS = (REFRESH_STALE_TIMEOUT_MINUTES + 2) * 60 * 1000
 FLASH_MESSAGES = {
     "refresh_limit": "You've used 5 of 5 refreshes today. Your limit resets at midnight UTC.",
     "admin_updated": "Admin user settings updated.",
@@ -774,6 +777,7 @@ def _portfolio_response(request: Request, uow: UnitOfWork):
             "api_configured": get_market_data_api_key() is not None,
             "market_data_provider_name": get_market_data_provider_display_name(),
             "any_refresh_in_progress": any_refresh_in_progress,
+            "refresh_poll_timeout_ms": REFRESH_POLL_TIMEOUT_MS,
             "current_user": current_user,
             "flash": _flash_message(request),
         },

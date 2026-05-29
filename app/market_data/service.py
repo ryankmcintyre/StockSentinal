@@ -116,6 +116,34 @@ class _FetchCache:
             )
         return self._atr[key]
 
+    def preload_atr(
+        self, tickers: set[str], interval: str, time_period: int,
+    ) -> None:
+        """Batch-fetch ATR for many tickers in a single request when supported.
+
+        Populates the per-operation cache so subsequent ``get_atr`` calls for
+        these tickers avoid one rate-limited API call each.
+        """
+        missing = sorted(
+            ticker
+            for ticker in tickers
+            if (ticker, interval, time_period) not in self._atr
+        )
+        if not missing:
+            return
+        if not getattr(type(self._provider), "supports_batch_fetch", False):
+            return
+        batch_method = getattr(self._provider, "fetch_atr_batch", None)
+        if not callable(batch_method):
+            return
+        try:
+            fetched = batch_method(missing, interval, time_period)
+        except Exception:
+            logger.exception("Batch ATR preload failed for %s ATR-%d", interval, time_period)
+            return
+        for ticker, points in fetched.items():
+            self._atr[(ticker.upper(), interval, time_period)] = points
+
     def compute_daily_sma(self, ticker: str, period: int) -> Optional[float]:
         """Compute SMA from cached daily bars, avoiding an API call."""
         bars = self.get_daily_bars(ticker)
@@ -358,6 +386,23 @@ class MarketDataService:
             return []
 
         errors: list[str] = []
+
+        # Batch-fetch ATR per (interval, period) so a refresh-all issues one
+        # API call per indicator instead of one call per ticker. Only tickers
+        # that actually need a refresh are included in the batch.
+        if fetch_cache is not None:
+            for interval, time_period in sorted(required_atr_indicators):
+                stale_tickers: set[str] = set()
+                for ticker in tickers:
+                    if force:
+                        stale_tickers.add(ticker)
+                        continue
+                    existing = self._atr_repo.get(db, ticker, interval, time_period)
+                    if atr_cache_is_stale(existing, interval):
+                        stale_tickers.add(ticker)
+                if stale_tickers:
+                    fetch_cache.preload_atr(stale_tickers, interval, time_period)
+
         for ticker in sorted(tickers):
             for interval, time_period in sorted(required_atr_indicators):
                 if not force:
@@ -810,6 +855,14 @@ class MarketDataService:
                 if required_refresh_succeeded:
                     pos.refresh_error = None
                 refreshed += 1
+
+            # Heartbeat: advance refresh_started_at for positions still marked
+            # in-progress so a long-but-progressing refresh-all is not treated
+            # as stale (and cleared) by the periodic stale-flag sweep.
+            heartbeat = datetime.now()
+            for pos in group:
+                if getattr(pos, "refresh_in_progress", False):
+                    pos.refresh_started_at = heartbeat
 
             db.commit()
 

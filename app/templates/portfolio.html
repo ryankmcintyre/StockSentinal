@@ -62,6 +62,7 @@
     id="refresh-status-root"
     data-refresh-status-enabled="true"
     data-any-refresh-in-progress="{{ 'true' if any_refresh_in_progress else 'false' }}"
+    data-poll-timeout-ms="{{ refresh_poll_timeout_ms }}"
 ></div>
 {% endif %}
 

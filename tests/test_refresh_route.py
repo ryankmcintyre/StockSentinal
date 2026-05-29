@@ -102,6 +102,7 @@ class TestRefreshLoadingCues:
         assert "Refreshing..." in resp.text
         assert "Updating market data — this page will reload when finished." in resp.text
         assert 'data-any-refresh-in-progress="true"' in resp.text
+        assert "data-poll-timeout-ms=" in resp.text
         assert "/static/refresh-status.js" in resp.text
         assert "data-api-submit=\"true\"" in resp.text
 

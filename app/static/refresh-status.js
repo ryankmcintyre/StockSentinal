@@ -31,15 +31,55 @@
             return;
         }
 
-        var stopAt = Date.now() + 120000;
+        // Keep polling until the server reports the refresh is done. The
+        // ceiling is aligned with the backend stale-refresh timeout (plus a
+        // margin) so the UI never gives up while a refresh is still running.
+        var DEFAULT_TIMEOUT_MS = 420000; // 7 minutes
+        var MIN_INTERVAL_MS = 2000;
+        var MAX_INTERVAL_MS = 5000;
+
+        var parsedTimeout = parseInt(root.dataset.pollTimeoutMs, 10);
+        var timeoutMs =
+            isNaN(parsedTimeout) || parsedTimeout <= 0
+                ? DEFAULT_TIMEOUT_MS
+                : parsedTimeout;
+        var stopAt = Date.now() + timeoutMs;
+        var intervalMs = MIN_INTERVAL_MS;
         var pollInFlight = false;
+        var timerId = null;
+
+        function stopPolling() {
+            if (timerId !== null) {
+                clearTimeout(timerId);
+                timerId = null;
+            }
+        }
+
+        function showTimeoutMessage() {
+            var banner = document.getElementById("refresh-progress-banner");
+            if (banner) {
+                banner.textContent =
+                    "Market data is still updating. Reload the page to check " +
+                    "the latest status.";
+            }
+        }
+
+        function scheduleNext() {
+            if (Date.now() >= stopAt) {
+                stopPolling();
+                // Surface the timeout message and let the user decide when to
+                // reload, rather than discarding it with an immediate reload.
+                showTimeoutMessage();
+                return;
+            }
+            timerId = setTimeout(poll, intervalMs);
+            // Gentle backoff to reduce request volume on slow refreshes.
+            intervalMs = Math.min(intervalMs + 1000, MAX_INTERVAL_MS);
+        }
 
         function poll() {
             if (pollInFlight) {
-                return;
-            }
-            if (Date.now() > stopAt) {
-                clearInterval(timerId);
+                scheduleNext();
                 return;
             }
             pollInFlight = true;
@@ -56,19 +96,21 @@
                 })
                 .then(function (payload) {
                     if (!payload.any_in_progress) {
-                        clearInterval(timerId);
+                        stopPolling();
                         window.location.reload();
+                        return;
                     }
+                    scheduleNext();
                 })
                 .catch(function () {
-                    // Keep polling until timeout; transient network failures are non-fatal.
+                    // Transient network failures are non-fatal; keep polling.
+                    scheduleNext();
                 })
                 .finally(function () {
                     pollInFlight = false;
                 });
         }
 
-        var timerId = setInterval(poll, 2000);
         poll();
     }
 

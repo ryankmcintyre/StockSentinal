@@ -13,7 +13,7 @@ from app.market_data.staleness import (
     weekly_bar_cache_is_stale,
     weekly_data_is_stale,
 )
-from app.market_data.service import MarketDataService
+from app.market_data.service import MarketDataService, _FetchCache
 
 
 # ---------------------------------------------------------------------------
@@ -375,6 +375,24 @@ class TestRefreshAllPositions:
         assert daily_refresh.call_count == 2
         assert weekly_refresh.call_count == 1
 
+    def test_advances_refresh_started_at_heartbeat_for_in_progress_positions(
+        self, mocker
+    ):
+        old_started = datetime(2026, 4, 21, 9, 0, 0)
+        pos = FakePosition(ticker="AAPL", investment_type="long-term")
+        pos.refresh_in_progress = True
+        pos.refresh_started_at = old_started
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos]
+
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch.object(self.service, "_refresh_daily")
+
+        self.service.refresh_all_positions(db, force=False)
+
+        assert pos.refresh_started_at > old_started
+
     def test_user_id_scopes_refresh_all_query(self, mocker):
         positions = [FakePosition(ticker="AAPL", investment_type="long-term")]
         db = mocker.Mock()
@@ -669,6 +687,57 @@ class TestRefreshAllPositions:
 # ---------------------------------------------------------------------------
 # Weekly OHLC bar cache (issue #19)
 # ---------------------------------------------------------------------------
+
+
+class TestAtrCacheBatching:
+    """ATR cache refresh batches per (interval, period) instead of per ticker."""
+
+    def _make_batch_provider(self):
+        from app.alpha_vantage_client import ATRPoint
+
+        class BatchProvider:
+            supports_batch_fetch = True
+
+            def __init__(self):
+                self.batch_calls = []
+                self.single_calls = []
+
+            def fetch_atr_batch(self, symbols, interval, time_period):
+                self.batch_calls.append((list(symbols), interval, time_period))
+                return {
+                    symbol: [ATRPoint(date=date(2026, 4, 17), atr=2.5)]
+                    for symbol in symbols
+                }
+
+            def fetch_atr(self, symbol, interval, time_period):
+                self.single_calls.append(symbol)
+                raise AssertionError("ATR batch preload should satisfy refresh")
+
+        return BatchProvider()
+
+    def test_refresh_atr_cache_uses_single_batch_call_per_indicator(self, mocker):
+        provider = self._make_batch_provider()
+        atr_repo = mocker.Mock()
+        service = MarketDataService(provider, atr_repo=atr_repo)
+        cache = _FetchCache(provider)
+        db = mocker.Mock()
+
+        errors = service.refresh_atr_cache(
+            db,
+            {"AAPL", "MSFT", "GOOG"},
+            {("daily", 14)},
+            force=True,
+            fetch_cache=cache,
+        )
+
+        assert errors == []
+        assert len(provider.batch_calls) == 1
+        symbols, interval, time_period = provider.batch_calls[0]
+        assert sorted(symbols) == ["AAPL", "GOOG", "MSFT"]
+        assert interval == "daily"
+        assert time_period == 14
+        assert provider.single_calls == []
+        assert atr_repo.upsert.call_count == 3
 
 
 class TestWeeklyBarCache:
