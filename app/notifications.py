@@ -8,6 +8,7 @@ propagates back to the request that triggered the notification.
 import logging
 import smtplib
 import ssl
+from html import escape
 from datetime import datetime, timezone
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -53,6 +54,8 @@ def send_new_member_notification(
     subject = "StockSentinal — new member joined"
 
     label = display_name or user_email or "unknown"
+    safe_user_email = escape(user_email) if user_email else "(not available)"
+    safe_label = escape(label)
     body_text = (
         f"A new member has joined StockSentinal.\n\n"
         f"  Email:        {user_email or '(not available)'}\n"
@@ -63,8 +66,8 @@ def send_new_member_notification(
 <html><body>
 <p>A new member has joined <strong>StockSentinal</strong>.</p>
 <table cellpadding="4" style="border-collapse:collapse;">
-  <tr><td><strong>Email</strong></td><td>{user_email or "(not available)"}</td></tr>
-  <tr><td><strong>Display name</strong></td><td>{label}</td></tr>
+  <tr><td><strong>Email</strong></td><td>{safe_user_email}</td></tr>
+  <tr><td><strong>Display name</strong></td><td>{safe_label}</td></tr>
   <tr><td><strong>Joined at</strong></td><td>{joined_at}</td></tr>
 </table>
 </body></html>"""
