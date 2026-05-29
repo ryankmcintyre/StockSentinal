@@ -67,10 +67,9 @@
         function scheduleNext() {
             if (Date.now() >= stopAt) {
                 stopPolling();
+                // Surface the timeout message and let the user decide when to
+                // reload, rather than discarding it with an immediate reload.
                 showTimeoutMessage();
-                // Reload once so the user sees the most recent state and any
-                // per-position errors, rather than a frozen "Refreshing…" UI.
-                window.location.reload();
                 return;
             }
             timerId = setTimeout(poll, intervalMs);
