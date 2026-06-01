@@ -414,6 +414,17 @@ class TestKeyLevelRoutes:
         assert "Auto-filled from ticker lookup — edit if needed." in resp.text
         assert 'id="edit-position-submit"' in resp.text
 
+    def test_edit_position_prefills_current_price_from_daily_close(self, _setup_db, client):
+        pos_id = _seed_position(_setup_db, current_price=150.0, daily_close=182.45)
+
+        resp = client.get(f"/edit/{pos_id}")
+
+        assert resp.status_code == 200
+        assert re.search(
+            r'<input type="number" id="current_price" name="current_price"[^>]*value="182.45">',
+            resp.text,
+        )
+
     def test_edit_position_clears_cached_data_on_ticker_change(
         self, _setup_db, client, mocker
     ):
