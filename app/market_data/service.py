@@ -10,6 +10,7 @@ from datetime import date as date_type
 from datetime import datetime
 from typing import Optional
 
+import app.rule_config as rule_config
 from sqlalchemy.orm import Session
 
 from app.alpha_vantage_client import (
@@ -258,8 +259,6 @@ class MarketDataService:
         """
         if not positions:
             return {}
-
-        import app.rule_config as rule_config
 
         all_tickers = {position.ticker for position in positions}
         benchmark_tickers = {
@@ -772,24 +771,21 @@ class MarketDataService:
         should_refresh_weekly = self._needs_weekly(position) and (
             force or weekly_data_is_stale(position)
         )
-        import app.rule_config as rule_config
-
         rule_uow = as_uow(db, user_id=position.user_id)
         required = rule_config.get_required_indicators(rule_uow)
         required_atr = rule_config.get_required_atr_indicators(rule_uow)
         weekly_lookback = rule_config.get_required_weekly_bar_lookback(rule_uow)
         daily_lookback = rule_config.get_required_daily_bar_lookback(rule_uow)
         benchmark = getattr(position, "sector_benchmark_ticker", None)
+        rule_inputs_may_refresh = bool(
+            required
+            or required_atr
+            or weekly_lookback > 0
+            or (daily_lookback > 0 and benchmark)
+        )
         previous_verdicts = (
             self._calculate_verdicts(db, [position])
-            if (
-                should_refresh_daily
-                or should_refresh_weekly
-                or required
-                or required_atr
-                or weekly_lookback > 0
-                or (daily_lookback > 0 and benchmark)
-            )
+            if should_refresh_daily or should_refresh_weekly or rule_inputs_may_refresh
             else {}
         )
 
@@ -887,8 +883,6 @@ class MarketDataService:
         ticker_groups: dict[str, list[Position]] = {}
         for pos in positions:
             ticker_groups.setdefault(pos.ticker, []).append(pos)
-
-        import app.rule_config as rule_config
 
         user_ids = {user_id} if user_id is not None else {pos.user_id for pos in positions}
         required: set[tuple[str, int]] = set()
