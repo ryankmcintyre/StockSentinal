@@ -1,6 +1,9 @@
 """Tests for refresh route and refresh-status API endpoint."""
 
+import asyncio
+import threading
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 import pytest
 from fastapi.testclient import TestClient
@@ -390,7 +393,7 @@ class TestRefreshLoadingCues:
         finally:
             verify_db.close()
 
-    def test_single_refresh_marks_position_in_progress_and_dispatches_background_task(
+    def test_single_refresh_returns_redirect_before_background_task_completes(
         self, client, _setup_db, mocker
     ):
         db = _setup_db()
@@ -410,18 +413,85 @@ class TestRefreshLoadingCues:
         finally:
             db.close()
 
+        response_sent = threading.Event()
+        task_started = threading.Event()
+        allow_task_to_finish = threading.Event()
+        request_errors = []
+        messages = []
+
+        def blocking_refresh_single(_position_id, _user_id):
+            task_started.set()
+            assert response_sent.is_set()
+            assert allow_task_to_finish.wait(timeout=1)
+
         mock_refresh_single = mocker.patch(
-            "app.main._refresh_single_position_task", return_value=None
+            "app.main._refresh_single_position_task",
+            side_effect=blocking_refresh_single,
         )
 
-        resp = client.post(
-            f"/refresh/{position_id}",
-            data=csrf_form_data(client),
-            follow_redirects=False,
-        )
+        form_data = csrf_form_data(client)
+        body = urlencode(form_data).encode()
+        cookie_header = "; ".join(
+            f"{key}={value}" for key, value in client.cookies.items()
+        ).encode()
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": f"/refresh/{position_id}",
+            "raw_path": f"/refresh/{position_id}".encode(),
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"content-type", b"application/x-www-form-urlencoded"),
+                (b"content-length", str(len(body)).encode()),
+                (b"cookie", cookie_header),
+            ],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+            "root_path": "",
+        }
+        request_sent = False
 
-        assert resp.status_code == 303
+        async def receive():
+            nonlocal request_sent
+            if not request_sent:
+                request_sent = True
+                return {"type": "http.request", "body": body, "more_body": False}
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            messages.append(message)
+            if (
+                message["type"] == "http.response.body"
+                and not message.get("more_body", False)
+            ):
+                response_sent.set()
+
+        def run_request():
+            try:
+                asyncio.run(app(scope, receive, send))
+            except BaseException as exc:  # pragma: no cover - assertion surfaced below
+                request_errors.append(exc)
+
+        request_thread = threading.Thread(target=run_request)
+        request_thread.start()
+
+        assert response_sent.wait(timeout=1)
+        assert task_started.wait(timeout=1)
+        allow_task_to_finish.set()
+        request_thread.join(timeout=1)
+
+        assert not request_thread.is_alive()
+        assert not request_errors
         mock_refresh_single.assert_called_once_with(position_id, "test-user-id")
+        response_start = next(
+            message for message in messages if message["type"] == "http.response.start"
+        )
+        assert response_start["status"] == 303
+        assert dict(response_start["headers"])[b"location"] == b"/"
 
         verify_db = _setup_db()
         try:
