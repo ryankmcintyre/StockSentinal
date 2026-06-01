@@ -425,6 +425,38 @@ class TestKeyLevelRoutes:
             resp.text,
         )
 
+    def test_edit_position_preserves_manual_current_price_when_daily_close_prefills_form(
+        self, _setup_db, client
+    ):
+        pos_id = _seed_position(_setup_db, current_price=150.0, daily_close=182.45, notes="original")
+
+        resp = client.post(
+            f"/edit/{pos_id}",
+            data=csrf_form_data(client, {
+                "ticker": "NVDA",
+                "company_name": "NVIDIA Corp",
+                "cost_basis": "100.00",
+                "initial_purchase_date": "2024-01-01",
+                "investment_type": "long-term",
+                "current_price": "182.45",
+                "notes": " updated notes ",
+                "sector_benchmark_ticker": "",
+            }),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/"
+
+        db = _setup_db()
+        try:
+            pos = db.query(Position).filter(Position.id == pos_id).first()
+            assert pos.current_price == 150.0
+            assert pos.daily_close == 182.45
+            assert pos.notes == "updated notes"
+        finally:
+            db.close()
+
     def test_edit_position_clears_cached_data_on_ticker_change(
         self, _setup_db, client, mocker
     ):

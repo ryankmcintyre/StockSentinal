@@ -1180,6 +1180,10 @@ def edit_position(
     clean_company_name = company_name.strip()
     clean_benchmark = sector_benchmark_ticker.strip().upper() or None
     ticker_changed = pos.ticker != clean_ticker
+    effective_current_price = pos.daily_close if pos.daily_close is not None else pos.current_price
+    submitted_current_price = current_price
+    if not ticker_changed and pos.daily_close is not None and submitted_current_price == effective_current_price:
+        submitted_current_price = pos.current_price
     if ticker_changed:
         _clear_position_market_data(pos)
     pos.ticker = clean_ticker
@@ -1187,14 +1191,14 @@ def edit_position(
     pos.cost_basis = cost_basis
     pos.initial_purchase_date = date.fromisoformat(initial_purchase_date)
     pos.investment_type = investment_type
-    pos.current_price = current_price
+    pos.current_price = submitted_current_price
     pos.notes = notes.strip() or None
     pos.sector_benchmark_ticker = clean_benchmark
     uow.commit()
     if ticker_changed and get_market_data_api_key():
         _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
         background_tasks.add_task(_refresh_single_position_task, pos.id, uow.user_id)
-    logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, current_price)
+    logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, submitted_current_price)
     return RedirectResponse(url="/", status_code=303)
 
 
