@@ -108,8 +108,8 @@ class SqlAlchemyPositionRepository:
 
     def has_any_refresh_in_progress(self) -> bool:
         return (
-            self._session.query(Position.id)
-            .filter(Position.user_id == self._user_id)
+            self._base_query()
+            .with_entities(Position.id)
             .filter(Position.refresh_in_progress.is_(True))
             .first()
         ) is not None
@@ -117,12 +117,12 @@ class SqlAlchemyPositionRepository:
     def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
         """Return (position_id, refresh_in_progress, refresh_started_at) for each position."""
         return (
-            self._session.query(
+            self._base_query()
+            .with_entities(
                 Position.id,
                 Position.refresh_in_progress,
                 Position.refresh_started_at,
             )
-            .filter(Position.user_id == self._user_id)
             .all()
         )
 
