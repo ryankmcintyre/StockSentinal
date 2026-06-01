@@ -10,6 +10,7 @@ from datetime import date as date_type
 from datetime import datetime
 from typing import Optional
 
+import app.rule_config as rule_config
 from sqlalchemy.orm import Session
 
 from app.alpha_vantage_client import (
@@ -20,6 +21,7 @@ from app.alpha_vantage_client import (
 )
 from app.market_data.exceptions import MarketDataError
 from app.models import Position
+from app.rule_engine import DailyClosePoint, MarketSignals, WeeklyOhlcBar, evaluate_position, get_verdict
 from app.schemas import InvestmentType
 from app.unit_of_work import as_uow
 
@@ -52,6 +54,24 @@ def _compute_sma(closes: list[float], period: int) -> Optional[float]:
     if len(closes) < period:
         return None
     return sum(closes[:period]) / period
+
+
+class _PositionPriceProxy:
+    """Delegate to a position while overriding ``current_price``.
+
+    Rule evaluation should use the latest cached daily close when one is
+    available, but the existing rule helpers read ``position.current_price``.
+    This proxy preserves every other attribute from the original position
+    via ``__getattr__`` while swapping in the effective price used for the
+    current verdict calculation.
+    """
+
+    def __init__(self, original_pos: Position, current_price: float):
+        self._original_pos = original_pos
+        self.current_price = current_price
+
+    def __getattr__(self, name):
+        return getattr(self._original_pos, name)
 
 
 class _FetchCache:
@@ -214,6 +234,130 @@ class MarketDataService:
 
     def load_daily_bar_cache_for_tickers(self, db: Session, tickers: set[str]):
         return self._daily_bar_repo.load_for_tickers(db, tickers)
+
+    def _daily_bars_for_position(
+        self, position: Position, all_daily_bars: dict[str, list]
+    ) -> dict[str, list] | None:
+        """Return only the daily bar history relevant to one position."""
+        relevant: dict[str, list] = {}
+        pos_bars = all_daily_bars.get(position.ticker)
+        if pos_bars:
+            relevant[position.ticker.upper()] = pos_bars
+        benchmark = getattr(position, "sector_benchmark_ticker", None)
+        if benchmark:
+            bench_bars = all_daily_bars.get(benchmark.upper())
+            if bench_bars:
+                relevant[benchmark.upper()] = bench_bars
+        return relevant or None
+
+    def _calculate_verdicts(self, db: Session, positions: list[Position]) -> dict[int, str]:
+        """Return current verdict strings for the supplied positions.
+
+        Verdicts are evaluated against the same cached market-data inputs that
+        power the portfolio dashboard, including enabled per-user rule
+        selections and any required benchmark history.
+        """
+        if not positions:
+            return {}
+
+        all_tickers = {position.ticker for position in positions}
+        benchmark_tickers = {
+            position.sector_benchmark_ticker.upper()
+            for position in positions
+            if getattr(position, "sector_benchmark_ticker", None)
+        }
+        indicator_cache = self.load_indicator_cache_for_tickers(db, all_tickers)
+        atr_cache = self.load_atr_cache_for_tickers(db, all_tickers)
+        weekly_bars = self.load_weekly_bar_cache_for_tickers(db, all_tickers)
+        daily_bars = self.load_daily_bar_cache_for_tickers(
+            db, all_tickers | benchmark_tickers
+        )
+        enabled_rules_by_user = {
+            user_id: rule_config.get_enabled_rule_selections_by_investment_type(
+                as_uow(db, user_id=user_id),
+                user_id=user_id,
+            )
+            for user_id in {position.user_id for position in positions if position.user_id}
+        }
+
+        verdicts: dict[int, str] = {}
+        for position in positions:
+            signals = MarketSignals(
+                daily_close=position.daily_close,
+                daily_sma_21=position.daily_sma_21,
+                weekly_close=position.weekly_close,
+                weekly_sma_20=position.weekly_sma_20,
+            )
+
+            cached_indicators = indicator_cache.get(position.ticker)
+            if cached_indicators:
+                signals.ma_signals = dict(cached_indicators)
+
+            cached_atr = atr_cache.get(position.ticker)
+            if cached_atr:
+                signals.atr_signals = dict(cached_atr)
+
+            cached_weekly_bars = weekly_bars.get(position.ticker)
+            if cached_weekly_bars:
+                signals.weekly_ohlc_history = [
+                    WeeklyOhlcBar(
+                        bar_date=bar.bar_date,
+                        open=bar.open,
+                        high=bar.high,
+                        low=bar.low,
+                        close=bar.close,
+                        volume=bar.volume,
+                    )
+                    for bar in cached_weekly_bars
+                ]
+
+            relevant_daily_bars = self._daily_bars_for_position(position, daily_bars)
+            if relevant_daily_bars:
+                signals.daily_close_history = {
+                    ticker.upper(): [
+                        DailyClosePoint(bar_date=bar.bar_date, close=bar.close)
+                        for bar in bars
+                    ]
+                    for ticker, bars in relevant_daily_bars.items()
+                }
+
+            effective_price = (
+                position.daily_close
+                if position.daily_close is not None
+                else position.current_price
+            )
+            configured_rules = enabled_rules_by_user.get(position.user_id, {}).get(
+                position.investment_type
+            )
+            verdicts[id(position)] = get_verdict(
+                evaluate_position(
+                    _PositionPriceProxy(position, effective_price),
+                    signals=signals,
+                    configured_rules=configured_rules,
+                )
+            ).value
+
+        return verdicts
+
+    def _update_previous_verdicts(
+        self,
+        db: Session,
+        positions: list[Position],
+        previous_verdicts: dict[int, str],
+    ) -> None:
+        """Persist prior verdicts using ``id(position)`` keys from ``previous_verdicts``.
+
+        When a position's verdict changes after refresh, ``previous_verdict`` is
+        set to the prior verdict string. Matching verdicts clear the field so
+        the dashboard does not keep showing stale "Previously ..." text.
+        """
+        current_verdicts = self._calculate_verdicts(db, positions)
+        for position in positions:
+            prior_verdict = previous_verdicts.get(id(position))
+            current_verdict = current_verdicts.get(id(position))
+            position.previous_verdict = (
+                prior_verdict if prior_verdict and prior_verdict != current_verdict else None
+            )
 
     # -- Indicator cache refresh --------------------------------------------
 
@@ -623,9 +767,40 @@ class MarketDataService:
         """
         errors: list[str] = []
         cache = _FetchCache(self._provider)
+        should_refresh_daily = force or daily_data_is_stale(position)
+        should_refresh_weekly = self._needs_weekly(position) and (
+            force or weekly_data_is_stale(position)
+        )
+        rule_uow = as_uow(db, user_id=position.user_id)
+        rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
+        investment_type = position.investment_type
+        required = rule_config.get_required_indicators(
+            rule_uow, investment_type, _skip_defaults=True
+        )
+        required_atr = rule_config.get_required_atr_indicators(
+            rule_uow, investment_type, _skip_defaults=True
+        )
+        weekly_lookback = rule_config.get_required_weekly_bar_lookback(
+            rule_uow, investment_type, _skip_defaults=True
+        )
+        daily_lookback = rule_config.get_required_daily_bar_lookback(
+            rule_uow, investment_type, _skip_defaults=True
+        )
+        benchmark = getattr(position, "sector_benchmark_ticker", None)
+        rule_inputs_may_refresh = bool(
+            required
+            or required_atr
+            or weekly_lookback > 0
+            or (daily_lookback > 0 and benchmark)
+        )
+        previous_verdicts = (
+            self._calculate_verdicts(db, [position])
+            if should_refresh_daily or should_refresh_weekly or rule_inputs_may_refresh
+            else {}
+        )
 
         # Daily refresh
-        if force or daily_data_is_stale(position):
+        if should_refresh_daily:
             logger.debug("%s daily data is stale, refreshing", position.ticker)
             try:
                 self._refresh_daily(position, fetch_cache=cache)
@@ -637,7 +812,7 @@ class MarketDataService:
 
         # Weekly refresh (long-term only)
         if self._needs_weekly(position):
-            if force or weekly_data_is_stale(position):
+            if should_refresh_weekly:
                 logger.debug("%s weekly data is stale, refreshing", position.ticker)
                 try:
                     self._refresh_weekly(position, fetch_cache=cache)
@@ -655,14 +830,6 @@ class MarketDataService:
             )
 
         # Refresh indicator caches for configured rules
-        import app.rule_config as rule_config
-
-        rule_uow = as_uow(db, user_id=position.user_id)
-        rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
-        investment_type = position.investment_type
-        required = rule_config.get_required_indicators(
-            rule_uow, investment_type, _skip_defaults=True
-        )
         if required:
             cache_errors = self.refresh_indicator_cache(
                 db, {position.ticker}, required, force=force,
@@ -670,9 +837,6 @@ class MarketDataService:
             )
             errors.extend(cache_errors)
 
-        required_atr = rule_config.get_required_atr_indicators(
-            rule_uow, investment_type, _skip_defaults=True
-        )
         if required_atr:
             atr_errors = self.refresh_atr_cache(
                 db, {position.ticker}, required_atr, force=force,
@@ -680,9 +844,6 @@ class MarketDataService:
             )
             errors.extend(atr_errors)
 
-        weekly_lookback = rule_config.get_required_weekly_bar_lookback(
-            rule_uow, investment_type, _skip_defaults=True
-        )
         if weekly_lookback > 0:
             weekly_bar_errors = self.refresh_weekly_bar_cache(
                 db, {position.ticker}, weekly_lookback, force=force,
@@ -690,11 +851,7 @@ class MarketDataService:
             )
             errors.extend(weekly_bar_errors)
 
-        daily_lookback = rule_config.get_required_daily_bar_lookback(
-            rule_uow, investment_type, _skip_defaults=True
-        )
         if daily_lookback > 0:
-            benchmark = getattr(position, "sector_benchmark_ticker", None)
             if benchmark:
                 daily_tickers: set[str] = {position.ticker, benchmark.upper()}
                 daily_bar_errors = self.refresh_daily_bar_cache(
@@ -704,6 +861,8 @@ class MarketDataService:
                 errors.extend(daily_bar_errors)
 
         position.refresh_error = "; ".join(errors) if errors else None
+        if previous_verdicts:
+            self._update_previous_verdicts(db, [position], previous_verdicts)
         db.commit()
 
     def refresh_all_positions(
@@ -734,8 +893,6 @@ class MarketDataService:
         ticker_groups: dict[str, list[Position]] = {}
         for pos in positions:
             ticker_groups.setdefault(pos.ticker, []).append(pos)
-
-        import app.rule_config as rule_config
 
         user_ids = {user_id} if user_id is not None else {pos.user_id for pos in positions}
         required: set[tuple[str, int]] = set()
@@ -808,6 +965,18 @@ class MarketDataService:
 
         cache.preload_daily_bars(daily_batch_tickers)
         cache.preload_weekly_bars(weekly_batch_tickers)
+        rule_inputs_may_refresh = bool(
+            required or required_atr or weekly_lookback > 0 or daily_rule_tickers
+        )
+        tracked_positions = [
+            pos
+            for ticker, group in ticker_groups.items()
+            if rule_inputs_may_refresh
+            or refresh_plan[ticker]["group_needs_daily"]
+            or refresh_plan[ticker]["group_needs_weekly"]
+            for pos in group
+        ]
+        previous_verdicts = self._calculate_verdicts(db, tracked_positions)
 
         refreshed = 0
         for ticker, group in ticker_groups.items():
@@ -908,6 +1077,10 @@ class MarketDataService:
                 )
                 if daily_errors:
                     logger.warning("Daily bar cache refresh errors: %s", daily_errors)
+
+        if previous_verdicts:
+            self._update_previous_verdicts(db, tracked_positions, previous_verdicts)
+            db.commit()
 
         logger.info(
             "Refresh complete: %d/%d positions refreshed",

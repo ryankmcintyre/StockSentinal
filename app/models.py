@@ -61,6 +61,7 @@ class Position(Base):
     refresh_error = Column(String, nullable=True)
     refresh_in_progress = Column(Boolean, nullable=True, default=False)
     refresh_started_at = Column(DateTime, nullable=True)
+    previous_verdict = Column(String, nullable=True)
 
     # Per-position sector benchmark ticker (issue #22). Optional;
     # the relative-weakness rule is skipped when missing.
