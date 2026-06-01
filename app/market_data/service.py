@@ -91,6 +91,7 @@ def _compute_atr(
 
     atr = sum(true_ranges[:period]) / period
     for true_range in true_ranges[period:]:
+        # Alpha Vantage ATR follows Wilder's smoothing after the initial average.
         atr = ((atr * (period - 1)) + true_range) / period
     return atr, chronological[-1].date
 
