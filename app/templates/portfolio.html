@@ -145,7 +145,9 @@
                 <span class="verdict verdict-{{ pos.verdict.value | lower }}">
                     {{ pos.verdict.value }}
                 </span>
-                {% if pos.previous_verdict and pos.previous_verdict != pos.verdict.value %}
+                {% if pos.trim_acknowledged %}
+                    <div class="text-muted">Trimmed ✓</div>
+                {% elif pos.previous_verdict and pos.previous_verdict != pos.verdict.value %}
                     <div class="text-muted">Previously {{ pos.previous_verdict }}</div>
                 {% endif %}
             </td>
@@ -167,9 +169,13 @@
                 class="reason"
                 data-sort-value="{{ pos.reason_sort_value }}"
             >
-                {% for rule in pos.triggered_rules %}
-                    <span class="rule-tag">{{ rule.description }}</span>
-                {% endfor %}
+                {% if pos.trim_acknowledged %}
+                    <span class="rule-tag">Trim acknowledged</span>
+                {% else %}
+                    {% for rule in pos.triggered_rules %}
+                        <span class="rule-tag">{{ rule.description }}</span>
+                    {% endfor %}
+                {% endif %}
                 {% if pos.refresh_error %}
                     <span class="rule-tag rule-tag-error" title="{{ pos.refresh_error }}">Refresh failed</span>
                 {% endif %}
@@ -192,6 +198,17 @@
                         title="Refresh market data"
                         {% if pos.refresh_in_progress %}disabled{% endif %}
                     >&#8635;</button>
+                </form>
+                {% endif %}
+                {% if pos.verdict.value == "Trim" %}
+                <form method="post" action="/trim-acknowledge/{{ pos.id }}" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-small">Mark as Trimmed</button>
+                </form>
+                {% elif pos.trim_acknowledged %}
+                <form method="post" action="/trim-unacknowledge/{{ pos.id }}" class="inline-form">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <button type="submit" class="btn btn-small btn-muted">Clear Trim</button>
                 </form>
                 {% endif %}
                 <form method="post" action="/delete/{{ pos.id }}" class="inline-form"

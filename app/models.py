@@ -63,6 +63,10 @@ class Position(Base):
     refresh_started_at = Column(DateTime, nullable=True)
     previous_verdict = Column(String, nullable=True)
 
+    # Trim acknowledgment: when True, a Trim verdict is overridden to Hold
+    # (until the user clears it or a Sell rule fires).
+    trim_acknowledged = Column(Boolean, nullable=True, default=False)
+
     # Per-position sector benchmark ticker (issue #22). Optional;
     # the relative-weakness rule is skipped when missing.
     sector_benchmark_ticker = Column(String, nullable=True)

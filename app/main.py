@@ -372,6 +372,14 @@ def _enrich_position(
 
     triggered = evaluate_position(eval_pos, signals=signals, configured_rules=configured_rules)
     verdict = get_verdict(triggered)
+
+    # If the user acknowledged a Trim, override it to Hold (Sell always wins).
+    trim_acknowledged = False
+    if verdict == Verdict.trim and pos.trim_acknowledged:
+        verdict = Verdict.hold
+        trim_acknowledged = True
+        triggered = []  # Clear rules so Reason column shows "Trim acknowledged" instead
+
     reason_sort_value = (
         pos.refresh_error
         or ("Refreshing..." if pos.refresh_in_progress else "")
@@ -395,6 +403,7 @@ def _enrich_position(
         "verdict_sort_priority": VERDICT_PRIORITY.get(verdict, 99),
         "triggered_rules": triggered,
         "reason_sort_value": reason_sort_value,
+        "trim_acknowledged": trim_acknowledged,
         # Market data status
         "daily_close": pos.daily_close,
         "daily_sma_21": pos.daily_sma_21,
@@ -1287,6 +1296,34 @@ def delete_position(
     if pos:
         logger.info("Deleted position id=%d %s", position_id, pos.ticker)
         uow.positions.delete(pos)
+        uow.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/trim-acknowledge/{position_id}")
+def trim_acknowledge(
+    position_id: int,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Mark a position's Trim verdict as acknowledged; it will display as Hold until cleared."""
+    pos = uow.positions.get_by_id(position_id)
+    if pos:
+        pos.trim_acknowledged = True
+        uow.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/trim-unacknowledge/{position_id}")
+def trim_unacknowledge(
+    position_id: int,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Clear a position's trim acknowledgment so the Trim verdict shows again if rules fire."""
+    pos = uow.positions.get_by_id(position_id)
+    if pos:
+        pos.trim_acknowledged = False
         uow.commit()
     return RedirectResponse(url="/", status_code=303)
 
