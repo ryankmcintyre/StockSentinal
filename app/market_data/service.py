@@ -169,7 +169,7 @@ class _FetchCache:
             target_cache[ticker.upper()] = bars
 
     def get_atr(self, ticker: str, interval: str, time_period: int) -> list[ATRPoint]:
-        key = (ticker, interval, time_period)
+        key = (ticker.upper(), interval, time_period)
         if key not in self._atr:
             self._atr[key] = self._provider.fetch_atr(
                 ticker, interval=interval, time_period=time_period,
@@ -597,6 +597,32 @@ class MarketDataService:
             return []
 
         errors: list[str] = []
+
+        if fetch_cache:
+            for interval, time_period in sorted(required_atr_indicators):
+                fallback_tickers: set[str] = set()
+                as_of = last_completed_trading_week_end() if interval == "weekly" else None
+                for ticker in sorted(tickers):
+                    if not force:
+                        existing = self._atr_repo.get(
+                            db, ticker, interval, time_period,
+                        )
+                        if not atr_cache_is_stale(existing, interval):
+                            continue
+                    try:
+                        computed = fetch_cache.compute_atr(
+                            ticker, interval, time_period, as_of=as_of,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Skipping ATR batch preload check for %s %s ATR-%d",
+                            ticker, interval, time_period,
+                            exc_info=True,
+                        )
+                        continue
+                    if computed is None:
+                        fallback_tickers.add(ticker)
+                fetch_cache.preload_atr(fallback_tickers, interval, time_period)
 
         for ticker in sorted(tickers):
             for interval, time_period in sorted(required_atr_indicators):

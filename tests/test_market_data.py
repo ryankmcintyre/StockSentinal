@@ -977,9 +977,36 @@ class TestLocalAtrComputation:
             for offset in range(count)
         ]
 
+    def _daily_bars_with_smoothed_atr(self):
+        from datetime import timedelta
+
+        from app.alpha_vantage_client import DailyBar
+
+        start = date(2026, 4, 5)
+        chronological = [
+            DailyBar(
+                date=start + timedelta(days=offset),
+                open=100.0,
+                high=102.0,
+                low=98.0,
+                close=100.0,
+            )
+            for offset in range(15)
+        ]
+        chronological.append(
+            DailyBar(
+                date=start + timedelta(days=15),
+                open=110.0,
+                high=118.0,
+                low=100.0,
+                close=110.0,
+            )
+        )
+        return list(reversed(chronological))
+
     def test_refresh_atr_cache_computes_daily_atr_without_provider_atr_call(self, mocker):
         provider = Mock()
-        provider.fetch_daily_bars.return_value = self._daily_bars()
+        provider.fetch_daily_bars.return_value = self._daily_bars_with_smoothed_atr()
         provider.fetch_atr.return_value = []
         provider.fetch_atr_batch.return_value = {}
         atr_repo = mocker.Mock()
@@ -1003,7 +1030,7 @@ class TestLocalAtrComputation:
             "AAPL",
             "daily",
             14,
-            atr_value=pytest.approx(3.0),
+            atr_value=pytest.approx(5.0),
             atr_date=date(2026, 4, 20),
         )
 
@@ -1088,6 +1115,59 @@ class TestLocalAtrComputation:
         assert provider.daily_batch_symbols == [["AAPL", "MSFT"]]
         assert provider.atr_calls == []
         assert provider.atr_batch_calls == []
+        assert atr_repo.upsert.call_count == 2
+
+    def test_refresh_all_batches_atr_fallback_for_insufficient_history(self, mocker):
+        from app.alpha_vantage_client import ATRPoint
+
+        class BatchProvider:
+            supports_batch_fetch = True
+
+            def __init__(self, bars):
+                self.bars = bars
+                self.atr_calls = []
+                self.atr_batch_calls = []
+
+            def fetch_daily_bars_batch(self, symbols):
+                return {symbol: self.bars for symbol in symbols}
+
+            def fetch_daily_bars(self, symbol):
+                raise AssertionError("daily batch preload should satisfy ATR refresh")
+
+            def fetch_atr(self, symbol, interval, time_period):
+                self.atr_calls.append((symbol, interval, time_period))
+                raise AssertionError("ATR fallback should be batch preloaded")
+
+            def fetch_atr_batch(self, symbols, interval, time_period):
+                self.atr_batch_calls.append((list(symbols), interval, time_period))
+                return {
+                    symbol: [ATRPoint(date=date(2026, 4, 20), atr=2.5)]
+                    for symbol in symbols
+                }
+
+        provider = BatchProvider(self._daily_bars(count=14))
+        atr_repo = mocker.Mock()
+        atr_repo.get.return_value = None
+        service = MarketDataService(provider, atr_repo=atr_repo)
+        mocker.patch.object(service, "_calculate_verdicts", return_value={})
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch("app.rule_config.get_required_indicators", return_value=set())
+        mocker.patch("app.rule_config.get_required_atr_indicators", return_value={("daily", 14)})
+        mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
+        mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
+        positions = [
+            FakePosition(ticker="AAPL", investment_type="short-term"),
+            FakePosition(ticker="MSFT", investment_type="short-term"),
+        ]
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = positions
+
+        refreshed = service.refresh_all_positions(db, force=False)
+
+        assert refreshed == 0
+        assert provider.atr_batch_calls == [(["AAPL", "MSFT"], "daily", 14)]
+        assert provider.atr_calls == []
         assert atr_repo.upsert.call_count == 2
 
 
