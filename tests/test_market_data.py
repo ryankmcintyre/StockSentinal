@@ -369,6 +369,38 @@ class TestRefreshPosition:
 
         assert position.previous_verdict is None
 
+    def test_stores_previous_verdict_when_rule_cache_refresh_changes_status(
+        self, mocker
+    ):
+        position = FakePosition(investment_type="long-term")
+        db = mocker.Mock()
+
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(self.service, "_refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch(
+            "app.rule_config.get_required_indicators",
+            return_value={("daily", 21)},
+        )
+        refresh_indicator_cache = mocker.patch.object(
+            self.service, "refresh_indicator_cache", return_value=[]
+        )
+        calculate_verdicts = mocker.patch.object(
+            self.service,
+            "_calculate_verdicts",
+            side_effect=[
+                {id(position): Verdict.hold.value},
+                {id(position): Verdict.trim.value},
+            ],
+        )
+
+        self.service.refresh_position(position, db, force=False)
+
+        assert position.previous_verdict == Verdict.hold.value
+        refresh_indicator_cache.assert_called_once()
+        assert calculate_verdicts.call_count == 2
+
 
 # ---------------------------------------------------------------------------
 # Local SMA computation tests (_refresh_daily / _refresh_weekly with cache)
@@ -538,6 +570,51 @@ class TestRefreshAllPositions:
 
         assert refreshed == 1
         assert pos.previous_verdict == Verdict.hold.value
+
+    def test_refresh_all_updates_previous_verdict_after_rule_cache_refreshes(
+        self, mocker
+    ):
+        pos = FakePosition(ticker="AAPL", investment_type="short-term")
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos]
+
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch(
+            "app.rule_config.get_required_indicators",
+            return_value={("daily", 21)},
+        )
+        call_order = []
+
+        def _calculate_verdicts(_db, positions):
+            call_order.append("calculate")
+            verdict = (
+                Verdict.hold.value
+                if call_order.count("calculate") == 1
+                else Verdict.sell.value
+            )
+            return {id(position): verdict for position in positions}
+
+        def _refresh_indicator_cache(*args, **kwargs):
+            call_order.append("indicator")
+            return []
+
+        mocker.patch.object(
+            self.service,
+            "_calculate_verdicts",
+            side_effect=_calculate_verdicts,
+        )
+        mocker.patch.object(
+            self.service,
+            "refresh_indicator_cache",
+            side_effect=_refresh_indicator_cache,
+        )
+
+        refreshed = self.service.refresh_all_positions(db, force=False)
+
+        assert refreshed == 0
+        assert pos.previous_verdict == Verdict.hold.value
+        assert call_order == ["calculate", "indicator", "calculate"]
 
     def test_advances_refresh_started_at_heartbeat_for_in_progress_positions(
         self, mocker
