@@ -56,7 +56,14 @@ def _compute_sma(closes: list[float], period: int) -> Optional[float]:
 
 
 class _PositionPriceProxy:
-    """Delegate to a Position while overriding current_price for rule evaluation."""
+    """Delegate to a position while overriding ``current_price``.
+
+    Rule evaluation should use the latest cached daily close when one is
+    available, but the existing rule helpers read ``position.current_price``.
+    This proxy preserves every other attribute from the original position
+    via ``__getattr__`` while swapping in the effective price used for the
+    current verdict calculation.
+    """
 
     def __init__(self, original_pos: Position, current_price: float):
         self._original_pos = original_pos
@@ -230,6 +237,7 @@ class MarketDataService:
     def _daily_bars_for_position(
         self, position: Position, all_daily_bars: dict[str, list]
     ) -> dict[str, list] | None:
+        """Return only the daily bar history relevant to one position."""
         relevant: dict[str, list] = {}
         pos_bars = all_daily_bars.get(position.ticker)
         if pos_bars:
@@ -242,6 +250,12 @@ class MarketDataService:
         return relevant or None
 
     def _calculate_verdicts(self, db: Session, positions: list[Position]) -> dict[int, str]:
+        """Return current verdict strings for the supplied positions.
+
+        Verdicts are evaluated against the same cached market-data inputs that
+        power the portfolio dashboard, including enabled per-user rule
+        selections and any required benchmark history.
+        """
         if not positions:
             return {}
 
@@ -332,6 +346,12 @@ class MarketDataService:
         positions: list[Position],
         previous_verdicts: dict[int, str],
     ) -> None:
+        """Persist prior verdicts using ``id(position)`` keys from ``previous_verdicts``.
+
+        When a position's verdict changes after refresh, ``previous_verdict`` is
+        set to the prior verdict string. Matching verdicts clear the field so
+        the dashboard does not keep showing stale "Previously ..." text.
+        """
         current_verdicts = self._calculate_verdicts(db, positions)
         for position in positions:
             prior_verdict = previous_verdicts.get(id(position))
@@ -748,15 +768,23 @@ class MarketDataService:
         """
         errors: list[str] = []
         cache = _FetchCache(self._provider)
-        previous_verdicts = self._calculate_verdicts(db, [position])
-        verdict_refresh_succeeded = False
+        should_refresh_daily = force or daily_data_is_stale(position)
+        should_refresh_weekly = self._needs_weekly(position) and (
+            force or weekly_data_is_stale(position)
+        )
+        previous_verdicts = (
+            self._calculate_verdicts(db, [position])
+            if should_refresh_daily or should_refresh_weekly
+            else {}
+        )
+        market_data_refreshed = False
 
         # Daily refresh
-        if force or daily_data_is_stale(position):
+        if should_refresh_daily:
             logger.debug("%s daily data is stale, refreshing", position.ticker)
             try:
                 self._refresh_daily(position, fetch_cache=cache)
-                verdict_refresh_succeeded = True
+                market_data_refreshed = True
             except Exception as exc:
                 logger.exception("Daily refresh failed for %s", position.ticker)
                 errors.append(f"Daily refresh failed: {exc}")
@@ -765,11 +793,11 @@ class MarketDataService:
 
         # Weekly refresh (long-term only)
         if self._needs_weekly(position):
-            if force or weekly_data_is_stale(position):
+            if should_refresh_weekly:
                 logger.debug("%s weekly data is stale, refreshing", position.ticker)
                 try:
                     self._refresh_weekly(position, fetch_cache=cache)
-                    verdict_refresh_succeeded = True
+                    market_data_refreshed = True
                 except Exception as exc:
                     logger.exception(
                         "Weekly refresh failed for %s: %s", position.ticker, exc,
@@ -823,7 +851,7 @@ class MarketDataService:
                 errors.extend(daily_bar_errors)
 
         position.refresh_error = "; ".join(errors) if errors else None
-        if verdict_refresh_succeeded:
+        if market_data_refreshed:
             self._update_previous_verdicts(db, [position], previous_verdicts)
         db.commit()
 

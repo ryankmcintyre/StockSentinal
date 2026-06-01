@@ -23,10 +23,15 @@ from app.market_data.service import MarketDataService, _FetchCache
 
 
 class FakePosition:
+    """Lightweight position stub with breakeven defaults for rule evaluation tests."""
+
     def __init__(
         self,
         ticker="AAPL",
         investment_type="long-term",
+        cost_basis=100.0,
+        current_price=100.0,
+        initial_purchase_date=date(2025, 1, 1),
         daily_market_date=None,
         weekly_market_date=None,
         refresh_error=None,
@@ -42,6 +47,9 @@ class FakePosition:
     ):
         self.ticker = ticker
         self.investment_type = investment_type
+        self.cost_basis = cost_basis
+        self.current_price = current_price
+        self.initial_purchase_date = initial_purchase_date
         self.daily_market_date = daily_market_date
         self.weekly_market_date = weekly_market_date
         self.refresh_error = refresh_error
@@ -222,12 +230,23 @@ class TestRefreshPosition:
         """Create a service with a mock provider and mock rule_config."""
         self.mock_provider = Mock()
         self.service = MarketDataService(self.mock_provider)
-        mocker.patch.object(self.service, "_calculate_verdicts", return_value={})
+        mocker.patch.object(MarketDataService, "load_indicator_cache_for_tickers", return_value={})
+        mocker.patch.object(MarketDataService, "load_atr_cache_for_tickers", return_value={})
+        mocker.patch.object(
+            MarketDataService, "load_weekly_bar_cache_for_tickers", return_value={}
+        )
+        mocker.patch.object(
+            MarketDataService, "load_daily_bar_cache_for_tickers", return_value={}
+        )
         # Mock rule_config to avoid DB dependency
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
         mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
+        mocker.patch(
+            "app.rule_config.get_enabled_rule_selections_by_investment_type",
+            return_value={},
+        )
 
     def test_refreshes_daily_when_daily_is_stale(self, mocker):
         position = FakePosition(investment_type="long-term")
@@ -444,11 +463,22 @@ class TestRefreshAllPositions:
         """Create a service with mock provider and mock rule_config."""
         self.mock_provider = Mock()
         self.service = MarketDataService(self.mock_provider)
-        mocker.patch.object(self.service, "_calculate_verdicts", return_value={})
+        mocker.patch.object(MarketDataService, "load_indicator_cache_for_tickers", return_value={})
+        mocker.patch.object(MarketDataService, "load_atr_cache_for_tickers", return_value={})
+        mocker.patch.object(
+            MarketDataService, "load_weekly_bar_cache_for_tickers", return_value={}
+        )
+        mocker.patch.object(
+            MarketDataService, "load_daily_bar_cache_for_tickers", return_value={}
+        )
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
         mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
+        mocker.patch(
+            "app.rule_config.get_enabled_rule_selections_by_investment_type",
+            return_value={},
+        )
 
     def test_refreshes_only_stale_positions(self, mocker):
         pos1 = FakePosition(ticker="AAPL", investment_type="long-term")
