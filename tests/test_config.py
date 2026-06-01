@@ -9,6 +9,7 @@ from app.config import (
     get_log_level,
     get_market_data_api_key,
     get_market_data_api_key_env_var,
+    get_market_data_min_interval_seconds,
     get_market_data_provider,
     get_market_data_provider_display_name,
     get_supabase_publishable_key,
@@ -167,6 +168,17 @@ class TestMarketDataRateLimitIntervals:
         assert get_twelve_data_min_interval_seconds() == 8.0
         monkeypatch.setenv("ALPHA_VANTAGE_MIN_INTERVAL_SECONDS", "fast")
         assert get_alpha_vantage_min_interval_seconds() == 12.0
+
+    def test_active_interval_defaults_to_alpha_vantage(self, monkeypatch):
+        monkeypatch.delenv("MARKET_DATA_PROVIDER", raising=False)
+        monkeypatch.delenv("TWELVE_DATA_API_KEY", raising=False)
+        monkeypatch.setenv("ALPHA_VANTAGE_MIN_INTERVAL_SECONDS", "1.5")
+        assert get_market_data_min_interval_seconds() == 1.5
+
+    def test_active_interval_uses_twelve_data_when_configured(self, monkeypatch):
+        monkeypatch.setenv("MARKET_DATA_PROVIDER", "twelvedata")
+        monkeypatch.setenv("TWELVE_DATA_MIN_INTERVAL_SECONDS", "0.25")
+        assert get_market_data_min_interval_seconds() == 0.25
 
 
 class TestGetMarketDataProvider:

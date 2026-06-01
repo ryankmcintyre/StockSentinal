@@ -104,6 +104,13 @@ def get_twelve_data_min_interval_seconds() -> float:
     return _get_float_env_var("TWELVE_DATA_MIN_INTERVAL_SECONDS", 8.0)
 
 
+def get_market_data_min_interval_seconds() -> float:
+    """Return the per-call rate-limit interval for the active provider."""
+    if get_market_data_provider() == "twelvedata":
+        return get_twelve_data_min_interval_seconds()
+    return get_alpha_vantage_min_interval_seconds()
+
+
 def get_market_data_provider() -> str:
     """Return the configured market data provider name.
 
