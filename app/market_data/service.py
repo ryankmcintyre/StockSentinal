@@ -56,6 +56,46 @@ def _compute_sma(closes: list[float], period: int) -> Optional[float]:
     return sum(closes[:period]) / period
 
 
+def _compute_atr(
+    bars: list[DailyBar] | list[WeeklyBar],
+    period: int,
+    as_of: Optional[date_type] = None,
+) -> Optional[tuple[float, date_type]]:
+    """Compute ATR from OHLC bars ordered most-recent-first."""
+    if period <= 0:
+        return None
+    if as_of:
+        bars = [bar for bar in bars if bar.date <= as_of]
+    bars = sorted(bars, key=lambda bar: bar.date, reverse=True)
+    if len(bars) < period + 1:
+        return None
+
+    chronological = list(reversed(bars))
+    true_ranges: list[float] = []
+    for index in range(1, len(chronological)):
+        bar = chronological[index]
+        previous_bar = chronological[index - 1]
+        if (
+            bar.high is None
+            or bar.low is None
+            or previous_bar.close is None
+        ):
+            return None
+        true_ranges.append(
+            max(
+                bar.high - bar.low,
+                abs(bar.high - previous_bar.close),
+                abs(bar.low - previous_bar.close),
+            )
+        )
+
+    atr = sum(true_ranges[:period]) / period
+    for true_range in true_ranges[period:]:
+        # Alpha Vantage ATR follows Wilder's smoothing after the initial average.
+        atr = ((atr * (period - 1)) + true_range) / period
+    return atr, chronological[-1].date
+
+
 class _PositionPriceProxy:
     """Delegate to a position while overriding ``current_price``.
 
@@ -129,7 +169,7 @@ class _FetchCache:
             target_cache[ticker.upper()] = bars
 
     def get_atr(self, ticker: str, interval: str, time_period: int) -> list[ATRPoint]:
-        key = (ticker, interval, time_period)
+        key = (ticker.upper(), interval, time_period)
         if key not in self._atr:
             self._atr[key] = self._provider.fetch_atr(
                 ticker, interval=interval, time_period=time_period,
@@ -183,6 +223,20 @@ class _FetchCache:
             bars = [b for b in bars if b.date <= as_of]
         closes = [b.close for b in bars]
         return _compute_sma(closes, period)
+
+    def compute_atr(
+        self,
+        ticker: str,
+        interval: str,
+        period: int,
+        as_of: Optional[date_type] = None,
+    ) -> Optional[tuple[float, date_type]]:
+        """Compute ATR from cached OHLC bars, avoiding an API call."""
+        if interval == "daily":
+            return _compute_atr(self.get_daily_bars(ticker), period, as_of=as_of)
+        if interval == "weekly":
+            return _compute_atr(self.get_weekly_bars(ticker), period, as_of=as_of)
+        return None
 
 
 class MarketDataService:
@@ -488,15 +542,28 @@ class MarketDataService:
         fetch_cache: Optional["_FetchCache"] = None,
     ) -> None:
         """Fetch and upsert one ATR cache entry."""
-        points = (
-            fetch_cache.get_atr(ticker, interval, time_period)
-            if fetch_cache
-            else self._provider.fetch_atr(
-                ticker, interval=interval, time_period=time_period,
-            )
-        )
         atr_val: Optional[float] = None
         atr_date = None
+
+        if fetch_cache:
+            as_of = last_completed_trading_week_end() if interval == "weekly" else None
+            computed = fetch_cache.compute_atr(
+                ticker, interval, time_period, as_of=as_of,
+            )
+            if computed is not None:
+                atr_val, atr_date = computed
+
+        if atr_val is None:
+            points = (
+                fetch_cache.get_atr(ticker, interval, time_period)
+                if fetch_cache
+                else self._provider.fetch_atr(
+                    ticker, interval=interval, time_period=time_period,
+                )
+            )
+        else:
+            points = []
+
         if points:
             if interval == "weekly":
                 target_friday = last_completed_trading_week_end()
@@ -531,21 +598,31 @@ class MarketDataService:
 
         errors: list[str] = []
 
-        # Batch-fetch ATR per (interval, period) so a refresh-all issues one
-        # API call per indicator instead of one call per ticker. Only tickers
-        # that actually need a refresh are included in the batch.
-        if fetch_cache is not None:
+        if fetch_cache:
             for interval, time_period in sorted(required_atr_indicators):
-                stale_tickers: set[str] = set()
-                for ticker in tickers:
-                    if force:
-                        stale_tickers.add(ticker)
+                fallback_tickers: set[str] = set()
+                as_of = last_completed_trading_week_end() if interval == "weekly" else None
+                for ticker in sorted(tickers):
+                    if not force:
+                        existing = self._atr_repo.get(
+                            db, ticker, interval, time_period,
+                        )
+                        if not atr_cache_is_stale(existing, interval):
+                            continue
+                    try:
+                        computed = fetch_cache.compute_atr(
+                            ticker, interval, time_period, as_of=as_of,
+                        )
+                    except Exception:
+                        logger.debug(
+                            "Skipping ATR batch preload check for %s %s ATR-%d",
+                            ticker, interval, time_period,
+                            exc_info=True,
+                        )
                         continue
-                    existing = self._atr_repo.get(db, ticker, interval, time_period)
-                    if atr_cache_is_stale(existing, interval):
-                        stale_tickers.add(ticker)
-                if stale_tickers:
-                    fetch_cache.preload_atr(stale_tickers, interval, time_period)
+                    if computed is None:
+                        fallback_tickers.add(ticker)
+                fetch_cache.preload_atr(fallback_tickers, interval, time_period)
 
         for ticker in sorted(tickers):
             for interval, time_period in sorted(required_atr_indicators):
@@ -946,6 +1023,12 @@ class MarketDataService:
 
         all_tickers = set(ticker_groups.keys())
         for interval, _time_period in required:
+            if interval == "daily":
+                daily_batch_tickers.update(all_tickers)
+            elif interval == "weekly":
+                weekly_batch_tickers.update(all_tickers)
+
+        for interval, _time_period in required_atr:
             if interval == "daily":
                 daily_batch_tickers.update(all_tickers)
             elif interval == "weekly":

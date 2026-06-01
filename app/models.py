@@ -179,12 +179,12 @@ class MarketWeeklyBarCache(Base):
 
 
 class MarketDailyBarCache(Base):
-    """Cache for daily close prices per ticker.
+    """Cache for daily OHLCV bars per ticker.
 
     Used by rules that need historical daily price action over a
     rolling window (issue #22 relative-weakness comparison vs sector
-    benchmark).  Stores enough trailing closes to compute the largest
-    configured lookback return.
+    benchmark).  Stores enough trailing bars to compute the largest
+    configured lookback return and local ATR values.
     """
     __tablename__ = "market_daily_bar_cache"
     __table_args__ = (
@@ -197,7 +197,11 @@ class MarketDailyBarCache(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     ticker = Column(String, nullable=False)
     bar_date = Column(Date, nullable=False)
+    open = Column(Float, nullable=True)
+    high = Column(Float, nullable=True)
+    low = Column(Float, nullable=True)
     close = Column(Float, nullable=True)
+    volume = Column(Float, nullable=True)
     retrieved_at = Column(DateTime, nullable=True)
 
 
