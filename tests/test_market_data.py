@@ -584,37 +584,36 @@ class TestRefreshAllPositions:
             "app.rule_config.get_required_indicators",
             return_value={("daily", 21)},
         )
-        call_order = []
-
-        def _calculate_verdicts(_db, positions):
-            call_order.append("calculate")
-            verdict = (
-                Verdict.hold.value
-                if call_order.count("calculate") == 1
-                else Verdict.sell.value
-            )
-            return {id(position): verdict for position in positions}
-
-        def _refresh_indicator_cache(*args, **kwargs):
-            call_order.append("indicator")
-            return []
-
-        mocker.patch.object(
-            self.service,
-            "_calculate_verdicts",
-            side_effect=_calculate_verdicts,
+        parent = Mock()
+        parent.attach_mock(
+            mocker.patch.object(
+                self.service,
+                "_calculate_verdicts",
+                side_effect=[
+                    {id(pos): Verdict.hold.value},
+                    {id(pos): Verdict.sell.value},
+                ],
+            ),
+            "calculate_verdicts",
         )
-        mocker.patch.object(
-            self.service,
+        parent.attach_mock(
+            mocker.patch.object(
+                self.service,
+                "refresh_indicator_cache",
+                return_value=[],
+            ),
             "refresh_indicator_cache",
-            side_effect=_refresh_indicator_cache,
         )
 
         refreshed = self.service.refresh_all_positions(db, force=False)
 
         assert refreshed == 0
         assert pos.previous_verdict == Verdict.hold.value
-        assert call_order == ["calculate", "indicator", "calculate"]
+        assert [call[0] for call in parent.method_calls] == [
+            "calculate_verdicts",
+            "refresh_indicator_cache",
+            "calculate_verdicts",
+        ]
 
     def test_advances_refresh_started_at_heartbeat_for_in_progress_positions(
         self, mocker
