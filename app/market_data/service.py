@@ -658,7 +658,11 @@ class MarketDataService:
         import app.rule_config as rule_config
 
         rule_uow = as_uow(db, user_id=position.user_id)
-        required = rule_config.get_required_indicators(rule_uow)
+        rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
+        investment_type = position.investment_type
+        required = rule_config.get_required_indicators(
+            rule_uow, investment_type, _skip_defaults=True
+        )
         if required:
             cache_errors = self.refresh_indicator_cache(
                 db, {position.ticker}, required, force=force,
@@ -666,7 +670,9 @@ class MarketDataService:
             )
             errors.extend(cache_errors)
 
-        required_atr = rule_config.get_required_atr_indicators(rule_uow)
+        required_atr = rule_config.get_required_atr_indicators(
+            rule_uow, investment_type, _skip_defaults=True
+        )
         if required_atr:
             atr_errors = self.refresh_atr_cache(
                 db, {position.ticker}, required_atr, force=force,
@@ -674,7 +680,9 @@ class MarketDataService:
             )
             errors.extend(atr_errors)
 
-        weekly_lookback = rule_config.get_required_weekly_bar_lookback(rule_uow)
+        weekly_lookback = rule_config.get_required_weekly_bar_lookback(
+            rule_uow, investment_type, _skip_defaults=True
+        )
         if weekly_lookback > 0:
             weekly_bar_errors = self.refresh_weekly_bar_cache(
                 db, {position.ticker}, weekly_lookback, force=force,
@@ -682,7 +690,9 @@ class MarketDataService:
             )
             errors.extend(weekly_bar_errors)
 
-        daily_lookback = rule_config.get_required_daily_bar_lookback(rule_uow)
+        daily_lookback = rule_config.get_required_daily_bar_lookback(
+            rule_uow, investment_type, _skip_defaults=True
+        )
         if daily_lookback > 0:
             benchmark = getattr(position, "sector_benchmark_ticker", None)
             if benchmark:

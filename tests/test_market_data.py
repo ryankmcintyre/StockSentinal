@@ -1,7 +1,7 @@
 """Tests for the market data service layer."""
 
 from datetime import date, datetime
-from unittest.mock import Mock
+from unittest.mock import ANY, Mock
 
 import pytest
 
@@ -280,6 +280,32 @@ class TestRefreshPosition:
         self.service._refresh_weekly.assert_not_called()
         assert position.refresh_error is None
         db.commit.assert_called_once()
+
+    def test_rule_requirements_are_scoped_to_position_investment_type(self, mocker):
+        position = FakePosition(investment_type="short-term")
+        db = mocker.Mock()
+
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(self.service, "_refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        ensure_defaults = mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
+        get_required = mocker.patch("app.rule_config.get_required_indicators", return_value=set())
+        get_required_atr = mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
+        get_weekly_lookback = mocker.patch(
+            "app.rule_config.get_required_weekly_bar_lookback", return_value=0
+        )
+        get_daily_lookback = mocker.patch(
+            "app.rule_config.get_required_daily_bar_lookback", return_value=0
+        )
+
+        self.service.refresh_position(position, db, force=False)
+
+        ensure_defaults.assert_called_once_with(ANY, user_id=position.user_id)
+        get_required.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
+        get_required_atr.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
+        get_weekly_lookback.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
+        get_daily_lookback.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
 
     def test_persists_combined_daily_and_weekly_errors(self, mocker):
         position = FakePosition(investment_type="long-term")
