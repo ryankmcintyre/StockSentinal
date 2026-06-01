@@ -4,7 +4,7 @@
 A personal web app that helps the owner decide when to sell, trim, or hold stock investments. The user manually enters their long-term and short-term positions, and the app evaluates each one against a defined set of rules, returning a clear recommendation and explanation for every holding.
 
 ## Target User
-Solo investor (single user, no auth required). This is a personal tool, not a multi-user product.
+Solo investor (single user). 
 
 ---
 
@@ -16,13 +16,12 @@ Solo investor (single user, no auth required). This is a personal tool, not a mu
 - Show which specific rule(s) triggered the recommendation
 - Prioritize positions by urgency (what to act on first)
 - Summary dashboard view across all positions
-- Persist portfolio data between sessions (SQLite database)
+- Persist portfolio data between sessions (SQLite or Supabase database)
 
 ## Out of Scope (MVP)
 - Brokerage API integration
 - CSV import / export
-- Live market data feeds (all current values entered manually)
-- Multi-user support or authentication
+- Live market data feeds (all current values entered manually or data feed API calls triggered manually)
 - Mobile-native app
 - Tax lot tracking or tax optimization
 - Historical performance tracking
@@ -79,11 +78,10 @@ Solo investor (single user, no auth required). This is a personal tool, not a mu
 
 ## Tech Stack
 - **Backend**: Python with FastAPI
-- **Database**: SQLite via SQLAlchemy ORM
+- **Database**: SQLite via SQLAlchemy ORM locally or Supabase when hosted
 - **Frontend**: Jinja2 templates with plain HTML and CSS served directly by FastAPI
 - **Styling**: Plain CSS — clean, minimal, functional aesthetic
-- **No external APIs** in MVP (all data is manually entered)
-- **No authentication required** — single user personal tool
+- **No external brokerage APIs** in MVP (all data is manually entered)
 
 ### Project Structure
 ```
@@ -144,3 +142,4 @@ User clicks a position to edit → updates current price or other fields → sub
 - Comment each rule in `rule_engine.py` with a plain-English description of what it checks
 - Validate inputs at the Pydantic schema level (no empty tickers, no negative prices, no future purchase dates)
 - Prefer simple, readable code over clever optimizations
+- Always work against a GitHub issue and submit a PR when work is complete
