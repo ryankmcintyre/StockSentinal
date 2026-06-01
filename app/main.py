@@ -1141,11 +1141,13 @@ def edit_position_form(position_id: int, request: Request, uow: UnitOfWork = Dep
     pos = uow.positions.get_by_id(position_id)
     if not pos:
         return RedirectResponse(url="/", status_code=303)
+    effective_current_price = pos.daily_close if pos.daily_close is not None else pos.current_price
     return templates.TemplateResponse(
         request,
         "edit_position.html",
         {
             "position": pos,
+            "effective_current_price": effective_current_price,
             "investment_types": InvestmentType,
             "current_user": _get_current_user(request, uow),
         },
