@@ -64,6 +64,14 @@ class PositionRepository(Protocol):
 
     def has_any_refresh_in_progress(self) -> bool: ...
 
+    def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
+        """Return tuples of position_id, refresh_in_progress, and refresh_started_at."""
+        ...
+
+    def clear_stale_refreshing(self, cutoff: datetime) -> int:
+        """Bulk-clear refresh flags started before cutoff and return updated row count."""
+        ...
+
     def list_stale_refreshing(self, cutoff: datetime) -> Sequence[Position]: ...
 
 
@@ -105,9 +113,42 @@ class SqlAlchemyPositionRepository:
     def has_any_refresh_in_progress(self) -> bool:
         return (
             self._base_query()
+            .with_entities(Position.id)
             .filter(Position.refresh_in_progress.is_(True))
             .first()
         ) is not None
+
+    def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
+        """Return lightweight refresh status rows for each position.
+
+        Each tuple contains: position_id (int), refresh_in_progress (bool | None),
+        refresh_started_at (datetime | None).
+        """
+        return (
+            self._base_query()
+            .with_entities(
+                Position.id,
+                Position.refresh_in_progress,
+                Position.refresh_started_at,
+            )
+            .all()
+        )
+
+    def clear_stale_refreshing(self, cutoff: datetime) -> int:
+        """Bulk-clear refresh flags started before cutoff and return updated row count."""
+        return (
+            self._base_query()
+            .filter(Position.refresh_in_progress.is_(True))
+            .filter(Position.refresh_started_at.is_not(None))
+            .filter(Position.refresh_started_at < cutoff)
+            .update(
+                {
+                    Position.refresh_in_progress: False,
+                    Position.refresh_started_at: None,
+                },
+                synchronize_session=False,
+            )
+        )
 
     def list_stale_refreshing(self, cutoff: datetime) -> Sequence[Position]:
         return (

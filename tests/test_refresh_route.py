@@ -159,7 +159,12 @@ class TestRefreshLoadingCues:
         assert resp.status_code == 200
         assert "Previously Hold" in resp.text
 
-    def test_refresh_status_endpoint_returns_position_flags(self, client, _setup_db):
+    def test_refresh_status_endpoint_returns_position_flags(self, client, _setup_db, mocker):
+        list_all = mocker.patch(
+            "app.repositories.SqlAlchemyPositionRepository.list_all",
+            side_effect=AssertionError("refresh-status must not load full positions"),
+        )
+
         db = _setup_db()
         try:
             db.add_all(
@@ -197,8 +202,14 @@ class TestRefreshLoadingCues:
         assert len(payload["positions"]) == 2
         assert any(item["in_progress"] is True for item in payload["positions"])
         assert any(item["started_at"] is not None for item in payload["positions"])
+        list_all.assert_not_called()
 
-    def test_refresh_status_endpoint_clears_stale_flags(self, client, _setup_db):
+    def test_refresh_status_endpoint_clears_stale_flags(self, client, _setup_db, mocker):
+        list_stale = mocker.patch(
+            "app.repositories.SqlAlchemyPositionRepository.list_stale_refreshing",
+            side_effect=AssertionError("stale refresh cleanup must not load full positions"),
+        )
+
         db = _setup_db()
         try:
             pos = Position(
@@ -222,6 +233,7 @@ class TestRefreshLoadingCues:
         assert resp.status_code == 200
         payload = resp.json()
         assert payload["any_in_progress"] is False
+        list_stale.assert_not_called()
 
         verify_db = _setup_db()
         try:

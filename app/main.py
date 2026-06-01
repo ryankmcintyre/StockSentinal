@@ -249,17 +249,12 @@ def _mark_positions_refresh_state(
 def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
     """Reset stale in-progress flags left behind by interrupted refreshes."""
     cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
-    stale_positions = (
-        uow.positions.list_stale_refreshing(cutoff)
-    )
-    if not stale_positions:
+    cleared_count = uow.positions.clear_stale_refreshing(cutoff)
+    if not cleared_count:
         return 0
 
-    for pos in stale_positions:
-        pos.refresh_in_progress = False
-        pos.refresh_started_at = None
     uow.commit()
-    return len(stale_positions)
+    return cleared_count
 
 
 def _clear_all_stale_refresh_flags() -> int:
@@ -1412,17 +1407,17 @@ def refresh_single(
 def refresh_status(uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Expose lightweight in-progress refresh state for client-side polling."""
     _clear_stale_refresh_flags(uow)
-    positions = uow.positions.list_all()
+    positions = uow.positions.list_refresh_statuses()
     return {
-        "any_in_progress": any(bool(pos.refresh_in_progress) for pos in positions),
+        "any_in_progress": any(bool(in_progress) for _, in_progress, _ in positions),
         "positions": [
             {
-                "id": pos.id,
-                "in_progress": bool(pos.refresh_in_progress),
+                "id": position_id,
+                "in_progress": bool(in_progress),
                 "started_at": (
-                    pos.refresh_started_at.isoformat() if pos.refresh_started_at else None
+                    started_at.isoformat() if started_at else None
                 ),
             }
-            for pos in positions
+            for position_id, in_progress, started_at in positions
         ],
     }
