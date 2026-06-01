@@ -453,14 +453,15 @@ class TestRefreshLoadingCues:
             "server": ("testserver", 80),
             "root_path": "",
         }
-        request_sent = False
+        request_messages = iter(
+            (
+                {"type": "http.request", "body": body, "more_body": False},
+                {"type": "http.disconnect"},
+            )
+        )
 
         async def receive():
-            nonlocal request_sent
-            if not request_sent:
-                request_sent = True
-                return {"type": "http.request", "body": body, "more_body": False}
-            return {"type": "http.disconnect"}
+            return next(request_messages)
 
         async def send(message):
             messages.append(message)
@@ -473,7 +474,7 @@ class TestRefreshLoadingCues:
         def run_request():
             try:
                 asyncio.run(app(scope, receive, send))
-            except BaseException as exc:  # pragma: no cover - assertion surfaced below
+            except Exception as exc:  # pragma: no cover - assertion surfaced below
                 request_errors.append(exc)
 
         request_thread = threading.Thread(target=run_request)
