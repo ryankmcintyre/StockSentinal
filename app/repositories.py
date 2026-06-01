@@ -65,7 +65,7 @@ class PositionRepository(Protocol):
     def has_any_refresh_in_progress(self) -> bool: ...
 
     def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
-        """Return (position_id, refresh_in_progress, refresh_started_at) rows."""
+        """Return (int, bool | None, datetime | None) tuples for each position."""
         ...
 
     def clear_stale_refreshing(self, cutoff: datetime) -> int:
@@ -121,7 +121,8 @@ class SqlAlchemyPositionRepository:
     def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
         """Return lightweight refresh status rows for each position.
 
-        Each tuple contains (position_id, refresh_in_progress, refresh_started_at).
+        Each tuple contains: position_id (int), refresh_in_progress (bool | None),
+        refresh_started_at (datetime | None).
         """
         return (
             self._base_query()
