@@ -220,6 +220,7 @@ class TestRefreshPosition:
         self.mock_provider = Mock()
         self.service = MarketDataService(self.mock_provider)
         # Mock rule_config to avoid DB dependency
+        mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
