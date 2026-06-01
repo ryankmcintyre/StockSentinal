@@ -38,16 +38,25 @@ class TestHttpLoggersSuppressed:
             f"it should remain NOTSET so it is not suppressed like HTTP loggers"
         )
 
-    def test_startup_logs_active_market_data_rate_limit_interval(self, mocker, caplog):
+    @pytest.mark.parametrize(
+        ("provider_name", "interval_seconds"),
+        [("Twelve Data", 1.1), ("Alpha Vantage", 12.0)],
+    )
+    def test_startup_logs_active_market_data_rate_limit_interval(
+        self, mocker, caplog, provider_name, interval_seconds
+    ):
         import app.main
 
         mocker.patch("app.main.init_db")
         mocker.patch("app.main._clear_all_stale_refresh_flags", return_value=0)
         mocker.patch(
             "app.main.get_market_data_provider_display_name",
-            return_value="Twelve Data",
+            return_value=provider_name,
         )
-        mocker.patch("app.main.get_market_data_min_interval_seconds", return_value=1.1)
+        mocker.patch(
+            "app.main.get_market_data_min_interval_seconds",
+            return_value=interval_seconds,
+        )
         caplog.set_level(logging.INFO, logger="app.main")
 
         async def _run_lifespan():
@@ -57,6 +66,6 @@ class TestHttpLoggersSuppressed:
         asyncio.run(_run_lifespan())
 
         assert (
-            "Market data provider: Twelve Data "
-            "(rate-limit interval 1.1s between API calls)"
+            f"Market data provider: {provider_name} "
+            f"(rate-limit interval {interval_seconds:g}s between API calls)"
         ) in caplog.text
