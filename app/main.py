@@ -33,6 +33,7 @@ from app.auth import (
 from app.config import (
     get_log_level,
     get_market_data_api_key,
+    get_market_data_min_interval_seconds,
     get_market_data_provider,
     get_market_data_provider_display_name,
     get_supabase_auth_providers,
@@ -109,6 +110,14 @@ _market_service = MarketDataService(_provider)
 async def lifespan(app: FastAPI):
     logger.info("Starting Stock Sentinel — initializing database")
     init_db()
+    if get_market_data_api_key():
+        logger.info(
+            "Market data provider: %s (rate-limit interval %gs between API calls)",
+            get_market_data_provider_display_name(),
+            get_market_data_min_interval_seconds(),
+        )
+    else:
+        logger.info("Market data provider: unconfigured")
     cleared = _clear_all_stale_refresh_flags()
     if cleared:
         logger.info("Cleared %d stale refresh-in-progress flags", cleared)

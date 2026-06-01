@@ -67,6 +67,17 @@ The provider is auto-detected from whichever API key you set. Set the key, leave
 | `ALPHA_VANTAGE_MIN_INTERVAL_SECONDS` | `12.0` | Gate between Alpha Vantage calls (free tier: 5/min). |
 | `TWELVE_DATA_MIN_INTERVAL_SECONDS` | `8.0` | Gate between Twelve Data calls (free tier: 8/min, 800/day). |
 
+Paid tiers can lower these intervals without changing code. Recommended starting points:
+
+| Provider / tier | Calls/min | Suggested `*_MIN_INTERVAL_SECONDS` |
+|---|---:|---:|
+| Twelve Data Free | 8 | `8.0` |
+| Twelve Data Grow | 55 | `1.1` |
+| Alpha Vantage Free | 5 | `12.0` |
+| Alpha Vantage Premium | 75 | `0.8` |
+
+On startup, the app logs the active provider and effective rate-limit interval so you can confirm what is configured.
+
 Without a key, the app starts but every refresh fails with a clear error. See [issue #70](https://github.com/ryankmcintyre/StockSentinal/issues/70) for ongoing refresh-performance work.
 
 ### Authentication (Supabase)

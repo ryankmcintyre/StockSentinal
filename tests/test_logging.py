@@ -1,5 +1,6 @@
 """Tests for logging configuration — ensures secrets are not leaked via third-party loggers."""
 
+import asyncio
 import logging
 
 import pytest
@@ -36,3 +37,55 @@ class TestHttpLoggersSuppressed:
             f"App logger is explicitly set to {logging.getLevelName(app_logger.level)}, "
             f"it should remain NOTSET so it is not suppressed like HTTP loggers"
         )
+
+    @pytest.mark.parametrize(
+        ("provider_name", "interval_seconds"),
+        [("Twelve Data", 1.1), ("Alpha Vantage", 12.0)],
+    )
+    def test_startup_logs_active_market_data_rate_limit_interval(
+        self, mocker, caplog, provider_name, interval_seconds
+    ):
+        import app.main
+
+        mocker.patch("app.main.init_db")
+        mocker.patch("app.main._clear_all_stale_refresh_flags", return_value=0)
+        mocker.patch("app.main.get_market_data_api_key", return_value="configured-key")
+        mocker.patch(
+            "app.main.get_market_data_provider_display_name",
+            return_value=provider_name,
+        )
+        mocker.patch(
+            "app.main.get_market_data_min_interval_seconds",
+            return_value=interval_seconds,
+        )
+        caplog.set_level(logging.INFO, logger="app.main")
+
+        async def _run_lifespan():
+            async with app.main.lifespan(app.main.app):
+                pass
+
+        asyncio.run(_run_lifespan())
+
+        assert (
+            f"Market data provider: {provider_name} "
+            f"(rate-limit interval {interval_seconds:g}s between API calls)"
+        ) in caplog.text
+
+    def test_startup_logs_unconfigured_market_data_provider_without_api_key(
+        self, mocker, caplog
+    ):
+        import app.main
+
+        mocker.patch("app.main.init_db")
+        mocker.patch("app.main._clear_all_stale_refresh_flags", return_value=0)
+        mocker.patch("app.main.get_market_data_api_key", return_value=None)
+        caplog.set_level(logging.INFO, logger="app.main")
+
+        async def _run_lifespan():
+            async with app.main.lifespan(app.main.app):
+                pass
+
+        asyncio.run(_run_lifespan())
+
+        assert "Market data provider: unconfigured" in caplog.text
+        assert "rate-limit interval" not in caplog.text
