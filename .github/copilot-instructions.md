@@ -1,102 +1,164 @@
 # Stock Investment Decision Assistant
 
 ## Elevator Pitch
-A personal web app that helps the owner decide when to sell, trim, or hold stock investments. The user manually enters their long-term and short-term positions, and the app evaluates each one against a defined set of rules, returning a clear recommendation and explanation for every holding.
+A web app that helps investors decide when to sell, trim, or hold stock positions. Users enter long-term and short-term positions, the app fetches market data from a configured provider, and a configurable rule engine produces a clear verdict (Sell / Trim / Hold) for each holding along with the specific rules that triggered it.
 
-## Target User
-Solo investor (single user). 
+## Target Users
+- **Multi-user**: Supabase Auth (Google OAuth + email OTP). Each user's positions and rule configs are isolated.
+- **Single-user local dev**: If `SUPABASE_URL` is not set, the app runs without authentication — no login required.
 
 ---
 
-## Core Features (MVP)
+## Core Features
 
-- Manually enter stock positions (ticker, company name, cost basis, initial purchase date, investment size (in percentage of full position), investment type (**long-term** or **short-term**))
-- Evaluate all positions against the defined sell/trim/hold rules
-- Display a clear **Sell / Trim / Hold** verdict per position
-- Show which specific rule(s) triggered the recommendation
-- Prioritize positions by urgency (what to act on first)
-- Summary dashboard view across all positions
-- Persist portfolio data between sessions (SQLite or Supabase database)
-
-## Out of Scope (MVP)
-- Brokerage API integration
-- CSV import / export
-- Live market data feeds (all current values entered manually or data feed API calls triggered manually)
-- Mobile-native app
-- Tax lot tracking or tax optimization
-- Historical performance tracking
+- Manually enter stock positions (ticker, company name, cost basis, initial purchase date, investment type: **long-term** or **short-term**)
+- Automatic market data refresh via Alpha Vantage or Twelve Data
+- Per-user configurable rule sets — enable/disable rules and edit their parameters on the Rules page
+- Display a clear **Sell / Trim / Hold** verdict per position with the specific rule(s) that triggered it
+- **Mark as Trimmed** — on Trim-verdict positions, acknowledge the trim; verdict overrides to Hold until cleared or a Sell rule fires
+- Prioritize positions by urgency (Sell → Trim → Hold)
+- Summary dashboard across all positions
+- Per-position key levels (support/resistance) that feed into the failed-breakout rule
+- Per-position sector benchmark ticker for the relative-weakness rule
+- SQLite for local dev; Postgres for production (same ORM + Alembic migrations)
+- User tiers: **free** (5 tickers, 5 refreshes/day) and **full_access** (unlimited)
 
 ---
 
 ## The Rules
 
-### Sell/Trim/Hold Rules for Long-Term Positions
-> SELL if: Weekly close below the 20 week moving average
-> TRIM if: Price is 10% above cost basis
-> HOLD if: Price above cost basis
+Rules are user-configurable per investment type. The defaults are:
 
-### Sell/Trim/Hold Rules for Short-Term Positions
-> SELL if: Daily close below the 21 day moving average
-> TRIM if: Price is 10% above cost basis
-> HOLD if: Price above cost basis
+### Default Long-Term Rules
+| Key | Verdict | Condition |
+|---|---|---|
+| `SELL_MA_ALL` | Sell | Weekly close below the 20-week SMA |
+| `TRIM-10PCT` | Trim | Price > 10% above cost basis |
+| `HOLD-ABOVE-COST` | Hold | Price at or above cost basis |
+
+### Default Short-Term Rules
+| Key | Verdict | Condition |
+|---|---|---|
+| `SELL_MA_ALL` | Sell | Daily close below the 21-day SMA |
+| `TRIM-10PCT` | Trim | Price > 10% above cost basis |
+| `HOLD-ABOVE-COST` | Hold | Price at or above cost basis |
+
+### Optional Rules (available in the Rules catalog for both investment types)
+| Key | Verdict | Condition |
+|---|---|---|
+| `SELL_EXTENSION_ATR` | Sell | Price ≥ 10× ATR-14 above the daily SMA-50 |
+| `TRIM_EXTENSION_ATR` | Trim | Price ≥ 8× ATR-14 above the daily SMA-50 |
+| `TRIM_WEEKLY_UPPER_WICK` | Trim | Latest weekly candle shows long upper wick near recent highs |
+| `SELL_WEEKLY_DISTRIBUTION_CLUSTER` | Sell | 3+ high-volume red weeks in last 8 weeks |
+| `TRIM_WEEKLY_DISTRIBUTION_CLUSTER` | Trim | 2+ high-volume red weeks in last 8 weeks |
+| `SELL_WEEKLY_LOWER_HIGH_LOWER_LOW` | Sell | Confirmed lower weekly high followed by lower weekly low |
+| `TRIM_WEEKLY_FIRST_LOWER_HIGH` | Trim | First confirmed weekly lower high after a prior uptrend |
+| `TRIM_RELATIVE_WEAKNESS_VS_SECTOR` | Trim | Position underperforms its sector benchmark by ≥10% over 63 days while benchmark is up ≥8% |
+| `SELL_FAILED_BREAKOUT_RECLAIM` | Sell | Price breaks above a key level, fades back, and fails to reclaim it |
+
+Rules are evaluated highest-priority first; the first triggered rule wins. Sell > Trim > Hold.
 
 ---
 
 ## Data Model
 
-### Position
+### Position (stored in DB)
 | Field | Type | Notes |
 |---|---|---|
-| `id` | integer (primary key) | Auto-generated by SQLite |
+| `id` | integer (PK) | Auto-generated |
 | `ticker` | string | e.g. "AAPL" |
 | `company_name` | string | e.g. "Apple Inc." |
-| `cost_basis` | float | Per share, in USD |
-| `initial_purchase_date` | date | Used to determine hold duration |
+| `cost_basis` | float | Per share, USD |
+| `initial_purchase_date` | date | |
 | `investment_type` | string | `"long-term"` or `"short-term"` |
-| `current_price` | float | Entered manually by user |
-| `notes` | string (optional) | Freeform notes |
+| `current_price` | float | Manually entered fallback |
+| `notes` | string (optional) | Freeform |
+| `daily_close` | float (optional) | Cached from market data provider |
+| `daily_sma_21` | float (optional) | Cached from market data provider |
+| `daily_market_date` | date (optional) | Date of cached daily data |
+| `weekly_close` | float (optional) | Cached from market data provider |
+| `weekly_sma_20` | float (optional) | Cached from market data provider |
+| `weekly_market_date` | date (optional) | Date of cached weekly data |
+| `refresh_error` | string (optional) | Last refresh error message |
+| `refresh_in_progress` | boolean | True while a refresh is running |
+| `previous_verdict` | string (optional) | Verdict from last refresh cycle |
+| `trim_acknowledged` | boolean | True = override Trim verdict to Hold |
+| `sector_benchmark_ticker` | string (optional) | For relative-weakness rule |
+| `user_id` | string (FK → users) | Owner |
 
-### Derived / Computed Fields (not stored, calculated at runtime in Python)
+### Other ORM models
+- **User** — Supabase Auth UUID, email, display_name, tier, is_admin, refresh quota
+- **PositionKeyLevel** — manually flagged support/resistance levels per position
+- **MarketIndicatorCache** — cached SMA values keyed by (ticker, interval, time_period)
+- **MarketAtrCache** — cached ATR values keyed by (ticker, interval, time_period)
+- **MarketWeeklyBarCache** — cached weekly OHLCV bars per ticker
+- **MarketDailyBarCache** — cached daily OHLCV bars per ticker
+- **StrategyRuleConfig** — per-user, per-investment-type rule enable/disable + params
+
+### Derived / Computed Fields (not stored, calculated at runtime)
 - `percent_gain` = (current_price - cost_basis) / cost_basis × 100
-- `hold_duration` = today - initial_purchase_date (in days/months/years)
-- `verdict` = Sell | Trim | Hold (output of rule engine)
+- `hold_duration` = today - initial_purchase_date
+- `verdict` = Sell | Trim | Hold (output of rule engine, with trim_acknowledged override)
 - `triggered_rules` = list of rule labels that fired
 
 ---
 
 ## Rule Engine Design
-- Rules are defined as pure Python functions that take a `Position` object and return a result
-- Each rule has a label (short name), a condition function, and a verdict it produces
-- Rules are evaluated in priority order; the highest-priority triggered rule wins
-- Long-term and short-term rule sets are evaluated separately
-- Short-term holdings are evaluated using only the short-term rule set
-- Long-term holdings are evaluated using only the long-term rule set
-- The engine is isolated in its own module (`rule_engine.py`) so rules can be edited without touching UI or API code
-- Use Pydantic models for the `Position` object to ensure type safety and validation
+- Rules are pure Python functions in `rule_engine.py`: `(PositionLike, MarketSignals, params) → Optional[RuleResult]`
+- Each rule is registered in `RULE_CATALOG` as a `RuleSpec` with a key, name, description, verdict, and supported investment types
+- User-selected rules are stored in `StrategyRuleConfig` (DB) and loaded via `rule_config.py`
+- `_enrich_position()` in `main.py` assembles `MarketSignals` from the indicator/ATR/bar caches and calls `get_verdict()`
+- **Trim → Hold override**: after `get_verdict()`, if `verdict == Trim` and `pos.trim_acknowledged` is True, `_enrich_position` overrides the verdict to Hold and clears triggered_rules. Sell always wins regardless of the flag.
+- Do NOT put override logic, route logic, or DB queries inside `rule_engine.py` — it must stay pure and testable in isolation
 
 ---
 
 ## Tech Stack
-- **Backend**: Python with FastAPI
-- **Database**: SQLite via SQLAlchemy ORM locally or Supabase when hosted
+- **Backend**: Python 3.13, FastAPI
+- **Database**: SQLite (local dev) or Postgres (production) via SQLAlchemy 2 ORM + Alembic migrations
 - **Frontend**: Jinja2 templates with plain HTML and CSS served directly by FastAPI
+- **Auth**: Supabase Auth — PKCE flow for Google OAuth and email OTP; JWKS-based JWT verification in `auth.py`; skipped when `SUPABASE_URL` is unset
+- **Market data**: Alpha Vantage or Twelve Data via provider abstraction in `app/market_data/`; auto-detected from which API key is set
 - **Styling**: Plain CSS — clean, minimal, functional aesthetic
-- **No external brokerage APIs** in MVP (all data is manually entered)
 
 ### Project Structure
 ```
 app/
-├── main.py              # FastAPI app, routes
-├── models.py            # SQLAlchemy database models
-├── schemas.py           # Pydantic schemas for request/response validation
-├── database.py          # SQLite connection and session setup
-├── rule_engine.py       # All sell/trim/hold rule logic (isolated from UI)
+├── main.py              # FastAPI app, all routes, _enrich_position
+├── models.py            # SQLAlchemy ORM models
+├── schemas.py           # Pydantic request/response schemas
+├── database.py          # Engine, session factory, UnitOfWork DI helpers
+├── unit_of_work.py      # UnitOfWork pattern (user-scoped DB session)
+├── repositories.py      # Per-user data access layer
+├── rule_engine.py       # All sell/trim/hold rule logic — pure functions only
+├── rule_config.py       # Persistence helpers for StrategyRuleConfig
+├── auth.py              # Supabase PKCE + JWKS JWT verification
+├── config.py            # Env-var-backed configuration (pydantic-settings)
+├── csrf.py              # CSRF token generation and validation
+├── tiers.py             # Tier limits and enforcement helpers
+├── notifications.py     # Flash-message helpers
+├── market_data/
+│   ├── provider.py      # Provider abstraction (Alpha Vantage / Twelve Data)
+│   ├── service.py       # Refresh orchestration: fetch → cache → enrich
+│   ├── cache_repos.py   # DB access for market indicator/ATR/bar caches
+│   ├── staleness.py     # Cache staleness and stale-cleanup logic
+│   └── exceptions.py    # Market data error types
+├── alpha_vantage_client.py  # Alpha Vantage HTTP client
+├── twelve_data_client.py    # Twelve Data HTTP client
 ├── templates/           # Jinja2 HTML templates
 │   ├── base.html
+│   ├── splash.html
+│   ├── login.html
 │   ├── portfolio.html
-│   └── add_position.html
+│   ├── add_position.html
+│   ├── edit_position.html
+│   ├── rules.html
+│   ├── admin.html
+│   └── privacy.html
 └── static/
     └── styles.css
+alembic/                 # Database migrations
+tests/                   # pytest suite
 ```
 
 ---
@@ -104,16 +166,22 @@ app/
 ## Key User Flows
 
 ### 1. Add a position
-User clicks "Add Position" → fills in ticker, company name, cost basis, initial purchase date, current price, investment type → submits form → FastAPI saves to SQLite → redirects to portfolio view.
+User fills in ticker, company name, cost basis, initial purchase date, current price, investment type → FastAPI saves to SQLite/Postgres → redirects to portfolio view.
 
 ### 2. Evaluate portfolio
-On portfolio page load, all positions are fetched from SQLite → each is passed through the rule engine in Python → verdicts are rendered inline next to each position with color coding (red = Sell, yellow = Trim, green = Hold).
+On portfolio page load: positions fetched → market data assembled from indicator/ATR/bar caches → each position passed through `_enrich_position()` → rule engine evaluated → verdicts rendered with color coding (red = Sell, yellow = Trim, green = Hold).
 
-### 3. Review recommendations
-Summary at the top of the page shows: X positions to Sell, Y to Trim, Z to Hold → positions sorted by urgency → each row shows the verdict and the specific rule(s) that triggered it.
+### 3. Acknowledge a trim
+On a Trim-verdict position, user clicks **Mark as Trimmed** → `POST /trim-acknowledge/{id}` sets `trim_acknowledged=True` → next portfolio load overrides verdict to Hold with "Trim acknowledged" shown as the reason. User can click **Clear Trim** (`POST /trim-unacknowledge/{id}`) to revert.
 
-### 4. Update a position
-User clicks a position to edit → updates current price or other fields → submits form → FastAPI updates the SQLite record → portfolio page reloads with recalculated verdicts.
+### 4. Refresh market data
+User clicks Refresh on a position or Refresh All → `POST /refresh/{id}` (or `/refresh-all`) → background fetch from provider → caches updated → page reloads with fresh verdicts.
+
+### 5. Configure rules
+User navigates to Rules page → enables/disables rules per investment type, edits parameters → saved to `StrategyRuleConfig` → applied on next portfolio evaluation.
+
+### 6. Update a position
+User clicks Edit → updates fields → FastAPI updates the record → portfolio reloads with recalculated verdicts.
 
 ---
 
@@ -122,24 +190,29 @@ User clicks a position to edit → updates current price or other fields → sub
 - Minimal color palette: use red/yellow/green only for verdict status indicators
 - No decorative graphics or illustrations
 - Readable at a glance — the verdict and reasoning should be immediately visible without clicking
-- Works well on desktop browser (mobile responsiveness is a nice-to-have, not required for MVP)
+- Works well on desktop browser (mobile responsiveness is a nice-to-have)
 
 ---
 
-## Unit Tests
-- Write unit tests for each rule in `rule_engine.py` to ensure they return the correct verdict given a `Position` object
-- Test edge cases such as zero gain/loss, very short or very long hold durations, and invalid input data
-- Use `pytest` for running tests and `pytest-mock` for mocking any dependencies if needed
-- Ensure tests are isolated and do not depend on the database or external services
+## Testing
+- Use `pytest` for all tests; `pytest-mock` for mocking dependencies
+- Run: `python -m pytest` from the repo root
+- Tests use an in-memory SQLite database via a `_setup_db` autouse fixture that overrides the FastAPI DI dependencies (`get_uow`, `get_authenticated_uow`, `get_optional_uow`)
+- The fixture also includes a `before_flush` SQLAlchemy event listener that assigns `user_id = "test-user-id"` to any new `User`, `Position`, or `StrategyRuleConfig` object — copy this pattern from `test_refresh_route.py` when writing new integration tests
+- Rule engine unit tests must not touch the database or any HTTP client; pass a `Position` object and a `MarketSignals` struct directly
+- CSRF tokens: use the `csrf_form_data(client)` helper from `tests/csrf_utils.py` when posting forms in tests
 
 ---
 
 ## Coding Conventions
-- Keep the rule engine logic completely separate from routes and templates (`rule_engine.py` only)
+- Keep `rule_engine.py` pure — no DB access, no HTTP calls, no FastAPI imports
+- All verdict override logic (e.g. trim_acknowledged) lives in `_enrich_position()` in `main.py`, not in the rule engine
 - Use Pydantic models (`schemas.py`) for all request/response validation
-- Use SQLAlchemy models (`models.py`) for all database interaction
+- Use SQLAlchemy models (`models.py`) for all database interaction; never write raw SQL
+- Use the `UnitOfWork` pattern (via `get_authenticated_uow` dependency) for all authenticated routes
 - Use snake_case for all Python variables, functions, and file names
 - Comment each rule in `rule_engine.py` with a plain-English description of what it checks
 - Validate inputs at the Pydantic schema level (no empty tickers, no negative prices, no future purchase dates)
+- All POST/DELETE routes must validate CSRF via `Depends(validate_csrf)`
 - Prefer simple, readable code over clever optimizations
-- Always work against a GitHub issue and submit a PR when work is complete
+- `tier` and `is_admin` on the `User` model are security-sensitive — only write them from `admin_*` route handlers; never from user-submitted request data
