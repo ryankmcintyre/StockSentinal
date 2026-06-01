@@ -115,6 +115,7 @@ class SqlAlchemyPositionRepository:
         ) is not None
 
     def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
+        """Return (position_id, refresh_in_progress, refresh_started_at) for each position."""
         return (
             self._session.query(
                 Position.id,
@@ -126,6 +127,7 @@ class SqlAlchemyPositionRepository:
         )
 
     def clear_stale_refreshing(self, cutoff: datetime) -> int:
+        """Bulk-clear stale refresh flags before cutoff and return updated row count."""
         return (
             self._base_query()
             .filter(Position.refresh_in_progress.is_(True))
