@@ -5,7 +5,7 @@ A web app that helps investors decide when to sell, trim, or hold stock position
 
 ## Target Users
 - **Multi-user**: Supabase Auth (Google OAuth + email OTP). Each user's positions and rule configs are isolated.
-- **Single-user local dev**: If `SUPABASE_URL` is not set, the app runs without authentication — no login required.
+- **Local dev**: Auth still uses the session cookie; when Supabase env vars are missing the login flow is disabled and only anonymous pages render (tests override auth via dependency overrides).
 
 ---
 
