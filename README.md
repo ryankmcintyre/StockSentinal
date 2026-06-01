@@ -72,7 +72,7 @@ Paid tiers can lower these intervals without changing code. Recommended starting
 | Provider / tier | Calls/min | Suggested `*_MIN_INTERVAL_SECONDS` |
 |---|---:|---:|
 | Twelve Data Free | 8 | `8.0` |
-| Twelve Data Basic / Grow | 55 | `1.1` |
+| Twelve Data Grow | 55 | `1.1` |
 | Alpha Vantage Free | 5 | `12.0` |
 | Alpha Vantage Premium | 75 | `0.8` |
 
