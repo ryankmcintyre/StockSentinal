@@ -92,6 +92,7 @@ for _name in _HTTP_LOGGERS:
 
 BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
+PRICE_COMPARISON_ABS_TOLERANCE = 0.005
 
 
 def _create_market_data_provider():
@@ -1186,7 +1187,11 @@ def edit_position(
     if (
         not ticker_changed
         and pos.daily_close is not None
-        and isclose(submitted_current_price, effective_current_price, abs_tol=0.005)
+        and isclose(
+            submitted_current_price,
+            effective_current_price,
+            abs_tol=PRICE_COMPARISON_ABS_TOLERANCE,
+        )
     ):
         submitted_current_price = pos.current_price
     if ticker_changed:
