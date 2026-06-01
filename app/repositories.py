@@ -64,9 +64,13 @@ class PositionRepository(Protocol):
 
     def has_any_refresh_in_progress(self) -> bool: ...
 
-    def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]: ...
+    def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
+        """Return (position_id, refresh_in_progress, refresh_started_at) rows."""
+        ...
 
-    def clear_stale_refreshing(self, cutoff: datetime) -> int: ...
+    def clear_stale_refreshing(self, cutoff: datetime) -> int:
+        """Clear refresh flags started before cutoff and return updated row count."""
+        ...
 
     def list_stale_refreshing(self, cutoff: datetime) -> Sequence[Position]: ...
 
@@ -115,7 +119,10 @@ class SqlAlchemyPositionRepository:
         ) is not None
 
     def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
-        """Return (position_id, refresh_in_progress, refresh_started_at) for each position."""
+        """Return lightweight refresh status rows for each position.
+
+        Each tuple contains (position_id, refresh_in_progress, refresh_started_at).
+        """
         return (
             self._base_query()
             .with_entities(
@@ -127,7 +134,7 @@ class SqlAlchemyPositionRepository:
         )
 
     def clear_stale_refreshing(self, cutoff: datetime) -> int:
-        """Bulk-clear stale refresh flags before cutoff and return updated row count."""
+        """Bulk-clear refresh flags started before cutoff and return updated row count."""
         return (
             self._base_query()
             .filter(Position.refresh_in_progress.is_(True))
