@@ -49,6 +49,7 @@ class TestHttpLoggersSuppressed:
 
         mocker.patch("app.main.init_db")
         mocker.patch("app.main._clear_all_stale_refresh_flags", return_value=0)
+        mocker.patch("app.main.get_market_data_api_key", return_value="configured-key")
         mocker.patch(
             "app.main.get_market_data_provider_display_name",
             return_value=provider_name,
@@ -69,3 +70,22 @@ class TestHttpLoggersSuppressed:
             f"Market data provider: {provider_name} "
             f"(rate-limit interval {interval_seconds:g}s between API calls)"
         ) in caplog.text
+
+    def test_startup_logs_unconfigured_market_data_provider_without_api_key(
+        self, mocker, caplog
+    ):
+        import app.main
+
+        mocker.patch("app.main.init_db")
+        mocker.patch("app.main._clear_all_stale_refresh_flags", return_value=0)
+        mocker.patch("app.main.get_market_data_api_key", return_value=None)
+        caplog.set_level(logging.INFO, logger="app.main")
+
+        async def _run_lifespan():
+            async with app.main.lifespan(app.main.app):
+                pass
+
+        asyncio.run(_run_lifespan())
+
+        assert "Market data provider: unconfigured" in caplog.text
+        assert "rate-limit interval" not in caplog.text
