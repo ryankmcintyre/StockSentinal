@@ -390,6 +390,48 @@ class TestRefreshLoadingCues:
         finally:
             verify_db.close()
 
+    def test_single_refresh_marks_position_in_progress_before_background(
+        self, client, _setup_db, mocker
+    ):
+        db = _setup_db()
+        try:
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+            )
+            db.add(pos)
+            db.commit()
+            position_id = pos.id
+        finally:
+            db.close()
+
+        mock_refresh_single = mocker.patch(
+            "app.main._refresh_single_position_task", return_value=None
+        )
+
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        mock_refresh_single.assert_called_once_with(position_id, "test-user-id")
+
+        verify_db = _setup_db()
+        try:
+            pos = verify_db.query(Position).filter(Position.id == position_id).first()
+            assert pos is not None
+            assert pos.refresh_in_progress is True
+            assert pos.refresh_started_at is not None
+        finally:
+            verify_db.close()
+
     def test_refresh_all_background_task_uses_user_scoped_uow(self, mocker):
         from app.main import _refresh_all_positions_task
 
@@ -473,7 +515,9 @@ class TestRefreshRouteTierLimits:
     def test_single_refresh_consumes_one_refresh(self, client, _setup_db, mocker):
         position_id = self._seed_single_position(_setup_db)
         self._set_refresh_count(_setup_db, 0)
-        mocker.patch.object(_market_service, "refresh_position", return_value=None)
+        mock_refresh_single = mocker.patch(
+            "app.main._refresh_single_position_task", return_value=None
+        )
 
         resp = client.post(
             f"/refresh/{position_id}",
@@ -482,6 +526,7 @@ class TestRefreshRouteTierLimits:
         )
 
         assert resp.status_code == 303
+        mock_refresh_single.assert_called_once_with(position_id, "test-user-id")
         db = _setup_db()
         try:
             user = db.query(User).filter(User.id == "test-user-id").one()

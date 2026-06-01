@@ -1369,15 +1369,12 @@ def refresh_all(
 
 @app.post("/refresh/{position_id}")
 def refresh_single(
+    background_tasks: BackgroundTasks,
     position_id: int,
     _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
-    """Refresh cached market data for a single position inline.
-
-    Running this inline avoids a race where the redirect can render before
-    background work writes refresh_error.
-    """
+    """Refresh cached market data for a single position in the background."""
     _clear_stale_refresh_flags(uow)
     pos = uow.positions.get_by_id(position_id)
     if pos and not pos.refresh_in_progress:
@@ -1391,20 +1388,7 @@ def refresh_single(
             uow.rollback()
             return _redirect_with_refresh_limit_flash()
         _mark_positions_refresh_state(uow, [position_id], in_progress=True)
-        try:
-            _market_service.refresh_position(pos, uow.session)
-        except Exception as exc:
-            logger.warning(
-                "Inline refresh failed for position id=%d", position_id, exc_info=True
-            )
-            detail = str(exc).strip() or exc.__class__.__name__
-            uow.rollback()
-            pos = uow.positions.get_by_id(position_id)
-            if pos is not None:
-                pos.refresh_error = f"Refresh failed: {detail}"
-                uow.commit()
-        finally:
-            _mark_positions_refresh_state(uow, [position_id], in_progress=False)
+        background_tasks.add_task(_refresh_single_position_task, position_id, uow.user_id)
     return RedirectResponse(url="/", status_code=303)
 
 
