@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from math import isclose
 from pathlib import Path
 from urllib.parse import quote
 
@@ -91,6 +92,7 @@ for _name in _HTTP_LOGGERS:
 
 BASE_DIR = Path(__file__).resolve().parent
 logger = logging.getLogger(__name__)
+PRICE_COMPARISON_ABS_TOLERANCE = 0.005
 
 
 def _create_market_data_provider():
@@ -1141,11 +1143,13 @@ def edit_position_form(position_id: int, request: Request, uow: UnitOfWork = Dep
     pos = uow.positions.get_by_id(position_id)
     if not pos:
         return RedirectResponse(url="/", status_code=303)
+    effective_current_price = pos.daily_close if pos.daily_close is not None else pos.current_price
     return templates.TemplateResponse(
         request,
         "edit_position.html",
         {
             "position": pos,
+            "effective_current_price": effective_current_price,
             "investment_types": InvestmentType,
             "current_user": _get_current_user(request, uow),
         },
@@ -1178,6 +1182,18 @@ def edit_position(
     clean_company_name = company_name.strip()
     clean_benchmark = sector_benchmark_ticker.strip().upper() or None
     ticker_changed = pos.ticker != clean_ticker
+    effective_current_price = pos.daily_close if pos.daily_close is not None else pos.current_price
+    submitted_current_price = current_price
+    if (
+        not ticker_changed
+        and pos.daily_close is not None
+        and isclose(
+            submitted_current_price,
+            effective_current_price,
+            abs_tol=PRICE_COMPARISON_ABS_TOLERANCE,
+        )
+    ):
+        submitted_current_price = pos.current_price
     if ticker_changed:
         _clear_position_market_data(pos)
     pos.ticker = clean_ticker
@@ -1185,14 +1201,14 @@ def edit_position(
     pos.cost_basis = cost_basis
     pos.initial_purchase_date = date.fromisoformat(initial_purchase_date)
     pos.investment_type = investment_type
-    pos.current_price = current_price
+    pos.current_price = submitted_current_price
     pos.notes = notes.strip() or None
     pos.sector_benchmark_ticker = clean_benchmark
     uow.commit()
     if ticker_changed and get_market_data_api_key():
         _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
         background_tasks.add_task(_refresh_single_position_task, pos.id, uow.user_id)
-    logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, current_price)
+    logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, submitted_current_price)
     return RedirectResponse(url="/", status_code=303)
 
 
