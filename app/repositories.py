@@ -64,6 +64,10 @@ class PositionRepository(Protocol):
 
     def has_any_refresh_in_progress(self) -> bool: ...
 
+    def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]: ...
+
+    def clear_stale_refreshing(self, cutoff: datetime) -> int: ...
+
     def list_stale_refreshing(self, cutoff: datetime) -> Sequence[Position]: ...
 
 
@@ -104,10 +108,37 @@ class SqlAlchemyPositionRepository:
 
     def has_any_refresh_in_progress(self) -> bool:
         return (
-            self._base_query()
+            self._session.query(Position.id)
+            .filter(Position.user_id == self._user_id)
             .filter(Position.refresh_in_progress.is_(True))
             .first()
         ) is not None
+
+    def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
+        return (
+            self._session.query(
+                Position.id,
+                Position.refresh_in_progress,
+                Position.refresh_started_at,
+            )
+            .filter(Position.user_id == self._user_id)
+            .all()
+        )
+
+    def clear_stale_refreshing(self, cutoff: datetime) -> int:
+        return (
+            self._base_query()
+            .filter(Position.refresh_in_progress.is_(True))
+            .filter(Position.refresh_started_at.is_not(None))
+            .filter(Position.refresh_started_at < cutoff)
+            .update(
+                {
+                    Position.refresh_in_progress: False,
+                    Position.refresh_started_at: None,
+                },
+                synchronize_session=False,
+            )
+        )
 
     def list_stale_refreshing(self, cutoff: datetime) -> Sequence[Position]:
         return (
