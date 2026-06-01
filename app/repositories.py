@@ -65,11 +65,11 @@ class PositionRepository(Protocol):
     def has_any_refresh_in_progress(self) -> bool: ...
 
     def list_refresh_statuses(self) -> Sequence[tuple[int, bool | None, datetime | None]]:
-        """Return (int, bool | None, datetime | None) tuples for each position."""
+        """Return tuples of position_id, refresh_in_progress, and refresh_started_at."""
         ...
 
     def clear_stale_refreshing(self, cutoff: datetime) -> int:
-        """Clear refresh flags started before cutoff and return updated row count."""
+        """Bulk-clear refresh flags started before cutoff and return updated row count."""
         ...
 
     def list_stale_refreshing(self, cutoff: datetime) -> Sequence[Position]: ...
