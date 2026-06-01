@@ -15,7 +15,6 @@ A web app that helps investors decide when to sell, trim, or hold stock position
 - Automatic market data refresh via Alpha Vantage or Twelve Data
 - Per-user configurable rule sets — enable/disable rules and edit their parameters on the Rules page
 - Display a clear **Sell / Trim / Hold** verdict per position with the specific rule(s) that triggered it
-- **Mark as Trimmed** — on Trim-verdict positions, acknowledge the trim; verdict overrides to Hold until cleared or a Sell rule fires
 - Prioritize positions by urgency (Sell → Trim → Hold)
 - Summary dashboard across all positions
 - Per-position key levels (support/resistance) that feed into the failed-breakout rule
@@ -82,7 +81,6 @@ Rules are evaluated highest-priority first; the first triggered rule wins. Sell 
 | `refresh_error` | string (optional) | Last refresh error message |
 | `refresh_in_progress` | boolean | True while a refresh is running |
 | `previous_verdict` | string (optional) | Verdict from last refresh cycle |
-| `trim_acknowledged` | boolean | True = override Trim verdict to Hold |
 | `sector_benchmark_ticker` | string (optional) | For relative-weakness rule |
 | `user_id` | string (FK → users) | Owner |
 
@@ -98,7 +96,7 @@ Rules are evaluated highest-priority first; the first triggered rule wins. Sell 
 ### Derived / Computed Fields (not stored, calculated at runtime)
 - `percent_gain` = (current_price - cost_basis) / cost_basis × 100
 - `hold_duration` = today - initial_purchase_date
-- `verdict` = Sell | Trim | Hold (output of rule engine, with trim_acknowledged override)
+- `verdict` = Sell | Trim | Hold (output of rule engine)
 - `triggered_rules` = list of rule labels that fired
 
 ---
@@ -108,7 +106,6 @@ Rules are evaluated highest-priority first; the first triggered rule wins. Sell 
 - Each rule is registered in `RULE_CATALOG` as a `RuleSpec` with a key, name, description, verdict, and supported investment types
 - User-selected rules are stored in `StrategyRuleConfig` (DB) and loaded via `rule_config.py`
 - `_enrich_position()` in `main.py` assembles `MarketSignals` from the indicator/ATR/bar caches and calls `get_verdict()`
-- **Trim → Hold override**: after `get_verdict()`, if `verdict == Trim` and `pos.trim_acknowledged` is True, `_enrich_position` overrides the verdict to Hold and clears triggered_rules. Sell always wins regardless of the flag.
 - Do NOT put override logic, route logic, or DB queries inside `rule_engine.py` — it must stay pure and testable in isolation
 
 ---
@@ -171,16 +168,13 @@ User fills in ticker, company name, cost basis, initial purchase date, current p
 ### 2. Evaluate portfolio
 On portfolio page load: positions fetched → market data assembled from indicator/ATR/bar caches → each position passed through `_enrich_position()` → rule engine evaluated → verdicts rendered with color coding (red = Sell, yellow = Trim, green = Hold).
 
-### 3. Acknowledge a trim
-On a Trim-verdict position, user clicks **Mark as Trimmed** → `POST /trim-acknowledge/{id}` sets `trim_acknowledged=True` → next portfolio load overrides verdict to Hold with "Trim acknowledged" shown as the reason. User can click **Clear Trim** (`POST /trim-unacknowledge/{id}`) to revert.
-
-### 4. Refresh market data
+### 3. Refresh market data
 User clicks Refresh on a position or Refresh All → `POST /refresh/{id}` (or `/refresh-all`) → background fetch from provider → caches updated → page reloads with fresh verdicts.
 
-### 5. Configure rules
+### 4. Configure rules
 User navigates to Rules page → enables/disables rules per investment type, edits parameters → saved to `StrategyRuleConfig` → applied on next portfolio evaluation.
 
-### 6. Update a position
+### 5. Update a position
 User clicks Edit → updates fields → FastAPI updates the record → portfolio reloads with recalculated verdicts.
 
 ---
@@ -206,7 +200,7 @@ User clicks Edit → updates fields → FastAPI updates the record → portfolio
 
 ## Coding Conventions
 - Keep `rule_engine.py` pure — no DB access, no HTTP calls, no FastAPI imports
-- All verdict override logic (e.g. trim_acknowledged) lives in `_enrich_position()` in `main.py`, not in the rule engine
+- Keep post-rule enrichment logic in `_enrich_position()` in `main.py`, not in the rule engine
 - Use Pydantic models (`schemas.py`) for all request/response validation
 - Use SQLAlchemy models (`models.py`) for all database interaction; never write raw SQL
 - Use the `UnitOfWork` pattern (via `get_authenticated_uow` dependency) for all authenticated routes

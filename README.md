@@ -9,7 +9,6 @@ Live: [www.stocksentinal.com](https://www.stocksentinal.com)
 - **Sell / Trim / Hold verdicts** per position with the specific rule(s) that fired
 - **Long-term and short-term rule sets** evaluated separately (e.g. weekly 20-MA breaks for long-term, daily 21-MA breaks for short-term)
 - **Configurable rules** — enable/disable rules and edit their parameters per investment type on the Rules page
-- **Mark as Trimmed** — acknowledge a Trim verdict to override it to Hold until you clear it or a Sell rule fires
 - **Custom key levels** per position (support/resistance) that feed into the rule engine
 - **Market data** pulled from Alpha Vantage or Twelve Data, with batching support on Twelve Data to stay inside free-tier limits
 - **Multi-user** support via Supabase Auth (Google OAuth out of the box); falls back to a single-user mode for local dev
