@@ -133,6 +133,32 @@ class TestRefreshLoadingCues:
             'if you have many positions. Continue?"'
         ) in resp.text
 
+    def test_portfolio_shows_previous_verdict_below_current_verdict(
+        self, client, _setup_db
+    ):
+        db = _setup_db()
+        try:
+            db.add(
+                Position(
+                    ticker="AAPL",
+                    company_name="Apple Inc.",
+                    cost_basis=100.0,
+                    initial_purchase_date=date(2025, 1, 1),
+                    investment_type="long-term",
+                    current_price=115.0,
+                    notes=None,
+                    previous_verdict="Hold",
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get("/")
+
+        assert resp.status_code == 200
+        assert "Previously Hold" in resp.text
+
     def test_refresh_status_endpoint_returns_position_flags(self, client, _setup_db):
         db = _setup_db()
         try:

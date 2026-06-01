@@ -5,6 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from app.schemas import Verdict
 from app.market_data.staleness import (
     daily_bar_cache_is_stale,
     daily_data_is_stale,
@@ -37,6 +38,7 @@ class FakePosition:
         weekly_retrieved_at=None,
         sector_benchmark_ticker=None,
         user_id="test-user-id",
+        previous_verdict=None,
     ):
         self.ticker = ticker
         self.investment_type = investment_type
@@ -51,6 +53,7 @@ class FakePosition:
         self.weekly_retrieved_at = weekly_retrieved_at
         self.sector_benchmark_ticker = sector_benchmark_ticker
         self.user_id = user_id
+        self.previous_verdict = previous_verdict
 
 
 # ---------------------------------------------------------------------------
@@ -219,6 +222,7 @@ class TestRefreshPosition:
         """Create a service with a mock provider and mock rule_config."""
         self.mock_provider = Mock()
         self.service = MarketDataService(self.mock_provider)
+        mocker.patch.object(self.service, "_calculate_verdicts", return_value={})
         # Mock rule_config to avoid DB dependency
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
@@ -299,6 +303,52 @@ class TestRefreshPosition:
         assert "Daily refresh failed: daily boom" in position.refresh_error
         assert "Weekly refresh failed: weekly boom" in position.refresh_error
         db.commit.assert_called_once()
+
+    def test_stores_previous_verdict_when_refresh_changes_status(self, mocker):
+        position = FakePosition(investment_type="long-term")
+        db = mocker.Mock()
+
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(self.service, "_refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        calculate_verdicts = mocker.patch.object(
+            self.service,
+            "_calculate_verdicts",
+            side_effect=[
+                {id(position): Verdict.hold.value},
+                {id(position): Verdict.trim.value},
+            ],
+        )
+
+        self.service.refresh_position(position, db, force=False)
+
+        assert position.previous_verdict == Verdict.hold.value
+        assert calculate_verdicts.call_count == 2
+
+    def test_clears_previous_verdict_when_refresh_keeps_same_status(self, mocker):
+        position = FakePosition(
+            investment_type="long-term",
+            previous_verdict=Verdict.sell.value,
+        )
+        db = mocker.Mock()
+
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(self.service, "_refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch.object(
+            self.service,
+            "_calculate_verdicts",
+            side_effect=[
+                {id(position): Verdict.hold.value},
+                {id(position): Verdict.hold.value},
+            ],
+        )
+
+        self.service.refresh_position(position, db, force=False)
+
+        assert position.previous_verdict is None
 
 
 # ---------------------------------------------------------------------------
@@ -394,6 +444,7 @@ class TestRefreshAllPositions:
         """Create a service with mock provider and mock rule_config."""
         self.mock_provider = Mock()
         self.service = MarketDataService(self.mock_provider)
+        mocker.patch.object(self.service, "_calculate_verdicts", return_value={})
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
@@ -437,6 +488,26 @@ class TestRefreshAllPositions:
         assert refreshed == 2
         assert daily_refresh.call_count == 2
         assert weekly_refresh.call_count == 1
+
+    def test_refresh_all_stores_previous_verdict_when_status_changes(self, mocker):
+        pos = FakePosition(ticker="AAPL", investment_type="short-term")
+        db = mocker.Mock()
+        db.query.return_value.all.return_value = [pos]
+
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(
+            self.service,
+            "_calculate_verdicts",
+            side_effect=[
+                {id(pos): Verdict.hold.value},
+                {id(pos): Verdict.sell.value},
+            ],
+        )
+
+        refreshed = self.service.refresh_all_positions(db, force=True)
+
+        assert refreshed == 1
+        assert pos.previous_verdict == Verdict.hold.value
 
     def test_advances_refresh_started_at_heartbeat_for_in_progress_positions(
         self, mocker
@@ -521,6 +592,7 @@ class TestRefreshAllPositions:
 
         provider = BatchProvider()
         service = MarketDataService(provider)
+        mocker.patch.object(service, "_calculate_verdicts", return_value={})
         positions = [
             FakePosition(ticker="AAPL", investment_type="long-term"),
             FakePosition(ticker="MSFT", investment_type="short-term"),
@@ -572,6 +644,7 @@ class TestRefreshAllPositions:
 
         provider = BatchProvider()
         service = MarketDataService(provider)
+        mocker.patch.object(service, "_calculate_verdicts", return_value={})
         positions = [
             FakePosition(
                 ticker="AAPL",

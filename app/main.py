@@ -389,6 +389,7 @@ def _enrich_position(
         "percent_gain": compute_percent_gain(pos.cost_basis, effective_price),
         "hold_duration_days": compute_hold_duration_days(pos.initial_purchase_date),
         "verdict": verdict,
+        "previous_verdict": pos.previous_verdict,
         "verdict_sort_priority": VERDICT_PRIORITY.get(verdict, 99),
         "triggered_rules": triggered,
         "reason_sort_value": reason_sort_value,
