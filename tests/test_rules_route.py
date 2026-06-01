@@ -541,6 +541,62 @@ class TestExtensionAtrRules:
         finally:
             db.close()
 
+    def test_required_indicators_filter_by_investment_type(self, _setup_db):
+        from app.rule_config import (
+            ensure_strategy_rule_defaults,
+            get_required_indicators,
+        )
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
+
+            assert get_required_indicators(as_uow(db, user_id="test-user-id"), "long-term") == {
+                ("weekly", 20)
+            }
+            assert get_required_indicators(as_uow(db, user_id="test-user-id"), "short-term") == {
+                ("daily", 21)
+            }
+            assert get_required_indicators(as_uow(db, user_id="test-user-id")) == {
+                ("weekly", 20),
+                ("daily", 21),
+            }
+        finally:
+            db.close()
+
+    def test_required_rule_cache_helpers_filter_by_investment_type(self, _setup_db):
+        from app.rule_config import (
+            ensure_strategy_rule_defaults,
+            get_required_atr_indicators,
+            get_required_daily_bar_lookback,
+            get_required_weekly_bar_lookback,
+            update_strategy_rule_config,
+        )
+
+        db = _setup_db()
+        try:
+            ensure_strategy_rule_defaults(as_uow(db, user_id="test-user-id"), user_id="test-user-id")
+            update_strategy_rule_config(
+                as_uow(db, user_id="test-user-id"), "long-term", "TRIM_EXTENSION_ATR", enabled=True
+            )
+            update_strategy_rule_config(
+                as_uow(db, user_id="test-user-id"), "long-term", "TRIM_WEEKLY_UPPER_WICK", enabled=True
+            )
+            update_strategy_rule_config(
+                as_uow(db, user_id="test-user-id"), "long-term", "TRIM_RELATIVE_WEAKNESS_VS_SECTOR", enabled=True
+            )
+
+            assert get_required_atr_indicators(as_uow(db, user_id="test-user-id"), "long-term") == {
+                ("daily", 14)
+            }
+            assert get_required_atr_indicators(as_uow(db, user_id="test-user-id"), "short-term") == set()
+            assert get_required_weekly_bar_lookback(as_uow(db, user_id="test-user-id"), "long-term") == 26
+            assert get_required_weekly_bar_lookback(as_uow(db, user_id="test-user-id"), "short-term") == 0
+            assert get_required_daily_bar_lookback(as_uow(db, user_id="test-user-id"), "long-term") == 63
+            assert get_required_daily_bar_lookback(as_uow(db, user_id="test-user-id"), "short-term") == 0
+        finally:
+            db.close()
+
     def test_required_atr_indicators_empty_when_only_trim_disabled(self, _setup_db):
         from app.rule_config import (
             ensure_strategy_rule_defaults,
