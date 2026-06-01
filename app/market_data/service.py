@@ -772,10 +772,20 @@ class MarketDataService:
             force or weekly_data_is_stale(position)
         )
         rule_uow = as_uow(db, user_id=position.user_id)
-        required = rule_config.get_required_indicators(rule_uow)
-        required_atr = rule_config.get_required_atr_indicators(rule_uow)
-        weekly_lookback = rule_config.get_required_weekly_bar_lookback(rule_uow)
-        daily_lookback = rule_config.get_required_daily_bar_lookback(rule_uow)
+        rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
+        investment_type = position.investment_type
+        required = rule_config.get_required_indicators(
+            rule_uow, investment_type, _skip_defaults=True
+        )
+        required_atr = rule_config.get_required_atr_indicators(
+            rule_uow, investment_type, _skip_defaults=True
+        )
+        weekly_lookback = rule_config.get_required_weekly_bar_lookback(
+            rule_uow, investment_type, _skip_defaults=True
+        )
+        daily_lookback = rule_config.get_required_daily_bar_lookback(
+            rule_uow, investment_type, _skip_defaults=True
+        )
         benchmark = getattr(position, "sector_benchmark_ticker", None)
         rule_inputs_may_refresh = bool(
             required

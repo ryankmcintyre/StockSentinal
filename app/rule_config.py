@@ -45,6 +45,12 @@ def _supported_investment_types() -> tuple[InvestmentType, InvestmentType]:
     return (InvestmentType.long_term, InvestmentType.short_term)
 
 
+def _required_investment_types(investment_type: str | None) -> tuple[InvestmentType, ...]:
+    if investment_type is None:
+        return _supported_investment_types()
+    return (_normalize_investment_type(investment_type),)
+
+
 def _normalize_investment_type(value: str) -> InvestmentType:
     try:
         return InvestmentType(value)
@@ -482,7 +488,12 @@ def remove_ma_condition(
     return []
 
 
-def get_required_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
+def get_required_indicators(
+    uow: UnitOfWork,
+    investment_type: str | None = None,
+    *,
+    _skip_defaults: bool = False,
+) -> set[tuple[str, int]]:
     """Return the set of (interval, time_period) tuples required by enabled rules.
 
     Includes indicators required by:
@@ -491,11 +502,12 @@ def get_required_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
 
     Used by the market data refresh logic to know which SMA indicators to fetch.
     """
-    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
+    if not _skip_defaults:
+        ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     indicators: set[tuple[str, int]] = set()
 
-    for investment_type in _supported_investment_types():
-        rows = uow.rule_configs.list_enabled_by_investment_type(investment_type.value)
+    for required_type in _required_investment_types(investment_type):
+        rows = uow.rule_configs.list_enabled_by_investment_type(required_type.value)
         for row in rows:
             params = parse_params_json(row.params_json)
             if row.rule_key == RULE_KEY_SELL_MA_ALL:
@@ -513,17 +525,23 @@ def get_required_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
     return indicators
 
 
-def get_required_atr_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
+def get_required_atr_indicators(
+    uow: UnitOfWork,
+    investment_type: str | None = None,
+    *,
+    _skip_defaults: bool = False,
+) -> set[tuple[str, int]]:
     """Return the set of (interval, time_period) tuples required for ATR data.
 
     Used by the market data refresh logic to know which ATR indicators to fetch.
     """
-    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
+    if not _skip_defaults:
+        ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     indicators: set[tuple[str, int]] = set()
 
-    for investment_type in _supported_investment_types():
+    for required_type in _required_investment_types(investment_type):
         rows = uow.rule_configs.list_enabled_by_investment_type_and_keys(
-            investment_type.value,
+            required_type.value,
             [RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR],
         )
         for row in rows:
@@ -534,16 +552,22 @@ def get_required_atr_indicators(uow: UnitOfWork) -> set[tuple[str, int]]:
     return indicators
 
 
-def get_required_weekly_bar_lookback(uow: UnitOfWork) -> int:
+def get_required_weekly_bar_lookback(
+    uow: UnitOfWork,
+    investment_type: str | None = None,
+    *,
+    _skip_defaults: bool = False,
+) -> int:
     """Return the largest weekly-OHLC lookback window required by enabled rules.
 
     Returns 0 when no enabled rule needs weekly OHLC history.
     """
-    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
+    if not _skip_defaults:
+        ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     max_lookback = 0
-    for investment_type in _supported_investment_types():
+    for required_type in _required_investment_types(investment_type):
         rows = uow.rule_configs.list_enabled_by_investment_type_and_keys(
-            investment_type.value,
+            required_type.value,
             [
                 RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
                 RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
@@ -569,16 +593,22 @@ def get_required_weekly_bar_lookback(uow: UnitOfWork) -> int:
     return max_lookback
 
 
-def get_required_daily_bar_lookback(uow: UnitOfWork) -> int:
+def get_required_daily_bar_lookback(
+    uow: UnitOfWork,
+    investment_type: str | None = None,
+    *,
+    _skip_defaults: bool = False,
+) -> int:
     """Return the largest daily-close lookback (in trading days) required by enabled rules.
 
     Returns 0 when no enabled rule needs daily close history.
     """
-    ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
+    if not _skip_defaults:
+        ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
     max_lookback = 0
-    for investment_type in _supported_investment_types():
+    for required_type in _required_investment_types(investment_type):
         rows = uow.rule_configs.list_enabled_by_investment_type_and_keys(
-            investment_type.value,
+            required_type.value,
             [RULE_KEY_TRIM_RELATIVE_WEAKNESS],
         )
         for row in rows:
