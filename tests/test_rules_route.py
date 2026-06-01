@@ -387,6 +387,10 @@ class TestRulesPage:
         def _raise_rate_limit(_pos, _db):
             raise RuntimeError("Alpha Vantage API rate limit exceeded")
 
+        def _fake_session_local():
+            return _setup_db()
+
+        mocker.patch("app.main.SessionLocal", _fake_session_local)
         mocker.patch.object(_market_service, "refresh_position", side_effect=_raise_rate_limit)
 
         resp = client.post(

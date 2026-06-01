@@ -1,6 +1,9 @@
 """Tests for refresh route and refresh-status API endpoint."""
 
+import asyncio
+import threading
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import urlencode
 
 import pytest
 from fastapi.testclient import TestClient
@@ -402,6 +405,116 @@ class TestRefreshLoadingCues:
         finally:
             verify_db.close()
 
+    def test_single_refresh_returns_redirect_before_background_task_completes(
+        self, client, _setup_db, mocker
+    ):
+        db = _setup_db()
+        try:
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+            )
+            db.add(pos)
+            db.commit()
+            position_id = pos.id
+        finally:
+            db.close()
+
+        response_sent = threading.Event()
+        task_started = threading.Event()
+        allow_task_to_finish = threading.Event()
+        request_errors = []
+        messages = []
+
+        def blocking_refresh_single(_position_id, _user_id):
+            task_started.set()
+            assert response_sent.is_set()
+            assert allow_task_to_finish.wait(timeout=1)
+
+        mock_refresh_single = mocker.patch(
+            "app.main._refresh_single_position_task",
+            side_effect=blocking_refresh_single,
+        )
+
+        form_data = csrf_form_data(client)
+        body = urlencode(form_data).encode()
+        cookie_header = "; ".join(
+            f"{key}={value}" for key, value in client.cookies.items()
+        ).encode()
+        scope = {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": f"/refresh/{position_id}",
+            "raw_path": f"/refresh/{position_id}".encode(),
+            "query_string": b"",
+            "headers": [
+                (b"host", b"testserver"),
+                (b"content-type", b"application/x-www-form-urlencoded"),
+                (b"content-length", str(len(body)).encode()),
+                (b"cookie", cookie_header),
+            ],
+            "client": ("testclient", 50000),
+            "server": ("testserver", 80),
+            "root_path": "",
+        }
+        request_messages = iter(
+            (
+                {"type": "http.request", "body": body, "more_body": False},
+                {"type": "http.disconnect"},
+            )
+        )
+
+        async def receive():
+            return next(request_messages)
+
+        async def send(message):
+            messages.append(message)
+            if (
+                message["type"] == "http.response.body"
+                and not message.get("more_body", False)
+            ):
+                response_sent.set()
+
+        def run_request():
+            try:
+                asyncio.run(app(scope, receive, send))
+            except Exception as exc:  # pragma: no cover - assertion surfaced below
+                request_errors.append(exc)
+
+        request_thread = threading.Thread(target=run_request)
+        request_thread.start()
+
+        assert response_sent.wait(timeout=1)
+        assert task_started.wait(timeout=1)
+        allow_task_to_finish.set()
+        request_thread.join(timeout=1)
+
+        assert not request_thread.is_alive()
+        assert not request_errors
+        mock_refresh_single.assert_called_once_with(position_id, "test-user-id")
+        response_start = next(
+            message for message in messages if message["type"] == "http.response.start"
+        )
+        assert response_start["status"] == 303
+        assert dict(response_start["headers"])[b"location"] == b"/"
+
+        verify_db = _setup_db()
+        try:
+            pos = verify_db.query(Position).filter(Position.id == position_id).first()
+            assert pos is not None
+            assert pos.refresh_in_progress is True
+            assert pos.refresh_started_at is not None
+        finally:
+            verify_db.close()
+
     def test_refresh_all_background_task_uses_user_scoped_uow(self, mocker):
         from app.main import _refresh_all_positions_task
 
@@ -485,7 +598,9 @@ class TestRefreshRouteTierLimits:
     def test_single_refresh_consumes_one_refresh(self, client, _setup_db, mocker):
         position_id = self._seed_single_position(_setup_db)
         self._set_refresh_count(_setup_db, 0)
-        mocker.patch.object(_market_service, "refresh_position", return_value=None)
+        mock_refresh_single = mocker.patch(
+            "app.main._refresh_single_position_task", return_value=None
+        )
 
         resp = client.post(
             f"/refresh/{position_id}",
@@ -494,6 +609,7 @@ class TestRefreshRouteTierLimits:
         )
 
         assert resp.status_code == 303
+        mock_refresh_single.assert_called_once_with(position_id, "test-user-id")
         db = _setup_db()
         try:
             user = db.query(User).filter(User.id == "test-user-id").one()
