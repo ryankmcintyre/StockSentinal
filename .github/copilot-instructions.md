@@ -117,7 +117,7 @@ Rules are evaluated highest-priority first; the first triggered rule wins. Sell 
 - **Backend**: Python 3.13, FastAPI
 - **Database**: SQLite (local dev) or Postgres (production) via SQLAlchemy 2 ORM + Alembic migrations
 - **Frontend**: Jinja2 templates with plain HTML and CSS served directly by FastAPI
-- **Auth**: Supabase Auth — PKCE flow for Google OAuth and email OTP; JWKS-based JWT verification in `auth.py`; skipped when `SUPABASE_URL` is unset
+- **Auth**: Supabase Auth — PKCE flow for Google OAuth and email OTP; JWKS-based JWT verification in `auth.py` (login flow is disabled when required Supabase env vars are missing)
 - **Market data**: Alpha Vantage or Twelve Data via provider abstraction in `app/market_data/`; auto-detected from which API key is set
 - **Styling**: Plain CSS — clean, minimal, functional aesthetic
 
