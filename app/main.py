@@ -1,6 +1,7 @@
 import logging
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from math import isclose
 from pathlib import Path
 from urllib.parse import quote
 
@@ -1182,7 +1183,11 @@ def edit_position(
     ticker_changed = pos.ticker != clean_ticker
     effective_current_price = pos.daily_close if pos.daily_close is not None else pos.current_price
     submitted_current_price = current_price
-    if not ticker_changed and pos.daily_close is not None and submitted_current_price == effective_current_price:
+    if (
+        not ticker_changed
+        and pos.daily_close is not None
+        and isclose(submitted_current_price, effective_current_price, abs_tol=0.005)
+    ):
         submitted_current_price = pos.current_price
     if ticker_changed:
         _clear_position_market_data(pos)
