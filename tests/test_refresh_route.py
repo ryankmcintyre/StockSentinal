@@ -390,7 +390,7 @@ class TestRefreshLoadingCues:
         finally:
             verify_db.close()
 
-    def test_single_refresh_marks_position_in_progress_before_background(
+    def test_single_refresh_marks_position_in_progress_and_dispatches_background_task(
         self, client, _setup_db, mocker
     ):
         db = _setup_db()
