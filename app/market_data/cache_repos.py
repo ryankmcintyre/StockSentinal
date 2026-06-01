@@ -264,7 +264,11 @@ class DailyBarCacheRepository:
             if row is None:
                 row = MarketDailyBarCache(ticker=ticker, bar_date=bar.date)
                 db.add(row)
+            row.open = bar.open
+            row.high = bar.high
+            row.low = bar.low
             row.close = bar.close
+            row.volume = bar.volume
             row.retrieved_at = now
 
     def load_for_tickers(

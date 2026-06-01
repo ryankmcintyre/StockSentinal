@@ -33,6 +33,10 @@ class DailyBar:
     """A single daily OHLCV bar."""
     date: date
     close: float
+    open: float | None = None
+    high: float | None = None
+    low: float | None = None
+    volume: float | None = None
 
 
 @dataclass
@@ -200,6 +204,10 @@ def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:
         bars.append(DailyBar(
             date=date.fromisoformat(date_str),
             close=float(values["4. close"]),
+            open=float(values["1. open"]) if "1. open" in values else None,
+            high=float(values["2. high"]) if "2. high" in values else None,
+            low=float(values["3. low"]) if "3. low" in values else None,
+            volume=float(values["5. volume"]) if "5. volume" in values else None,
         ))
 
     bars.sort(key=lambda b: b.date, reverse=True)

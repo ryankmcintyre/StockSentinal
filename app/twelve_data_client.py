@@ -147,6 +147,10 @@ def _parse_daily_bars(data: dict[str, Any], symbol: str) -> list[DailyBar]:
         DailyBar(
             date=_parse_date(value["datetime"]),
             close=float(value["close"]),
+            open=float(value["open"]) if "open" in value else None,
+            high=float(value["high"]) if "high" in value else None,
+            low=float(value["low"]) if "low" in value else None,
+            volume=float(value["volume"]) if "volume" in value else None,
         )
         for value in values
     ]
