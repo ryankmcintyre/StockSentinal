@@ -206,14 +206,19 @@ class TwelveDataProvider:
     @classmethod
     def _wait_for_budget_slot(cls, credits_per_minute: int) -> None:
         # Reserve a slot in the rolling window under the lock, then sleep
-        # outside it. When the budget is exhausted the reserved slot is the
-        # moment the oldest call leaves the trailing 60s window; appending it
-        # ensures two concurrent callers never claim the same slot.
+        # outside it. When the budget is exhausted, space the new slot 60s
+        # after the reservation ``credits_per_minute`` entries back, rather
+        # than after the single oldest call. Reserving relative to prior
+        # reservations stops concurrent callers from all claiming the same
+        # ``oldest + 60`` slot and bursting past the cap at the window edge.
         with cls._lock:
             now = time.monotonic()
             cls._prune_call_window(now)
             if len(cls._call_window) >= credits_per_minute:
-                reserved = cls._call_window[0] + cls._WINDOW_SECONDS
+                reserved = max(
+                    now,
+                    cls._call_window[-credits_per_minute] + cls._WINDOW_SECONDS,
+                )
             else:
                 reserved = now
             cls._call_window.append(reserved)

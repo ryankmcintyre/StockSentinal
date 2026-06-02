@@ -298,54 +298,66 @@
         }
     }
 
-    function wireSingleRefreshForms() {
-        var forms = document.querySelectorAll("form[data-refresh-form='true']");
-        forms.forEach(function (form) {
-            form.addEventListener("submit", function (event) {
-                // Progressive enhancement: without JS the form posts normally
-                // and the server returns a 303 redirect (no-JS fallback).
-                event.preventDefault();
-                var row = form.closest("tr[data-position-id]");
-                var id = row ? row.getAttribute("data-position-id") : null;
-                if (!id) {
-                    form.submit();
+    function handleSingleRefreshSubmit(form) {
+        var row = form.closest("tr[data-position-id]");
+        var id = row ? row.getAttribute("data-position-id") : null;
+        if (!id) {
+            form.submit();
+            return;
+        }
+        poller.setRowSpinning(id, true);
+        var body = new FormData(form);
+        fetch(form.getAttribute("action"), {
+            method: "POST",
+            headers: {
+                Accept: "application/json",
+                "X-Requested-With": "fetch",
+            },
+            body: body,
+            cache: "no-store",
+        })
+            .then(function (response) {
+                if (response.status === 429) {
+                    // Refresh quota exceeded: fall back to the standard
+                    // redirect so the existing flash banner surfaces the
+                    // message (the only case that reloads the page).
+                    poller.setRowSpinning(id, false);
+                    window.location.href = "/?flash=refresh_limit";
                     return;
                 }
-                poller.setRowSpinning(id, true);
-                var body = new FormData(form);
-                fetch(form.getAttribute("action"), {
-                    method: "POST",
-                    headers: {
-                        Accept: "application/json",
-                        "X-Requested-With": "fetch",
-                    },
-                    body: body,
-                    cache: "no-store",
-                })
-                    .then(function (response) {
-                        if (response.status === 429) {
-                            // Refresh quota exceeded: fall back to the standard
-                            // redirect so the existing flash banner surfaces the
-                            // message (the only case that reloads the page).
-                            poller.setRowSpinning(id, false);
-                            window.location.href = "/?flash=refresh_limit";
-                            return;
-                        }
-                        if (!response.ok) {
-                            throw new Error("refresh request failed");
-                        }
-                        // Accepted: register the id and (re)start polling so the
-                        // row is patched in place when the refresh completes.
-                        poller.add(id);
-                        poller.start();
-                    })
-                    .catch(function () {
-                        // On unexpected failure fall back to a full submit so
-                        // the operator still gets feedback.
-                        poller.setRowSpinning(id, false);
-                        form.submit();
-                    });
+                if (!response.ok) {
+                    throw new Error("refresh request failed");
+                }
+                // Accepted: register the id and (re)start polling so the
+                // row is patched in place when the refresh completes.
+                poller.add(id);
+                poller.start();
+            })
+            .catch(function () {
+                // On unexpected failure fall back to a full submit so
+                // the operator still gets feedback.
+                poller.setRowSpinning(id, false);
+                form.submit();
             });
+    }
+
+    function wireSingleRefreshForms() {
+        // Use one delegated submit listener rather than binding each form so
+        // rows swapped in by patchRows() (which replaces the whole <tr>,
+        // including its form) keep the async path on subsequent refreshes
+        // instead of regressing to a native POST + full page reload.
+        document.addEventListener("submit", function (event) {
+            var form = event.target;
+            if (!form || typeof form.matches !== "function") {
+                return;
+            }
+            if (!form.matches("form[data-refresh-form='true']")) {
+                return;
+            }
+            // Progressive enhancement: without JS the form posts normally
+            // and the server returns a 303 redirect (no-JS fallback).
+            event.preventDefault();
+            handleSingleRefreshSubmit(form);
         });
     }
 

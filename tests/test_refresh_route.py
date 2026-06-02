@@ -899,3 +899,20 @@ class TestRefreshRouteTierLimits:
 
         assert resp.status_code == 303
         assert resp.headers["location"] == "/?flash=refresh_limit"
+
+    def test_refresh_status_js_uses_delegated_submit_for_patched_rows(self):
+        # patchRows() replaces the whole <tr> (including its refresh form), so
+        # the async path must be wired via a single delegated submit listener
+        # on document rather than per-form binding. Otherwise a replaced row
+        # would fall back to a native POST + full page reload on its next
+        # refresh. Assert the delegation pattern is present and that we no
+        # longer bind submit handlers per refresh form.
+        from pathlib import Path
+
+        source = Path("app/static/refresh-status.js").read_text(encoding="utf-8")
+        assert 'document.addEventListener("submit"' in source
+        assert "data-refresh-form='true'" in source
+        assert (
+            'querySelectorAll("form[data-refresh-form=\'true\']")'
+            not in source
+        )

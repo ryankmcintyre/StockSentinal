@@ -173,6 +173,33 @@ class TestTwelveDataProvider:
         assert list(TwelveDataProvider._call_window) == [1000.0]
         TwelveDataProvider._call_window.clear()
 
+    def test_credit_budget_gate_never_exceeds_cap_in_any_window(self, mocker):
+        # With N = credits_per_minute, no rolling 60s window may ever contain
+        # more than N reserved slots, even when many callers pile in at once
+        # while the budget is exhausted (no thundering herd past the cap).
+        TwelveDataProvider._call_window.clear()
+        credits_per_minute = 3
+        mocker.patch(
+            "app.market_data.provider.get_twelve_data_credits_per_minute",
+            return_value=credits_per_minute,
+        )
+        # All callers arrive at the same instant; sleeping is a no-op.
+        mocker.patch("app.market_data.provider.time.monotonic", return_value=1000.0)
+        mocker.patch("app.market_data.provider.time.sleep")
+
+        for _ in range(2 * credits_per_minute + 1):
+            TwelveDataProvider._wait_for_slot()
+
+        reserved = sorted(TwelveDataProvider._call_window)
+        # Each slot must be spaced at least one window behind the slot
+        # credits_per_minute positions ahead of it; this is equivalent to
+        # "no 60s window contains more than credits_per_minute slots".
+        for i in range(len(reserved) - credits_per_minute):
+            assert reserved[i + credits_per_minute] >= reserved[i] + (
+                TwelveDataProvider._WINDOW_SECONDS - 1e-6
+            )
+        TwelveDataProvider._call_window.clear()
+
     def test_supports_parallel_fetch_flags(self):
         assert TwelveDataProvider.supports_parallel_fetch is True
         assert AlphaVantageProvider.supports_parallel_fetch is False
