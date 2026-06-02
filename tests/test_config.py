@@ -14,6 +14,7 @@ from app.config import (
     get_market_data_provider_display_name,
     get_supabase_publishable_key,
     get_twelve_data_api_key,
+    get_twelve_data_credits_per_minute,
     get_twelve_data_min_interval_seconds,
     has_supabase_publishable_key,
     is_postgres,
@@ -179,6 +180,26 @@ class TestMarketDataRateLimitIntervals:
         monkeypatch.setenv("MARKET_DATA_PROVIDER", "twelvedata")
         monkeypatch.setenv("TWELVE_DATA_MIN_INTERVAL_SECONDS", "0.25")
         assert get_market_data_min_interval_seconds() == 0.25
+
+
+class TestGetTwelveDataCreditsPerMinute:
+    def test_returns_none_when_unset(self, monkeypatch):
+        monkeypatch.delenv("TWELVE_DATA_CREDITS_PER_MINUTE", raising=False)
+        assert get_twelve_data_credits_per_minute() is None
+
+    def test_returns_configured_positive_int(self, monkeypatch):
+        monkeypatch.setenv("TWELVE_DATA_CREDITS_PER_MINUTE", "50")
+        assert get_twelve_data_credits_per_minute() == 50
+
+    def test_returns_none_for_non_integer(self, monkeypatch):
+        monkeypatch.setenv("TWELVE_DATA_CREDITS_PER_MINUTE", "fast")
+        assert get_twelve_data_credits_per_minute() is None
+
+    def test_returns_none_for_non_positive(self, monkeypatch):
+        monkeypatch.setenv("TWELVE_DATA_CREDITS_PER_MINUTE", "0")
+        assert get_twelve_data_credits_per_minute() is None
+        monkeypatch.setenv("TWELVE_DATA_CREDITS_PER_MINUTE", "-5")
+        assert get_twelve_data_credits_per_minute() is None
 
 
 class TestGetMarketDataProvider:

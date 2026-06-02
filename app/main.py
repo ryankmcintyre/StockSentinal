@@ -762,11 +762,13 @@ def index(request: Request, uow: UnitOfWork | None = Depends(get_optional_uow)):
     return _portfolio_response(request, uow)
 
 
-def _portfolio_response(request: Request, uow: UnitOfWork):
-    """Build and return the portfolio dashboard template response."""
-    user_id = _get_request_user_id(request, uow)
-    current_user = _get_current_user(request, uow)
-    _clear_stale_refresh_flags(uow)
+def _enrich_all_positions(uow: UnitOfWork, user_id):
+    """Enrich all of the user's positions and compute the verdict summary.
+
+    Returns ``(enriched, summary)`` where *enriched* is sorted by verdict
+    priority. Shared by the full dashboard render and the single-row fragment
+    endpoint so both produce identical view models.
+    """
     positions = uow.positions.list_all()
     enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(uow, user_id=user_id)
 
@@ -809,6 +811,15 @@ def _portfolio_response(request: Request, uow: UnitOfWork):
         "hold": sum(1 for p in enriched if p["verdict"] == Verdict.hold),
         "total": len(enriched),
     }
+    return enriched, summary
+
+
+def _portfolio_response(request: Request, uow: UnitOfWork):
+    """Build and return the portfolio dashboard template response."""
+    user_id = _get_request_user_id(request, uow)
+    current_user = _get_current_user(request, uow)
+    _clear_stale_refresh_flags(uow)
+    enriched, summary = _enrich_all_positions(uow, user_id)
     any_refresh_in_progress = any(p["refresh_in_progress"] for p in enriched)
 
     return templates.TemplateResponse(
@@ -1366,7 +1377,9 @@ def _refresh_single_position_task(position_id: int, user_id: str):
     uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
     pos = None
     try:
-        _mark_positions_refresh_state(uow, [position_id], in_progress=True)
+        # The in-progress flag is set by the /refresh/{position_id} route
+        # handler before scheduling this task, so we skip the redundant write
+        # here.
         try:
             pos = uow.positions.get_by_id(position_id)
             if pos:
@@ -1440,10 +1453,32 @@ def refresh_single(
 
 
 @app.get("/api/refresh-status")
-def refresh_status(uow: UnitOfWork = Depends(get_authenticated_uow)):
-    """Expose lightweight in-progress refresh state for client-side polling."""
+def refresh_status(
+    ids: str | None = None,
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Expose lightweight in-progress refresh state for client-side polling.
+
+    When *ids* is provided (a comma-separated list of position ids), only the
+    status for those positions is returned. This keeps single-position polling
+    cheap when the portfolio has many positions.
+    """
     _clear_stale_refresh_flags(uow)
     positions = uow.positions.list_refresh_statuses()
+
+    id_filter: set[int] | None = None
+    if ids is not None:
+        id_filter = set()
+        for raw in ids.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                id_filter.add(int(raw))
+            except ValueError:
+                continue
+        positions = [row for row in positions if row[0] in id_filter]
+
     return {
         "any_in_progress": any(bool(in_progress) for _, in_progress, _ in positions),
         "positions": [
@@ -1457,3 +1492,92 @@ def refresh_status(uow: UnitOfWork = Depends(get_authenticated_uow)):
             for position_id, in_progress, started_at in positions
         ],
     }
+
+
+def _render_position_row(request: Request, row) -> str:
+    """Render the shared ``_position_row.html`` fragment for one position."""
+    return templates.get_template("_position_row.html").render(
+        request=request,
+        pos=row,
+        api_configured=get_market_data_api_key() is not None,
+        market_data_provider_name=get_market_data_provider_display_name(),
+    )
+
+
+@app.get("/api/positions/{position_id}/row")
+def position_row(
+    request: Request,
+    position_id: int,
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Return the rendered table-row fragment and summary for one position.
+
+    Used by the client to patch a single row in place after a refresh
+    finishes, avoiding a full-page reload that would discard scroll, sort,
+    and filter state.
+    """
+    user_id = _get_request_user_id(request, uow)
+    target = uow.positions.get_by_id(position_id)
+    if target is None:
+        raise HTTPException(status_code=404)
+
+    enriched, summary = _enrich_all_positions(uow, user_id)
+    row = next((p for p in enriched if p["id"] == position_id), None)
+    if row is None:
+        raise HTTPException(status_code=404)
+
+    return {
+        "id": position_id,
+        "in_progress": bool(row["refresh_in_progress"]),
+        "row_html": _render_position_row(request, row),
+        "summary": summary,
+    }
+
+
+@app.get("/api/positions/rows")
+def position_rows(
+    request: Request,
+    ids: str | None = None,
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Return rendered row fragments for many positions plus one summary.
+
+    The client patches several completed rows after a multi-position refresh
+    by issuing a single request, instead of one ``/row`` call per id. Enriching
+    all positions once here keeps the cost flat (a single ``_enrich_all_positions``)
+    regardless of how many rows completed, and returning a single authoritative
+    *summary* avoids stale counters from out-of-order per-row responses.
+    """
+    requested_ids: list[int] = []
+    seen: set[int] = set()
+    if ids is not None:
+        for raw in ids.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                value = int(raw)
+            except ValueError:
+                continue
+            if value not in seen:
+                seen.add(value)
+                requested_ids.append(value)
+
+    user_id = _get_request_user_id(request, uow)
+    enriched, summary = _enrich_all_positions(uow, user_id)
+    by_id = {p["id"]: p for p in enriched}
+
+    rows = []
+    for position_id in requested_ids:
+        row = by_id.get(position_id)
+        if row is None:
+            continue
+        rows.append(
+            {
+                "id": position_id,
+                "in_progress": bool(row["refresh_in_progress"]),
+                "row_html": _render_position_row(request, row),
+            }
+        )
+
+    return {"rows": rows, "summary": summary}

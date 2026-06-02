@@ -83,6 +83,64 @@ class TestTwelveDataProvider:
         assert sleep.call_args.args[0] == pytest.approx(0.3)
         TwelveDataProvider._last_call_at = None
 
+    def test_credit_budget_gate_allows_calls_under_budget(self, mocker):
+        TwelveDataProvider._call_window.clear()
+        mocker.patch(
+            "app.market_data.provider.get_twelve_data_credits_per_minute",
+            return_value=50,
+        )
+        mocker.patch("app.market_data.provider.time.monotonic", return_value=1000.0)
+        sleep = mocker.patch("app.market_data.provider.time.sleep")
+
+        for _ in range(5):
+            TwelveDataProvider._wait_for_slot()
+
+        sleep.assert_not_called()
+        assert len(TwelveDataProvider._call_window) == 5
+        TwelveDataProvider._call_window.clear()
+
+    def test_credit_budget_gate_sleeps_when_budget_exhausted(self, mocker):
+        TwelveDataProvider._call_window.clear()
+        # Two prior calls at t=1000 fill a budget of 2.
+        TwelveDataProvider._call_window.extend([1000.0, 1000.0])
+        mocker.patch(
+            "app.market_data.provider.get_twelve_data_credits_per_minute",
+            return_value=2,
+        )
+        # now=1010: oldest call leaves the window at 1000+60=1060, so wait ~50s.
+        mocker.patch(
+            "app.market_data.provider.time.monotonic",
+            side_effect=[1010.0, 1060.0, 1060.0],
+        )
+        sleep = mocker.patch("app.market_data.provider.time.sleep")
+
+        TwelveDataProvider._wait_for_slot()
+
+        sleep.assert_called_once()
+        assert sleep.call_args.args[0] == pytest.approx(50.0)
+        TwelveDataProvider._call_window.clear()
+
+    def test_credit_budget_gate_prunes_expired_calls(self, mocker):
+        TwelveDataProvider._call_window.clear()
+        # An old call outside the 60s window should be pruned, not counted.
+        TwelveDataProvider._call_window.append(900.0)
+        mocker.patch(
+            "app.market_data.provider.get_twelve_data_credits_per_minute",
+            return_value=1,
+        )
+        mocker.patch("app.market_data.provider.time.monotonic", return_value=1000.0)
+        sleep = mocker.patch("app.market_data.provider.time.sleep")
+
+        TwelveDataProvider._wait_for_slot()
+
+        sleep.assert_not_called()
+        assert list(TwelveDataProvider._call_window) == [1000.0]
+        TwelveDataProvider._call_window.clear()
+
+    def test_supports_parallel_fetch_flags(self):
+        assert TwelveDataProvider.supports_parallel_fetch is True
+        assert AlphaVantageProvider.supports_parallel_fetch is False
+
 
 class TestCreateMarketDataProvider:
     def test_returns_alpha_vantage_provider_by_default(self, mocker):

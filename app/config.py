@@ -104,6 +104,25 @@ def get_twelve_data_min_interval_seconds() -> float:
     return _get_float_env_var("TWELVE_DATA_MIN_INTERVAL_SECONDS", 8.0)
 
 
+def get_twelve_data_credits_per_minute() -> int | None:
+    """Return the Twelve Data per-minute credit budget, or None if unset.
+
+    When set to a positive integer, the provider uses a rolling 60-second
+    credit-budget gate that allows concurrent calls up to this many credits
+    per minute (e.g. ~50 for the Grow plan, leaving headroom under the
+    55/min hard cap). When unset or invalid, the provider falls back to the
+    legacy strict per-call interval (``TWELVE_DATA_MIN_INTERVAL_SECONDS``).
+    """
+    value = _get_env_var("TWELVE_DATA_CREDITS_PER_MINUTE")
+    if value is None:
+        return None
+    try:
+        parsed = int(value)
+    except ValueError:
+        return None
+    return parsed if parsed > 0 else None
+
+
 def get_market_data_min_interval_seconds() -> float:
     """Return the per-call rate-limit interval for the active provider."""
     if get_market_data_provider() == "twelvedata":

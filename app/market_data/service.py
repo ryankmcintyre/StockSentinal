@@ -6,9 +6,12 @@ use for anything market-data related.
 """
 
 import logging
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date as date_type
 from datetime import datetime
-from typing import Optional
+from typing import Callable, Optional
 
 import app.rule_config as rule_config
 from sqlalchemy.orm import Session
@@ -127,21 +130,32 @@ class _FetchCache:
         self._daily_bars: dict[str, list[DailyBar]] = {}
         self._weekly_bars: dict[str, list[WeeklyBar]] = {}
         self._atr: dict[tuple[str, str, int], list[ATRPoint]] = {}
+        # Guards cache dict mutations so the cache can be safely shared across
+        # threads when independent fetches run in parallel.
+        self._lock = threading.Lock()
 
     def get_daily_bars(self, ticker: str) -> list[DailyBar]:
         key = ticker.upper()
-        if key not in self._daily_bars:
-            self._daily_bars[key] = self._provider.fetch_daily_bars(ticker)
-        return self._daily_bars[key]
+        with self._lock:
+            if key in self._daily_bars:
+                return self._daily_bars[key]
+        bars = self._provider.fetch_daily_bars(ticker)
+        with self._lock:
+            self._daily_bars.setdefault(key, bars)
+            return self._daily_bars[key]
 
     def preload_daily_bars(self, tickers: set[str]) -> None:
         self._preload_bars(tickers, "fetch_daily_bars_batch", self._daily_bars)
 
     def get_weekly_bars(self, ticker: str) -> list[WeeklyBar]:
         key = ticker.upper()
-        if key not in self._weekly_bars:
-            self._weekly_bars[key] = self._provider.fetch_weekly_bars(ticker)
-        return self._weekly_bars[key]
+        with self._lock:
+            if key in self._weekly_bars:
+                return self._weekly_bars[key]
+        bars = self._provider.fetch_weekly_bars(ticker)
+        with self._lock:
+            self._weekly_bars.setdefault(key, bars)
+            return self._weekly_bars[key]
 
     def preload_weekly_bars(self, tickers: set[str]) -> None:
         self._preload_bars(tickers, "fetch_weekly_bars_batch", self._weekly_bars)
@@ -170,11 +184,15 @@ class _FetchCache:
 
     def get_atr(self, ticker: str, interval: str, time_period: int) -> list[ATRPoint]:
         key = (ticker.upper(), interval, time_period)
-        if key not in self._atr:
-            self._atr[key] = self._provider.fetch_atr(
-                ticker, interval=interval, time_period=time_period,
-            )
-        return self._atr[key]
+        with self._lock:
+            if key in self._atr:
+                return self._atr[key]
+        points = self._provider.fetch_atr(
+            ticker, interval=interval, time_period=time_period,
+        )
+        with self._lock:
+            self._atr.setdefault(key, points)
+            return self._atr[key]
 
     def preload_atr(
         self, tickers: set[str], interval: str, time_period: int,
@@ -843,6 +861,7 @@ class MarketDataService:
         at most once per ticker, regardless of how many sub-steps need the data.
         """
         errors: list[str] = []
+        started_at = time.monotonic()
         cache = _FetchCache(self._provider)
         should_refresh_daily = force or daily_data_is_stale(position)
         should_refresh_weekly = self._needs_weekly(position) and (
@@ -874,6 +893,32 @@ class MarketDataService:
             self._calculate_verdicts(db, [position])
             if should_refresh_daily or should_refresh_weekly or rule_inputs_may_refresh
             else {}
+        )
+
+        # Warm the per-operation fetch cache by firing independent API calls
+        # (daily, weekly, benchmark-daily) concurrently when the provider
+        # supports it. Subsequent sequential steps then reuse the cached bars
+        # instead of paying the rate-limit gate once per call in series.
+        need_daily = (
+            should_refresh_daily
+            or daily_lookback > 0
+            or self._has_interval(required, "daily")
+            or self._has_interval(required_atr, "daily")
+        )
+        need_weekly = (
+            should_refresh_weekly
+            or weekly_lookback > 0
+            or self._has_interval(required, "weekly")
+            or self._has_interval(required_atr, "weekly")
+        )
+        need_benchmark_daily = daily_lookback > 0 and bool(benchmark)
+        self._prewarm_fetch_cache(
+            cache,
+            position.ticker,
+            need_daily=need_daily,
+            need_weekly=need_weekly,
+            benchmark=benchmark.upper() if benchmark else None,
+            need_benchmark_daily=need_benchmark_daily,
         )
 
         # Daily refresh
@@ -941,6 +986,78 @@ class MarketDataService:
         if previous_verdicts:
             self._update_previous_verdicts(db, [position], previous_verdicts)
         db.commit()
+        logger.info(
+            "refresh_position completed for %s in %.3fs (errors=%d)",
+            position.ticker,
+            time.monotonic() - started_at,
+            len(errors),
+        )
+
+    @staticmethod
+    def _has_interval(indicators: set[tuple[str, int]], interval: str) -> bool:
+        """Return True if any required indicator targets *interval*."""
+        return any(iv == interval for iv, _ in indicators)
+
+    def _prewarm_fetch_cache(
+        self,
+        cache: "_FetchCache",
+        ticker: str,
+        *,
+        need_daily: bool,
+        need_weekly: bool,
+        benchmark: Optional[str],
+        need_benchmark_daily: bool,
+    ) -> None:
+        """Fire independent bar fetches concurrently to warm *cache*.
+
+        Only runs when the provider advertises ``supports_parallel_fetch``.
+        Each task populates the thread-safe fetch cache so subsequent
+        sequential steps reuse the data without extra API calls. Errors are
+        intentionally swallowed here: the sequential steps re-fetch on a cache
+        miss and surface failures with proper per-step context.
+        """
+        if not getattr(type(self._provider), "supports_parallel_fetch", False):
+            return
+
+        tasks: list[Callable[[], object]] = []
+        if need_daily:
+            tasks.append(lambda t=ticker: cache.get_daily_bars(t))
+        if need_weekly:
+            tasks.append(lambda t=ticker: cache.get_weekly_bars(t))
+        if need_benchmark_daily and benchmark:
+            # Skip the benchmark-daily fetch when it targets the same symbol as
+            # the position's daily fetch. ``get_daily_bars`` fetches outside the
+            # cache lock, so enqueuing both would let concurrent misses trigger
+            # a duplicate provider call (and burn an extra credit) for one symbol.
+            benchmark_duplicates_daily = (
+                need_daily and benchmark.upper() == ticker.upper()
+            )
+            if not benchmark_duplicates_daily:
+                tasks.append(lambda b=benchmark: cache.get_daily_bars(b))
+
+        # Nothing to gain from a thread pool for a single fetch.
+        if len(tasks) < 2:
+            return
+
+        prewarm_start = time.monotonic()
+        with ThreadPoolExecutor(max_workers=len(tasks)) as executor:
+            futures = [executor.submit(task) for task in tasks]
+            for future in futures:
+                try:
+                    future.result()
+                except Exception:
+                    logger.debug(
+                        "Parallel prewarm fetch failed for %s; "
+                        "will retry sequentially",
+                        ticker,
+                        exc_info=True,
+                    )
+        logger.debug(
+            "Parallel prewarm of %d fetches for %s took %.3fs",
+            len(tasks),
+            ticker,
+            time.monotonic() - prewarm_start,
+        )
 
     def refresh_all_positions(
         self, db: Session, force: bool = False, user_id: str | None = None,
