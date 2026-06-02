@@ -79,7 +79,7 @@ def client():
 
 
 class TestRefreshLoadingCues:
-    def test_portfolio_shows_refreshing_badge_and_banner(self, client, _setup_db, mocker):
+    def test_portfolio_marks_refresh_button_spinning_and_banner(self, client, _setup_db, mocker):
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         db = _setup_db()
         try:
@@ -102,12 +102,15 @@ class TestRefreshLoadingCues:
 
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "Refreshing..." in resp.text
+        # No "Refreshing..." badge in the Reason column anymore; the spinning
+        # refresh icon is the only in-progress cue.
+        assert "Refreshing..." not in resp.text
+        assert "btn-refresh-spinning" in resp.text
         assert "Updating market data — rows will update automatically when finished." in resp.text
         assert 'data-any-refresh-in-progress="true"' in resp.text
         assert "data-poll-timeout-ms=" in resp.text
         assert "/static/refresh-status.js" in resp.text
-        assert "data-api-submit=\"true\"" in resp.text
+        assert 'data-refresh-form="true"' in resp.text
 
     def test_refresh_all_form_warns_before_submit(self, client, _setup_db, mocker):
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
@@ -806,3 +809,93 @@ class TestRefreshRouteTierLimits:
 
         assert resp.status_code == 303
         mock_refresh_all.assert_called_once()
+
+    def test_single_refresh_returns_json_202_for_fetch_request(
+        self, client, _setup_db, mocker
+    ):
+        position_id = self._seed_single_position(_setup_db)
+        self._set_refresh_count(_setup_db, 0)
+        mock_refresh_single = mocker.patch(
+            "app.main._refresh_single_position_task", return_value=None
+        )
+
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            headers={"Accept": "application/json"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 202
+        assert resp.json() == {"status": "started", "id": position_id}
+        mock_refresh_single.assert_called_once_with(position_id, "test-user-id")
+
+    def test_single_refresh_returns_json_202_for_x_requested_with_fetch(
+        self, client, _setup_db, mocker
+    ):
+        position_id = self._seed_single_position(_setup_db)
+        self._set_refresh_count(_setup_db, 0)
+        mocker.patch("app.main._refresh_single_position_task", return_value=None)
+
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            headers={"X-Requested-With": "fetch"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 202
+        assert resp.json()["status"] == "started"
+
+    def test_single_refresh_returns_303_for_standard_form_post(
+        self, client, _setup_db, mocker
+    ):
+        position_id = self._seed_single_position(_setup_db)
+        self._set_refresh_count(_setup_db, 0)
+        mocker.patch("app.main._refresh_single_position_task", return_value=None)
+
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+
+    def test_single_refresh_fetch_over_limit_returns_429_json(
+        self, client, _setup_db, mocker
+    ):
+        position_id = self._seed_single_position(_setup_db)
+        self._set_refresh_count(_setup_db, 5)
+        mock_refresh_single = mocker.patch(
+            "app.main._refresh_single_position_task", return_value=None
+        )
+
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            headers={"Accept": "application/json"},
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 429
+        payload = resp.json()
+        assert payload["status"] == "limit"
+        assert "used 5 of 5 refreshes today" in payload["flash"]
+        mock_refresh_single.assert_not_called()
+
+    def test_single_refresh_form_over_limit_redirects(
+        self, client, _setup_db, mocker
+    ):
+        position_id = self._seed_single_position(_setup_db)
+        self._set_refresh_count(_setup_db, 5)
+        mocker.patch("app.main._refresh_single_position_task", return_value=None)
+
+        resp = client.post(
+            f"/refresh/{position_id}",
+            data=csrf_form_data(client),
+            follow_redirects=False,
+        )
+
+        assert resp.status_code == 303
+        assert resp.headers["location"] == "/?flash=refresh_limit"

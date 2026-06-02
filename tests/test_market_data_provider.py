@@ -74,13 +74,48 @@ class TestTwelveDataProvider:
             "app.market_data.provider.get_twelve_data_min_interval_seconds",
             return_value=0.5,
         )
-        mocker.patch("app.market_data.provider.time.monotonic", side_effect=[100.2, 100.7])
+        # First monotonic() reserves the slot under the lock; the second
+        # computes how long to sleep after the lock is released.
+        mocker.patch("app.market_data.provider.time.monotonic", side_effect=[100.2, 100.2])
         sleep = mocker.patch("app.market_data.provider.time.sleep")
 
         TwelveDataProvider._wait_for_slot()
 
         sleep.assert_called_once()
+        # Next slot is reserved at 100.0 + 0.5 = 100.5, so sleep ~0.3s.
         assert sleep.call_args.args[0] == pytest.approx(0.3)
+        assert TwelveDataProvider._last_call_at == pytest.approx(100.5)
+        TwelveDataProvider._last_call_at = None
+
+    def test_interval_slot_reserved_without_holding_lock_during_sleep(self, mocker):
+        # Two concurrent callers must reserve distinct, correctly-spaced slots
+        # without holding the lock while sleeping, so their waits can overlap.
+        TwelveDataProvider._last_call_at = None
+        mocker.patch(
+            "app.market_data.provider.get_twelve_data_min_interval_seconds",
+            return_value=8.0,
+        )
+        slept = []
+
+        # The lock must be free while sleeping; assert it is acquirable then.
+        def fake_sleep(secs):
+            assert TwelveDataProvider._lock.acquire(blocking=False)
+            TwelveDataProvider._lock.release()
+            slept.append(secs)
+
+        mocker.patch("app.market_data.provider.time.sleep", side_effect=fake_sleep)
+        # Caller A reserves at t=0 (no prior call) -> no sleep.
+        # Caller B reserves at t=0 -> spaced to t=8 -> sleeps ~8s.
+        mocker.patch(
+            "app.market_data.provider.time.monotonic",
+            side_effect=[0.0, 0.0, 0.0, 0.0],
+        )
+
+        TwelveDataProvider._wait_for_slot()
+        TwelveDataProvider._wait_for_slot()
+
+        assert slept == [pytest.approx(8.0)]
+        assert TwelveDataProvider._last_call_at == pytest.approx(8.0)
         TwelveDataProvider._last_call_at = None
 
     def test_credit_budget_gate_allows_calls_under_budget(self, mocker):
@@ -107,10 +142,11 @@ class TestTwelveDataProvider:
             "app.market_data.provider.get_twelve_data_credits_per_minute",
             return_value=2,
         )
-        # now=1010: oldest call leaves the window at 1000+60=1060, so wait ~50s.
+        # now=1010: oldest call leaves the window at 1000+60=1060, so the
+        # reserved slot is 1060 and we sleep ~50s after releasing the lock.
         mocker.patch(
             "app.market_data.provider.time.monotonic",
-            side_effect=[1010.0, 1060.0, 1060.0],
+            side_effect=[1010.0, 1010.0],
         )
         sleep = mocker.patch("app.market_data.provider.time.sleep")
 

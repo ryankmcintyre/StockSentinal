@@ -203,6 +203,19 @@ def _redirect_with_refresh_limit_flash() -> RedirectResponse:
     return RedirectResponse(url="/?flash=refresh_limit", status_code=303)
 
 
+def _wants_json_response(request: Request) -> bool:
+    """Return True for async/fetch-style requests that expect a JSON reply.
+
+    Used so in-place refresh (JavaScript ``fetch``) gets a small JSON body
+    instead of a full-page redirect, while the no-JS form fallback still
+    receives the ``303`` redirect.
+    """
+    if request.headers.get("x-requested-with", "").lower() == "fetch":
+        return True
+    accept = request.headers.get("accept", "")
+    return "application/json" in accept.lower()
+
+
 def _admin_redirect_with_flash() -> RedirectResponse:
     return RedirectResponse(url="/admin?flash=admin_updated", status_code=303)
 
@@ -391,7 +404,6 @@ def _enrich_position(
         ]
     reason_sort_value = (
         pos.refresh_error
-        or ("Refreshing..." if pos.refresh_in_progress else "")
         or (displayed_triggered[0].description if displayed_triggered else "")
     )
     return {
@@ -1429,12 +1441,20 @@ def refresh_all(
 
 @app.post("/refresh/{position_id}")
 def refresh_single(
+    request: Request,
     background_tasks: BackgroundTasks,
     position_id: int,
     _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
-    """Refresh cached market data for a single position in the background."""
+    """Refresh cached market data for a single position in the background.
+
+    For async/fetch-style requests (``Accept: application/json`` or
+    ``X-Requested-With: fetch``) this returns a small ``202`` JSON body so the
+    client can spin the row's refresh icon and poll without reloading the page.
+    Standard form posts still receive a ``303`` redirect for the no-JS path.
+    """
+    wants_json = _wants_json_response(request)
     _clear_stale_refresh_flags(uow)
     pos = uow.positions.get_by_id(position_id)
     if pos and not pos.refresh_in_progress:
@@ -1446,9 +1466,16 @@ def refresh_single(
             uow.commit()
         except TierLimitExceeded:
             uow.rollback()
+            if wants_json:
+                return JSONResponse(
+                    status_code=429,
+                    content={"status": "limit", "flash": FLASH_MESSAGES["refresh_limit"]},
+                )
             return _redirect_with_refresh_limit_flash()
         _mark_positions_refresh_state(uow, [position_id], in_progress=True)
         background_tasks.add_task(_refresh_single_position_task, position_id, uow.user_id)
+    if wants_json:
+        return JSONResponse(status_code=202, content={"status": "started", "id": position_id})
     return RedirectResponse(url="/", status_code=303)
 
 

@@ -22,51 +22,52 @@
         });
     }
 
-    function wireRefreshStatusPolling() {
-        var root = document.getElementById("refresh-status-root");
-        if (!root || root.dataset.refreshStatusEnabled !== "true") {
-            return;
-        }
-        if (root.dataset.anyRefreshInProgress !== "true") {
-            return;
-        }
-
-        // Keep polling until the server reports the refresh is done. The
-        // ceiling is aligned with the backend stale-refresh timeout (plus a
-        // margin) so the UI never gives up while a refresh is still running.
+    // Shared poller so both the on-load (any-in-progress) path and the
+    // client-initiated single-row refresh path feed the same polling loop.
+    var poller = (function () {
         var DEFAULT_TIMEOUT_MS = 420000; // 7 minutes
-        // Poll quickly for the first few rounds to catch the common-case
-        // ~1-2s refresh, then back off to reduce request volume on slow ones.
         var FAST_INTERVAL_MS = 500;
         var FAST_POLL_COUNT = 4;
         var MAX_INTERVAL_MS = 5000;
 
-        var parsedTimeout = parseInt(root.dataset.pollTimeoutMs, 10);
-        var timeoutMs =
-            isNaN(parsedTimeout) || parsedTimeout <= 0
-                ? DEFAULT_TIMEOUT_MS
-                : parsedTimeout;
-        var stopAt = Date.now() + timeoutMs;
+        var pending = {};
+        var stopAt = 0;
         var pollCount = 0;
         var intervalMs = FAST_INTERVAL_MS;
         var pollInFlight = false;
         var timerId = null;
+        var running = false;
 
-        // Track the positions that were refreshing when the page loaded so we
-        // can patch each row in place as it completes.
-        var pending = {};
-        var rows = document.querySelectorAll(
-            "tr[data-refresh-in-progress='true']"
-        );
-        rows.forEach(function (row) {
-            var id = row.getAttribute("data-position-id");
-            if (id) {
-                pending[id] = true;
-            }
-        });
+        function timeoutMs() {
+            var root = document.getElementById("refresh-status-root");
+            var parsed = root ? parseInt(root.dataset.pollTimeoutMs, 10) : NaN;
+            return isNaN(parsed) || parsed <= 0 ? DEFAULT_TIMEOUT_MS : parsed;
+        }
 
         function pendingIds() {
             return Object.keys(pending);
+        }
+
+        function setRowSpinning(id, spinning) {
+            var row = document.querySelector(
+                "tr[data-position-id='" + id + "']"
+            );
+            if (!row) {
+                return;
+            }
+            var button = row.querySelector("[data-refresh-button='true']");
+            if (!button) {
+                return;
+            }
+            if (spinning) {
+                button.classList.add("btn-refresh-spinning");
+                button.setAttribute("aria-busy", "true");
+                button.disabled = true;
+            } else {
+                button.classList.remove("btn-refresh-spinning");
+                button.removeAttribute("aria-busy");
+                button.disabled = false;
+            }
         }
 
         function stopPolling() {
@@ -74,14 +75,14 @@
                 clearTimeout(timerId);
                 timerId = null;
             }
+            running = false;
         }
 
         function showTimeoutMessage() {
             var banner = document.getElementById("refresh-progress-banner");
             if (banner) {
                 banner.textContent =
-                    "Market data is still updating. Reload the page to check " +
-                    "the latest status.";
+                    "Market data is still updating in the background.";
             }
         }
 
@@ -164,8 +165,8 @@
         function scheduleNext() {
             if (Date.now() >= stopAt) {
                 stopPolling();
-                // Surface the timeout message and let the user decide when to
-                // reload, rather than discarding it with an immediate reload.
+                // Surface the timeout message and let the user decide what to
+                // do next, rather than discarding state with an auto-reload.
                 showTimeoutMessage();
                 return;
             }
@@ -215,12 +216,15 @@
                     });
                     // Patch all completed rows with one batch request so the
                     // server runs a single enrich-all (not one per row) and we
-                    // apply a single authoritative summary.
+                    // apply a single authoritative summary. Patching re-renders
+                    // the row, which clears the spinning refresh icon.
                     return patchRows(completed)
                         .catch(function () {
-                            // If the batch patch fails, the rows were already
-                            // marked done so polling can stop; a manual reload
-                            // will reconcile any missed update.
+                            // If the batch patch fails, stop spinning the rows
+                            // we marked done so the cue does not get stuck.
+                            completed.forEach(function (id) {
+                                setRowSpinning(id, false);
+                            });
                         })
                         .then(function () {
                             if (pendingIds().length === 0) {
@@ -240,11 +244,121 @@
                 });
         }
 
-        poll();
+        function add(id) {
+            if (!id) {
+                return;
+            }
+            pending[String(id)] = true;
+            setRowSpinning(id, true);
+        }
+
+        function start() {
+            // (Re)start the fast-poll cadence whenever new work is queued.
+            stopAt = Date.now() + timeoutMs();
+            pollCount = 0;
+            intervalMs = FAST_INTERVAL_MS;
+            if (running) {
+                return;
+            }
+            running = true;
+            poll();
+        }
+
+        return {
+            add: add,
+            start: start,
+            setRowSpinning: setRowSpinning,
+            hasPending: function () {
+                return pendingIds().length > 0;
+            },
+        };
+    })();
+
+    function wireRefreshStatusPolling() {
+        var root = document.getElementById("refresh-status-root");
+        if (!root || root.dataset.refreshStatusEnabled !== "true") {
+            return;
+        }
+        if (root.dataset.anyRefreshInProgress !== "true") {
+            return;
+        }
+        // Seed the poller with rows that were already refreshing on load so the
+        // in-place patch + spinner cue resume correctly after a manual reload.
+        var rows = document.querySelectorAll(
+            "tr[data-refresh-in-progress='true']"
+        );
+        rows.forEach(function (row) {
+            var id = row.getAttribute("data-position-id");
+            if (id) {
+                poller.add(id);
+            }
+        });
+        if (poller.hasPending()) {
+            poller.start();
+        }
+    }
+
+    function wireSingleRefreshForms() {
+        var forms = document.querySelectorAll("form[data-refresh-form='true']");
+        forms.forEach(function (form) {
+            form.addEventListener("submit", function (event) {
+                // Progressive enhancement: without JS the form posts normally
+                // and the server returns a 303 redirect (no-JS fallback).
+                event.preventDefault();
+                var row = form.closest("tr[data-position-id]");
+                var id = row ? row.getAttribute("data-position-id") : null;
+                if (!id) {
+                    form.submit();
+                    return;
+                }
+                poller.setRowSpinning(id, true);
+                var body = new FormData(form);
+                fetch(form.getAttribute("action"), {
+                    method: "POST",
+                    headers: {
+                        Accept: "application/json",
+                        "X-Requested-With": "fetch",
+                    },
+                    body: body,
+                    cache: "no-store",
+                })
+                    .then(function (response) {
+                        if (response.status === 429) {
+                            // Refresh quota exceeded: surface the message and
+                            // stop the spinner without a full reload.
+                            return response
+                                .json()
+                                .catch(function () {
+                                    return {};
+                                })
+                                .then(function (payload) {
+                                    poller.setRowSpinning(id, false);
+                                    if (payload && payload.flash) {
+                                        window.alert(payload.flash);
+                                    }
+                                });
+                        }
+                        if (!response.ok) {
+                            throw new Error("refresh request failed");
+                        }
+                        // Accepted: register the id and (re)start polling so the
+                        // row is patched in place when the refresh completes.
+                        poller.add(id);
+                        poller.start();
+                    })
+                    .catch(function () {
+                        // On unexpected failure fall back to a full submit so
+                        // the operator still gets feedback.
+                        poller.setRowSpinning(id, false);
+                        form.submit();
+                    });
+            });
+        });
     }
 
     document.addEventListener("DOMContentLoaded", function () {
         wireSubmitCues();
+        wireSingleRefreshForms();
         wireRefreshStatusPolling();
     });
 })();
