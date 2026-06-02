@@ -84,6 +84,7 @@ Rules are evaluated highest-priority first; the first triggered rule wins. Sell 
 || `refresh_in_progress` | boolean | True while a refresh is running |
 || `refresh_started_at` | datetime (optional) | When the current refresh began |
 || `previous_verdict` | string (optional) | Verdict from last refresh cycle |
+|| `trim_acknowledged` | boolean | True after user confirms a trim action; overrides Trim → Hold if no Sell rules fire |
 || `sector_benchmark_ticker` | string (optional) | For relative-weakness rule |
 || `user_id` | string (FK → users) | Owner |
 
@@ -99,7 +100,8 @@ Rules are evaluated highest-priority first; the first triggered rule wins. Sell 
 ### Derived / Computed Fields (not stored, calculated at runtime)
 - `percent_gain` = (current_price - cost_basis) / cost_basis × 100
 - `hold_duration` = today - initial_purchase_date
-- `verdict` = Sell | Trim | Hold (output of rule engine)
+- `computed_verdict` = raw rule-engine output before any overrides (Sell | Trim | Hold)
+- `verdict` = final displayed verdict; may differ from `computed_verdict` when `trim_acknowledged` overrides Trim → Hold
 - `triggered_rules` = list of rule labels that fired
 
 ---
@@ -179,6 +181,9 @@ User navigates to Rules page → enables/disables rules per investment type, edi
 
 ### 5. Update a position
 User clicks Edit → updates fields → FastAPI updates the record → portfolio reloads with recalculated verdicts.
+
+### 6. Mark as Trimmed
+When a position shows a Trim verdict, the user can click "Mark as Trimmed" → `POST /trim-acknowledge/{id}` sets `trim_acknowledged = True` → on next evaluation the verdict overrides Trim → Hold (provided no Sell rules fire). The "Trimmed ✓" badge appears alongside the Hold verdict. User can click "Clear Trim" (`POST /trim-unacknowledge/{id}`) to reset the flag.
 
 ---
 
