@@ -255,3 +255,28 @@ class TestTrimAcknowledgementPortfolioUi:
         assert "Clear Trim" in resp.text
         assert TRIM_ACKNOWLEDGED_REASON in resp.text
         assert "Price is 15.0% above cost basis (&gt;10%)" not in resp.text
+
+    def test_portfolio_does_not_show_trimmed_indicator_for_natural_hold(self, client, _setup_db):
+        db = _setup_db()
+        try:
+            db.add(
+                Position(
+                    ticker="AAPL",
+                    company_name="Apple Inc.",
+                    cost_basis=100.0,
+                    initial_purchase_date=date(2025, 1, 1),
+                    investment_type="long-term",
+                    current_price=105.0,
+                    trim_acknowledged=True,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get("/")
+
+        assert resp.status_code == 200
+        assert "Hold" in resp.text
+        assert "Clear Trim" in resp.text
+        assert "Trimmed ✓" not in resp.text

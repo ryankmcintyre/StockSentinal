@@ -145,7 +145,7 @@
                 <span class="verdict verdict-{{ pos.verdict.value | lower }}">
                     {{ pos.verdict.value }}
                 </span>
-                {% if pos.trim_acknowledged and pos.verdict.value == "Hold" %}
+                {% if pos.trim_acknowledged and pos.computed_verdict.value == "Trim" %}
                     <div class="text-muted">Trimmed ✓</div>
                 {% endif %}
                 {% if pos.previous_verdict and pos.previous_verdict != pos.verdict.value %}
