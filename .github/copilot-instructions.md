@@ -195,7 +195,7 @@ User clicks Edit → updates fields → FastAPI updates the record → portfolio
 - Use `pytest` for all tests; `pytest-mock` for mocking dependencies
 - Run: `python -m pytest` from the repo root
 - Tests use an in-memory SQLite database via a `_setup_db` autouse fixture that overrides the FastAPI DI dependencies (`get_uow`, `get_authenticated_uow`, `get_optional_uow`)
-- The fixture also includes a `before_flush` SQLAlchemy event listener that assigns `user_id = "test-user-id"` to any new `User`, `Position`, or `StrategyRuleConfig` object — copy this pattern from `test_refresh_route.py` when writing new integration tests
+- The fixture also includes a `before_flush` SQLAlchemy event listener that assigns `id = "test-user-id"` to any new `User` and `user_id = "test-user-id"` to any new `Position` or `StrategyRuleConfig` object — copy this pattern from `test_refresh_route.py` when writing new integration tests
 - Rule engine unit tests must not touch the database or any HTTP client; pass a `Position` object and a `MarketSignals` struct directly
 - CSRF tokens: use the `csrf_form_data(client)` helper from `tests/csrf_utils.py` when posting forms in tests
 
