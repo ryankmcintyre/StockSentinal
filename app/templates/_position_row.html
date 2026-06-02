@@ -1,0 +1,75 @@
+<tr data-position-id="{{ pos.id }}" data-refresh-in-progress="{{ 'true' if pos.refresh_in_progress else 'false' }}">
+    <td data-sort-value="{{ pos.verdict_sort_priority }}">
+        <span class="verdict verdict-{{ pos.verdict.value | lower }}">
+            {{ pos.verdict.value }}
+        </span>
+        {% if pos.trim_acknowledged and pos.computed_verdict.value == "Trim" %}
+            <div class="text-muted">Trimmed ✓</div>
+        {% endif %}
+        {% if pos.previous_verdict and pos.previous_verdict != pos.verdict.value %}
+            <div class="text-muted">Previously {{ pos.previous_verdict }}</div>
+        {% endif %}
+    </td>
+    <td class="ticker" data-sort-value="{{ pos.ticker }}">{{ pos.ticker }}</td>
+    <td data-sort-value="{{ pos.company_name }}">{{ pos.company_name }}</td>
+    <td data-sort-value="{{ pos.investment_type }}">{{ pos.investment_type }}</td>
+    <td data-sort-value="{{ pos.cost_basis }}">${{ "%.2f" | format(pos.cost_basis) }}</td>
+    <td data-sort-value="{{ pos.effective_price }}">
+        ${{ "%.2f" | format(pos.effective_price) }}
+        {% if pos.has_market_data %}
+            <span class="market-source" title="From {{ market_data_provider_name }}{% if pos.daily_market_date %} ({{ pos.daily_market_date }}){% endif %}">&#9679;</span>
+        {% endif %}
+    </td>
+    <td data-sort-value="{{ pos.percent_gain }}" class="{% if pos.percent_gain >= 0 %}gain-positive{% else %}gain-negative{% endif %}">
+        {{ "%.1f" | format(pos.percent_gain) }}%
+    </td>
+    <td data-sort-value="{{ pos.hold_duration_days }}">{{ pos.hold_duration_days }}</td>
+    <td
+        class="reason"
+        data-sort-value="{{ pos.reason_sort_value }}"
+    >
+        {% for rule in pos.triggered_rules %}
+            <span class="rule-tag">{{ rule.description }}</span>
+        {% endfor %}
+        {% if pos.refresh_error %}
+            <span class="rule-tag rule-tag-error" title="{{ pos.refresh_error }}">Refresh failed</span>
+        {% endif %}
+        {% if pos.refresh_in_progress %}
+            <span
+                class="rule-tag rule-tag-refreshing"
+                data-refreshing-badge="true"
+                data-position-id="{{ pos.id }}"
+            >Refreshing...</span>
+        {% endif %}
+    </td>
+    <td class="actions" data-sort-value="{{ pos.id }}">
+        <a href="/edit/{{ pos.id }}" class="btn btn-small">Edit</a>
+        {% if pos.trim_acknowledged %}
+        <form method="post" action="/trim-unacknowledge/{{ pos.id }}" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-small">Clear Trim</button>
+        </form>
+        {% elif pos.computed_verdict.value == "Trim" %}
+        <form method="post" action="/trim-acknowledge/{{ pos.id }}" class="inline-form">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-small">Mark as Trimmed</button>
+        </form>
+        {% endif %}
+        {% if api_configured %}
+        <form method="post" action="/refresh/{{ pos.id }}" class="inline-form" data-api-submit="true">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button
+                type="submit"
+                class="btn btn-small"
+                title="Refresh market data"
+                {% if pos.refresh_in_progress %}disabled{% endif %}
+            >&#8635;</button>
+        </form>
+        {% endif %}
+        <form method="post" action="/delete/{{ pos.id }}" class="inline-form"
+              onsubmit="return confirm('Delete {{ pos.ticker }}?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <button type="submit" class="btn btn-small btn-danger">Delete</button>
+        </form>
+    </td>
+</tr>

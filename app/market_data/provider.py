@@ -8,6 +8,7 @@ and API-key resolution so that callers never need to manage those concerns.
 import logging
 import threading
 import time
+from collections import deque
 from typing import Callable, Optional, Protocol, runtime_checkable
 
 from app.alpha_vantage_client import (
@@ -26,6 +27,7 @@ from app.alpha_vantage_client import (
 from app.config import require_alpha_vantage_api_key, require_twelve_data_api_key
 from app.config import (
     get_alpha_vantage_min_interval_seconds,
+    get_twelve_data_credits_per_minute,
     get_twelve_data_min_interval_seconds,
 )
 from app.twelve_data_client import (
@@ -76,6 +78,7 @@ class AlphaVantageProvider:
     """
 
     supports_batch_fetch = False
+    supports_parallel_fetch = False
     _last_call_at: Optional[float] = None
     _lock = threading.Lock()
 
@@ -144,8 +147,12 @@ class TwelveDataProvider:
     """Twelve Data implementation of :class:`MarketDataProvider`."""
 
     supports_batch_fetch = True
+    supports_parallel_fetch = True
+    _WINDOW_SECONDS = 60.0
     _last_call_at: Optional[float] = None
     _lock = threading.Lock()
+    # Monotonic timestamps of recent calls, used by the credit-budget gate.
+    _call_window: "deque[float]" = deque()
 
     def __init__(
         self,
@@ -155,6 +162,22 @@ class TwelveDataProvider:
 
     @classmethod
     def _wait_for_slot(cls) -> None:
+        """Block until it is safe to make another API call.
+
+        When ``TWELVE_DATA_CREDITS_PER_MINUTE`` is configured, a rolling
+        60-second credit-budget gate is used: concurrent calls proceed
+        without delay as long as fewer than the budgeted number of calls
+        occurred in the trailing minute. Otherwise the legacy strict
+        per-call interval gate is used for backwards compatibility.
+        """
+        credits_per_minute = get_twelve_data_credits_per_minute()
+        if credits_per_minute is None:
+            cls._wait_for_interval_slot()
+            return
+        cls._wait_for_budget_slot(credits_per_minute)
+
+    @classmethod
+    def _wait_for_interval_slot(cls) -> None:
         with cls._lock:
             min_interval_seconds = get_twelve_data_min_interval_seconds()
             now = time.monotonic()
@@ -168,6 +191,30 @@ class TwelveDataProvider:
                     )
                     time.sleep(remaining)
             cls._last_call_at = time.monotonic()
+
+    @classmethod
+    def _wait_for_budget_slot(cls, credits_per_minute: int) -> None:
+        with cls._lock:
+            now = time.monotonic()
+            cls._prune_call_window(now)
+            if len(cls._call_window) >= credits_per_minute:
+                # Budget exhausted: wait until the oldest call leaves the
+                # trailing 60s window, then re-prune.
+                wait_for = cls._call_window[0] + cls._WINDOW_SECONDS - now
+                if wait_for > 0:
+                    logger.debug(
+                        "Rate-limit budget exhausted: sleeping %.1fs",
+                        wait_for,
+                    )
+                    time.sleep(wait_for)
+                cls._prune_call_window(time.monotonic())
+            cls._call_window.append(time.monotonic())
+
+    @classmethod
+    def _prune_call_window(cls, now: float) -> None:
+        window_start = now - cls._WINDOW_SECONDS
+        while cls._call_window and cls._call_window[0] <= window_start:
+            cls._call_window.popleft()
 
     def fetch_company_name(self, symbol: str) -> str:
         self._wait_for_slot()
