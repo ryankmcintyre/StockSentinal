@@ -1516,10 +1516,10 @@ def position_row(
         raise HTTPException(status_code=404)
 
     row_html = templates.get_template("_position_row.html").render(
+        request=request,
         pos=row,
         api_configured=get_market_data_api_key() is not None,
         market_data_provider_name=get_market_data_provider_display_name(),
-        csrf_token=csrf_token_for_template,
     )
     return {
         "id": position_id,

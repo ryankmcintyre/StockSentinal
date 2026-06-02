@@ -247,6 +247,105 @@ class TestRefreshLoadingCues:
         finally:
             verify_db.close()
 
+    def test_refresh_status_endpoint_scopes_to_requested_ids(self, client, _setup_db):
+        db = _setup_db()
+        try:
+            refreshing = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+                refresh_in_progress=True,
+                refresh_started_at=datetime.now(),
+            )
+            idle = Position(
+                ticker="MSFT",
+                company_name="Microsoft Corp.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="short-term",
+                current_price=115.0,
+                notes=None,
+            )
+            db.add_all([refreshing, idle])
+            db.commit()
+            refreshing_id = refreshing.id
+            idle_id = idle.id
+        finally:
+            db.close()
+
+        # Only the idle position is requested -> nothing in progress.
+        resp = client.get(f"/api/refresh-status?ids={idle_id}")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["any_in_progress"] is False
+        assert [item["id"] for item in payload["positions"]] == [idle_id]
+
+        # Only the refreshing position is requested -> in progress.
+        resp = client.get(f"/api/refresh-status?ids={refreshing_id}")
+        payload = resp.json()
+        assert payload["any_in_progress"] is True
+        assert [item["id"] for item in payload["positions"]] == [refreshing_id]
+
+    def test_refresh_status_endpoint_ignores_invalid_ids(self, client, _setup_db):
+        db = _setup_db()
+        try:
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+            )
+            db.add(pos)
+            db.commit()
+            pos_id = pos.id
+        finally:
+            db.close()
+
+        resp = client.get(f"/api/refresh-status?ids=abc,{pos_id},")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert [item["id"] for item in payload["positions"]] == [pos_id]
+
+    def test_position_row_endpoint_returns_fragment_and_summary(self, client, _setup_db, mocker):
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
+        db = _setup_db()
+        try:
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+            )
+            db.add(pos)
+            db.commit()
+            pos_id = pos.id
+        finally:
+            db.close()
+
+        resp = client.get(f"/api/positions/{pos_id}/row")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["id"] == pos_id
+        assert payload["in_progress"] is False
+        assert f'data-position-id="{pos_id}"' in payload["row_html"]
+        assert "AAPL" in payload["row_html"]
+        assert set(payload["summary"]) == {"sell", "trim", "hold", "total"}
+        assert payload["summary"]["total"] == 1
+
+    def test_position_row_endpoint_returns_404_for_unknown_position(self, client, _setup_db):
+        resp = client.get("/api/positions/999999/row")
+        assert resp.status_code == 404
+
     def test_startup_stale_cleanup_clears_positions_for_all_users(
         self, _setup_db, mocker
     ):

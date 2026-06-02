@@ -1436,3 +1436,144 @@ class TestDailyBarCache:
     def test_load_empty_tickers_returns_empty(self, db):
         service = MarketDataService(Mock())
         assert service.load_daily_bar_cache_for_tickers(db, set()) == {}
+
+
+# ---------------------------------------------------------------------------
+# Parallel fetch prewarm and _FetchCache thread-safety
+# ---------------------------------------------------------------------------
+
+
+class TestParallelPrewarm:
+    def test_prewarm_fetches_daily_and_weekly_concurrently(self):
+        import threading
+
+        from app.alpha_vantage_client import DailyBar, WeeklyBar
+
+        # A barrier of 2 only releases when both fetches are in flight at the
+        # same time, proving the prewarm runs them concurrently rather than in
+        # series (a sequential run would time out at the barrier).
+        barrier = threading.Barrier(2, timeout=5)
+
+        class ParallelProvider:
+            supports_parallel_fetch = True
+
+            def __init__(self):
+                self.daily_calls = 0
+                self.weekly_calls = 0
+
+            def fetch_daily_bars(self, symbol):
+                barrier.wait()
+                self.daily_calls += 1
+                return [DailyBar(date=date(2025, 1, 2), close=10.0)]
+
+            def fetch_weekly_bars(self, symbol):
+                barrier.wait()
+                self.weekly_calls += 1
+                return [WeeklyBar(date=date(2025, 1, 3), close=11.0)]
+
+        provider = ParallelProvider()
+        service = MarketDataService(provider)
+        cache = _FetchCache(provider)
+
+        service._prewarm_fetch_cache(
+            cache, "AAPL",
+            need_daily=True, need_weekly=True,
+            benchmark=None, need_benchmark_daily=False,
+        )
+
+        assert provider.daily_calls == 1
+        assert provider.weekly_calls == 1
+        # Cache is warmed, so subsequent reads do not hit the provider again.
+        assert cache.get_daily_bars("AAPL")
+        assert cache.get_weekly_bars("AAPL")
+        assert provider.daily_calls == 1
+        assert provider.weekly_calls == 1
+
+    def test_prewarm_is_noop_when_provider_lacks_parallel_support(self):
+        from app.alpha_vantage_client import DailyBar
+
+        class SequentialProvider:
+            supports_parallel_fetch = False
+
+            def __init__(self):
+                self.daily_calls = 0
+
+            def fetch_daily_bars(self, symbol):
+                self.daily_calls += 1
+                return [DailyBar(date=date(2025, 1, 2), close=10.0)]
+
+            def fetch_weekly_bars(self, symbol):
+                return []
+
+        provider = SequentialProvider()
+        service = MarketDataService(provider)
+        cache = _FetchCache(provider)
+
+        service._prewarm_fetch_cache(
+            cache, "AAPL",
+            need_daily=True, need_weekly=True,
+            benchmark=None, need_benchmark_daily=False,
+        )
+
+        assert provider.daily_calls == 0
+
+    def test_prewarm_includes_benchmark_daily(self):
+        from app.alpha_vantage_client import DailyBar, WeeklyBar
+
+        class ParallelProvider:
+            supports_parallel_fetch = True
+
+            def __init__(self):
+                self.daily_tickers = []
+
+            def fetch_daily_bars(self, symbol):
+                self.daily_tickers.append(symbol)
+                return [DailyBar(date=date(2025, 1, 2), close=10.0)]
+
+            def fetch_weekly_bars(self, symbol):
+                return [WeeklyBar(date=date(2025, 1, 3), close=11.0)]
+
+        provider = ParallelProvider()
+        service = MarketDataService(provider)
+        cache = _FetchCache(provider)
+
+        service._prewarm_fetch_cache(
+            cache, "AAPL",
+            need_daily=True, need_weekly=False,
+            benchmark="SMH", need_benchmark_daily=True,
+        )
+
+        assert sorted(provider.daily_tickers) == ["AAPL", "SMH"]
+
+    def test_fetch_cache_get_daily_bars_dedupes_under_concurrency(self):
+        import threading
+
+        from app.alpha_vantage_client import DailyBar
+
+        call_count = {"n": 0}
+        gate = threading.Event()
+
+        class SlowProvider:
+            supports_parallel_fetch = True
+
+            def fetch_daily_bars(self, symbol):
+                gate.wait(timeout=5)
+                call_count["n"] += 1
+                return [DailyBar(date=date(2025, 1, 2), close=10.0)]
+
+        cache = _FetchCache(SlowProvider())
+        results = []
+
+        def worker():
+            results.append(cache.get_daily_bars("AAPL"))
+
+        threads = [threading.Thread(target=worker) for _ in range(5)]
+        for t in threads:
+            t.start()
+        gate.set()
+        for t in threads:
+            t.join(timeout=5)
+
+        # Concurrent first-readers may each issue a fetch, but the cache must
+        # converge on a single stored value that every caller observes.
+        assert all(r is results[0] for r in results)

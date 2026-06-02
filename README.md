@@ -68,15 +68,18 @@ The provider is auto-detected from whichever API key you set. Set the key, leave
 | `MARKET_DATA_PROVIDER` | auto | Explicit override: `alphavantage` or `twelvedata`. |
 | `ALPHA_VANTAGE_MIN_INTERVAL_SECONDS` | `12.0` | Gate between Alpha Vantage calls (free tier: 5/min). |
 | `TWELVE_DATA_MIN_INTERVAL_SECONDS` | `8.0` | Gate between Twelve Data calls (free tier: 8/min, 800/day). |
+| `TWELVE_DATA_CREDITS_PER_MINUTE` | — | Optional. When set (e.g. `50`), Twelve Data uses a rolling 60s credit-budget gate that allows concurrent calls up to this many per minute, instead of the strict per-call interval. Leave headroom under your plan's hard cap (e.g. `50` for the 55/min Grow plan). Unset = use `TWELVE_DATA_MIN_INTERVAL_SECONDS`. |
 
 Paid tiers can lower these intervals without changing code. Recommended starting points:
 
 | Provider / tier | Calls/min | Suggested `*_MIN_INTERVAL_SECONDS` |
 |---|---:|---:|
 | Twelve Data Free | 8 | `8.0` |
-| Twelve Data Grow | 55 | `1.1` |
+| Twelve Data Grow | 55 | `1.1` (or set `TWELVE_DATA_CREDITS_PER_MINUTE=50`) |
 | Alpha Vantage Free | 5 | `12.0` |
 | Alpha Vantage Premium | 75 | `0.8` |
+
+For Twelve Data, setting `TWELVE_DATA_CREDITS_PER_MINUTE` enables a sliding-window budget that lets a single refresh fire its independent daily/weekly/benchmark calls concurrently (up to the budget), rather than spacing every call out in series.
 
 On startup, the app logs the active provider and effective rate-limit interval so you can confirm what is configured.
 
