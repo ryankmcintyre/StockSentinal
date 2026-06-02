@@ -324,19 +324,12 @@
                 })
                     .then(function (response) {
                         if (response.status === 429) {
-                            // Refresh quota exceeded: surface the message and
-                            // stop the spinner without a full reload.
-                            return response
-                                .json()
-                                .catch(function () {
-                                    return {};
-                                })
-                                .then(function (payload) {
-                                    poller.setRowSpinning(id, false);
-                                    if (payload && payload.flash) {
-                                        window.alert(payload.flash);
-                                    }
-                                });
+                            // Refresh quota exceeded: fall back to the standard
+                            // redirect so the existing flash banner surfaces the
+                            // message (the only case that reloads the page).
+                            poller.setRowSpinning(id, false);
+                            window.location.href = "/?flash=refresh_limit";
+                            return;
                         }
                         if (!response.ok) {
                             throw new Error("refresh request failed");
