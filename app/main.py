@@ -1494,6 +1494,16 @@ def refresh_status(
     }
 
 
+def _render_position_row(request: Request, row) -> str:
+    """Render the shared ``_position_row.html`` fragment for one position."""
+    return templates.get_template("_position_row.html").render(
+        request=request,
+        pos=row,
+        api_configured=get_market_data_api_key() is not None,
+        market_data_provider_name=get_market_data_provider_display_name(),
+    )
+
+
 @app.get("/api/positions/{position_id}/row")
 def position_row(
     request: Request,
@@ -1516,15 +1526,58 @@ def position_row(
     if row is None:
         raise HTTPException(status_code=404)
 
-    row_html = templates.get_template("_position_row.html").render(
-        request=request,
-        pos=row,
-        api_configured=get_market_data_api_key() is not None,
-        market_data_provider_name=get_market_data_provider_display_name(),
-    )
     return {
         "id": position_id,
         "in_progress": bool(row["refresh_in_progress"]),
-        "row_html": row_html,
+        "row_html": _render_position_row(request, row),
         "summary": summary,
     }
+
+
+@app.get("/api/positions/rows")
+def position_rows(
+    request: Request,
+    ids: str | None = None,
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Return rendered row fragments for many positions plus one summary.
+
+    The client patches several completed rows after a multi-position refresh
+    by issuing a single request, instead of one ``/row`` call per id. Enriching
+    all positions once here keeps the cost flat (a single ``_enrich_all_positions``)
+    regardless of how many rows completed, and returning a single authoritative
+    *summary* avoids stale counters from out-of-order per-row responses.
+    """
+    requested_ids: list[int] = []
+    seen: set[int] = set()
+    if ids is not None:
+        for raw in ids.split(","):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                value = int(raw)
+            except ValueError:
+                continue
+            if value not in seen:
+                seen.add(value)
+                requested_ids.append(value)
+
+    user_id = _get_request_user_id(request, uow)
+    enriched, summary = _enrich_all_positions(uow, user_id)
+    by_id = {p["id"]: p for p in enriched}
+
+    rows = []
+    for position_id in requested_ids:
+        row = by_id.get(position_id)
+        if row is None:
+            continue
+        rows.append(
+            {
+                "id": position_id,
+                "in_progress": bool(row["refresh_in_progress"]),
+                "row_html": _render_position_row(request, row),
+            }
+        )
+
+    return {"rows": rows, "summary": summary}

@@ -34,9 +34,13 @@
         var headers = Array.from(
             table.querySelectorAll("[data-sort-header='true']")
         );
-        var originalRows = Array.from(tbody.rows);
-        originalRows.forEach(function (row, index) {
-            row.dataset.originalIndex = String(index);
+        // Stamp each row with its load-order index once so the third click
+        // ("reset") can restore the original order. Rows that get swapped in
+        // place later carry this attribute forward, so it stays stable.
+        Array.from(tbody.rows).forEach(function (row, index) {
+            if (typeof row.dataset.originalIndex === "undefined") {
+                row.dataset.originalIndex = String(index);
+            }
         });
 
         headers.forEach(function (header) {
@@ -51,16 +55,28 @@
 
                 updateHeaderState(headers, header, nextDirection);
 
+                // Read rows from the live DOM on every click so in-place row
+                // replacements (after a refresh) are respected and detached,
+                // stale rows are never re-appended.
+                var rows = Array.from(tbody.rows);
+
                 if (nextDirection === null) {
-                    originalRows.forEach(function (row) {
-                        tbody.appendChild(row);
-                    });
+                    rows.slice()
+                        .sort(function (left, right) {
+                            return (
+                                Number(left.dataset.originalIndex) -
+                                Number(right.dataset.originalIndex)
+                            );
+                        })
+                        .forEach(function (row) {
+                            tbody.appendChild(row);
+                        });
                     return;
                 }
 
                 var columnIndex = Number(header.dataset.sortColumn);
                 var sortType = header.dataset.sortType || "text";
-                var sortedRows = originalRows.slice().sort(function (left, right) {
+                var sortedRows = rows.slice().sort(function (left, right) {
                     var leftValue = normalizeValue(left.cells[columnIndex], sortType);
                     var rightValue = normalizeValue(right.cells[columnIndex], sortType);
 

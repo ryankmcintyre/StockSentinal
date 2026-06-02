@@ -103,7 +103,7 @@ class TestRefreshLoadingCues:
         resp = client.get("/")
         assert resp.status_code == 200
         assert "Refreshing..." in resp.text
-        assert "Updating market data — this page will reload when finished." in resp.text
+        assert "Updating market data — rows will update automatically when finished." in resp.text
         assert 'data-any-refresh-in-progress="true"' in resp.text
         assert "data-poll-timeout-ms=" in resp.text
         assert "/static/refresh-status.js" in resp.text
@@ -345,6 +345,87 @@ class TestRefreshLoadingCues:
     def test_position_row_endpoint_returns_404_for_unknown_position(self, client, _setup_db):
         resp = client.get("/api/positions/999999/row")
         assert resp.status_code == 404
+
+    def test_position_rows_batch_returns_rows_and_single_summary(
+        self, client, _setup_db, mocker
+    ):
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
+        import app.main as main_module
+
+        enrich_spy = mocker.spy(main_module, "_enrich_all_positions")
+        db = _setup_db()
+        try:
+            ids = []
+            for ticker in ("AAPL", "MSFT", "GOOG"):
+                pos = Position(
+                    ticker=ticker,
+                    company_name=f"{ticker} Inc.",
+                    cost_basis=100.0,
+                    initial_purchase_date=date(2025, 1, 1),
+                    investment_type="long-term",
+                    current_price=115.0,
+                    notes=None,
+                )
+                db.add(pos)
+                db.commit()
+                ids.append(pos.id)
+        finally:
+            db.close()
+
+        resp = client.get(
+            "/api/positions/rows?ids=" + ",".join(str(i) for i in ids)
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        # One authoritative summary is returned for the whole batch.
+        assert set(payload["summary"]) == {"sell", "trim", "hold", "total"}
+        assert payload["summary"]["total"] == 3
+        returned_ids = [row["id"] for row in payload["rows"]]
+        assert sorted(returned_ids) == sorted(ids)
+        for row in payload["rows"]:
+            assert f'data-position-id="{row["id"]}"' in row["row_html"]
+        # Enriching happens exactly once regardless of how many rows requested,
+        # so high-cardinality completion does not fan out into N enrich-all ops.
+        assert enrich_spy.call_count == 1
+
+    def test_position_rows_batch_dedupes_and_skips_unknown_ids(
+        self, client, _setup_db, mocker
+    ):
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
+        db = _setup_db()
+        try:
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+            )
+            db.add(pos)
+            db.commit()
+            pos_id = pos.id
+        finally:
+            db.close()
+
+        resp = client.get(
+            f"/api/positions/rows?ids={pos_id},{pos_id},abc,999999,"
+        )
+        assert resp.status_code == 200
+        payload = resp.json()
+        # Duplicate id collapses to one row; unknown/invalid ids are skipped.
+        assert [row["id"] for row in payload["rows"]] == [pos_id]
+
+    def test_position_rows_batch_empty_ids_returns_summary_only(
+        self, client, _setup_db, mocker
+    ):
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
+        resp = client.get("/api/positions/rows")
+        assert resp.status_code == 200
+        payload = resp.json()
+        assert payload["rows"] == []
+        assert set(payload["summary"]) == {"sell", "trim", "hold", "total"}
 
     def test_startup_stale_cleanup_clears_positions_for_all_users(
         self, _setup_db, mocker

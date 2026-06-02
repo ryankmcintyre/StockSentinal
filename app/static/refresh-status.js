@@ -109,12 +109,18 @@
             });
         }
 
-        function patchRow(id) {
-            return fetch("/api/positions/" + encodeURIComponent(id) + "/row", {
-                method: "GET",
-                headers: { Accept: "application/json" },
-                cache: "no-store",
-            })
+        function patchRows(ids) {
+            if (!ids.length) {
+                return Promise.resolve();
+            }
+            return fetch(
+                "/api/positions/rows?ids=" + encodeURIComponent(ids.join(",")),
+                {
+                    method: "GET",
+                    headers: { Accept: "application/json" },
+                    cache: "no-store",
+                }
+            )
                 .then(function (response) {
                     if (!response.ok) {
                         throw new Error("row fetch failed");
@@ -122,17 +128,35 @@
                     return response.json();
                 })
                 .then(function (payload) {
-                    var existing = document.querySelector(
-                        "tr[data-position-id='" + id + "']"
-                    );
-                    if (existing && payload.row_html) {
-                        var template = document.createElement("tbody");
-                        template.innerHTML = payload.row_html.trim();
-                        var newRow = template.firstElementChild;
-                        if (newRow) {
-                            existing.parentNode.replaceChild(newRow, existing);
+                    (payload.rows || []).forEach(function (item) {
+                        var existing = document.querySelector(
+                            "tr[data-position-id='" + item.id + "']"
+                        );
+                        if (existing && item.row_html) {
+                            var template = document.createElement("tbody");
+                            template.innerHTML = item.row_html.trim();
+                            var newRow = template.firstElementChild;
+                            if (newRow) {
+                                // Preserve the load-order index so the sort
+                                // "reset" state still restores the original
+                                // order after a row is swapped in place.
+                                var originalIndex =
+                                    existing.getAttribute("data-original-index");
+                                if (originalIndex !== null) {
+                                    newRow.setAttribute(
+                                        "data-original-index",
+                                        originalIndex
+                                    );
+                                }
+                                existing.parentNode.replaceChild(
+                                    newRow,
+                                    existing
+                                );
+                            }
                         }
-                    }
+                    });
+                    // A single authoritative summary from the batch response
+                    // avoids stale counters from out-of-order per-row updates.
                     updateSummary(payload.summary);
                 });
         }
@@ -186,22 +210,26 @@
                         // position no longer appears in the status response.
                         return statusById[id] !== true;
                     });
-                    var patches = completed.map(function (id) {
+                    completed.forEach(function (id) {
                         delete pending[id];
-                        return patchRow(id).catch(function () {
-                            // If the row patch fails, fall back to marking it
-                            // done so polling can stop; a manual reload will
-                            // reconcile any missed update.
+                    });
+                    // Patch all completed rows with one batch request so the
+                    // server runs a single enrich-all (not one per row) and we
+                    // apply a single authoritative summary.
+                    return patchRows(completed)
+                        .catch(function () {
+                            // If the batch patch fails, the rows were already
+                            // marked done so polling can stop; a manual reload
+                            // will reconcile any missed update.
+                        })
+                        .then(function () {
+                            if (pendingIds().length === 0) {
+                                stopPolling();
+                                hideBannerWhenDone();
+                                return;
+                            }
+                            scheduleNext();
                         });
-                    });
-                    return Promise.all(patches).then(function () {
-                        if (pendingIds().length === 0) {
-                            stopPolling();
-                            hideBannerWhenDone();
-                            return;
-                        }
-                        scheduleNext();
-                    });
                 })
                 .catch(function () {
                     // Transient network failures are non-fatal; keep polling.

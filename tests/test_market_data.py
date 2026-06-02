@@ -1577,3 +1577,64 @@ class TestParallelPrewarm:
         # Concurrent first-readers may each issue a fetch, but the cache must
         # converge on a single stored value that every caller observes.
         assert all(r is results[0] for r in results)
+
+    def test_prewarm_dedupes_benchmark_equal_to_ticker(self):
+        from app.alpha_vantage_client import DailyBar, WeeklyBar
+
+        class ParallelProvider:
+            supports_parallel_fetch = True
+
+            def __init__(self):
+                self.daily_tickers = []
+
+            def fetch_daily_bars(self, symbol):
+                self.daily_tickers.append(symbol)
+                return [DailyBar(date=date(2025, 1, 2), close=10.0)]
+
+            def fetch_weekly_bars(self, symbol):
+                return [WeeklyBar(date=date(2025, 1, 3), close=11.0)]
+
+        provider = ParallelProvider()
+        service = MarketDataService(provider)
+        cache = _FetchCache(provider)
+
+        # Benchmark resolves to the same symbol as the position's daily fetch
+        # (case-insensitive); only one daily fetch should be enqueued so we do
+        # not burn a duplicate provider credit on the same symbol.
+        service._prewarm_fetch_cache(
+            cache, "AAPL",
+            need_daily=True, need_weekly=True,
+            benchmark="aapl", need_benchmark_daily=True,
+        )
+
+        assert provider.daily_tickers == ["AAPL"]
+
+    def test_prewarm_keeps_benchmark_when_daily_not_needed(self):
+        from app.alpha_vantage_client import DailyBar, WeeklyBar
+
+        class ParallelProvider:
+            supports_parallel_fetch = True
+
+            def __init__(self):
+                self.daily_tickers = []
+
+            def fetch_daily_bars(self, symbol):
+                self.daily_tickers.append(symbol)
+                return [DailyBar(date=date(2025, 1, 2), close=10.0)]
+
+            def fetch_weekly_bars(self, symbol):
+                return [WeeklyBar(date=date(2025, 1, 3), close=11.0)]
+
+        provider = ParallelProvider()
+        service = MarketDataService(provider)
+        cache = _FetchCache(provider)
+
+        # When the position's own daily fetch is not needed, the benchmark
+        # daily fetch must still run even if it equals the ticker symbol.
+        service._prewarm_fetch_cache(
+            cache, "AAPL",
+            need_daily=False, need_weekly=True,
+            benchmark="AAPL", need_benchmark_daily=True,
+        )
+
+        assert provider.daily_tickers == ["AAPL"]

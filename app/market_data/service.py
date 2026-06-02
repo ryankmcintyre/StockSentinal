@@ -1025,7 +1025,15 @@ class MarketDataService:
         if need_weekly:
             tasks.append(lambda t=ticker: cache.get_weekly_bars(t))
         if need_benchmark_daily and benchmark:
-            tasks.append(lambda b=benchmark: cache.get_daily_bars(b))
+            # Skip the benchmark-daily fetch when it targets the same symbol as
+            # the position's daily fetch. ``get_daily_bars`` fetches outside the
+            # cache lock, so enqueuing both would let concurrent misses trigger
+            # a duplicate provider call (and burn an extra credit) for one symbol.
+            benchmark_duplicates_daily = (
+                need_daily and benchmark.upper() == ticker.upper()
+            )
+            if not benchmark_duplicates_daily:
+                tasks.append(lambda b=benchmark: cache.get_daily_bars(b))
 
         # Nothing to gain from a thread pool for a single fetch.
         if len(tasks) < 2:
