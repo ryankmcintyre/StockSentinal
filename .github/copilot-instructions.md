@@ -205,8 +205,7 @@ User clicks Edit → updates fields → FastAPI updates the record → portfolio
 - Keep `rule_engine.py` pure — no DB access, no HTTP calls, no FastAPI imports
 - Keep post-rule enrichment logic in `_enrich_position()` in `main.py`, not in the rule engine
 - Use Pydantic models (`schemas.py`) for all request/response validation
-- Use SQLAlchemy models (`models.py`) for all database interaction; never write raw SQL
-- Use the `UnitOfWork` pattern (via `get_authenticated_uow` dependency) for all authenticated routes
+- Prefer SQLAlchemy ORM/models for database interaction; use SQLAlchemy Core/`text()` only when necessary (e.g., SQLite schema patching or PostgreSQL `set_config` for RLS) and always parameterize inputs
 - Use snake_case for all Python variables, functions, and file names
 - Comment each rule in `rule_engine.py` with a plain-English description of what it checks
 - Validate inputs at the Pydantic schema level (no empty tickers, no negative prices, no future purchase dates)
