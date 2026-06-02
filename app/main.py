@@ -75,7 +75,7 @@ from app.rule_engine import (
     evaluate_position,
     get_verdict,
 )
-from app.schemas import InvestmentType, Verdict
+from app.schemas import InvestmentType, RuleResult, Verdict
 from app.tiers import TIER_LIMITS, TierLimitExceeded, check_and_consume_refresh, check_can_add_position
 
 log_level = get_log_level()
@@ -169,6 +169,7 @@ FLASH_MESSAGES = {
     "refresh_limit": "You've used 5 of 5 refreshes today. Your limit resets at midnight UTC.",
     "admin_updated": "Admin user settings updated.",
 }
+TRIM_ACKNOWLEDGED_REASON = "Trim acknowledged"
 
 
 def _get_request_user_id(request: Request, uow: UnitOfWork | None = None) -> str | None:
@@ -375,11 +376,23 @@ def _enrich_position(
         configured_rules = enabled_rules_by_type.get(pos.investment_type)
 
     triggered = evaluate_position(eval_pos, signals=signals, configured_rules=configured_rules)
-    verdict = get_verdict(triggered)
+    computed_verdict = get_verdict(triggered)
+    trim_acknowledged = bool(getattr(pos, "trim_acknowledged", False))
+    verdict = computed_verdict
+    displayed_triggered = triggered
+    if trim_acknowledged and computed_verdict == Verdict.trim:
+        verdict = Verdict.hold
+        displayed_triggered = [
+            RuleResult(
+                rule_label="TRIM_ACKNOWLEDGED",
+                verdict=Verdict.hold,
+                description=TRIM_ACKNOWLEDGED_REASON,
+            )
+        ]
     reason_sort_value = (
         pos.refresh_error
         or ("Refreshing..." if pos.refresh_in_progress else "")
-        or (triggered[0].description if triggered else "")
+        or (displayed_triggered[0].description if displayed_triggered else "")
     )
     return {
         "id": pos.id,
@@ -395,9 +408,11 @@ def _enrich_position(
         "percent_gain": compute_percent_gain(pos.cost_basis, effective_price),
         "hold_duration_days": compute_hold_duration_days(pos.initial_purchase_date),
         "verdict": verdict,
+        "computed_verdict": computed_verdict,
         "previous_verdict": pos.previous_verdict,
         "verdict_sort_priority": VERDICT_PRIORITY.get(verdict, 99),
-        "triggered_rules": triggered,
+        "triggered_rules": displayed_triggered,
+        "trim_acknowledged": trim_acknowledged,
         "reason_sort_value": reason_sort_value,
         # Market data status
         "daily_close": pos.daily_close,
@@ -1291,6 +1306,34 @@ def delete_position(
     if pos:
         logger.info("Deleted position id=%d %s", position_id, pos.ticker)
         uow.positions.delete(pos)
+        uow.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/trim-acknowledge/{position_id}")
+def acknowledge_trim(
+    position_id: int,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Persist that a user has already trimmed this position."""
+    pos = uow.positions.get_by_id(position_id)
+    if pos:
+        pos.trim_acknowledged = True
+        uow.commit()
+    return RedirectResponse(url="/", status_code=303)
+
+
+@app.post("/trim-unacknowledge/{position_id}")
+def unacknowledge_trim(
+    position_id: int,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Clear a previously recorded trim acknowledgement."""
+    pos = uow.positions.get_by_id(position_id)
+    if pos:
+        pos.trim_acknowledged = False
         uow.commit()
     return RedirectResponse(url="/", status_code=303)
 
