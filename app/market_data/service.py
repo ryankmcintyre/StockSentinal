@@ -1021,11 +1021,11 @@ class MarketDataService:
 
         tasks: list[Callable[[], object]] = []
         if need_daily:
-            tasks.append(lambda: cache.get_daily_bars(ticker))
+            tasks.append(lambda t=ticker: cache.get_daily_bars(t))
         if need_weekly:
-            tasks.append(lambda: cache.get_weekly_bars(ticker))
+            tasks.append(lambda t=ticker: cache.get_weekly_bars(t))
         if need_benchmark_daily and benchmark:
-            tasks.append(lambda: cache.get_daily_bars(benchmark))
+            tasks.append(lambda b=benchmark: cache.get_daily_bars(b))
 
         # Nothing to gain from a thread pool for a single fetch.
         if len(tasks) < 2:

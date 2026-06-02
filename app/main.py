@@ -1377,8 +1377,9 @@ def _refresh_single_position_task(position_id: int, user_id: str):
     uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
     pos = None
     try:
-        # The in-progress flag is already set by the route before the task is
-        # scheduled, so we don't redundantly write it again here.
+        # The in-progress flag is set by the /refresh/{position_id} route
+        # handler before scheduling this task, so we skip the redundant write
+        # here.
         try:
             pos = uow.positions.get_by_id(position_id)
             if pos:
