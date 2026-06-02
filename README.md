@@ -9,6 +9,7 @@ Live: [www.stocksentinal.com](https://www.stocksentinal.com)
 - **Sell / Trim / Hold verdicts** per position with the specific rule(s) that fired
 - **Long-term and short-term rule sets** evaluated separately (e.g. weekly 20-MA breaks for long-term, daily 21-MA breaks for short-term)
 - **Configurable rules** — enable/disable rules and edit their parameters per investment type on the Rules page
+- **Mark as Trimmed** — after trimming a position, click "Mark as Trimmed" to acknowledge it; the verdict overrides to Hold until you clear the flag or a Sell rule fires
 - **Custom key levels** per position (support/resistance) that feed into the rule engine
 - **Market data** pulled from Alpha Vantage or Twelve Data, with batching support on Twelve Data to stay inside free-tier limits
 - **Multi-user** support via Supabase Auth (Google OAuth out of the box); falls back to a single-user mode for local dev
@@ -171,8 +172,14 @@ app/
 ├── schemas.py         # Pydantic request/response schemas
 ├── repositories.py    # Per-user-scoped data access
 ├── rule_engine.py     # Sell/Trim/Hold rules (isolated from UI)
-├── market_data.py     # Provider abstraction + caching
+├── rule_config.py     # Persistence helpers for StrategyRuleConfig
 ├── config.py          # Env-var-backed configuration
+├── market_data/
+│   ├── provider.py    # Provider abstraction (Alpha Vantage / Twelve Data)
+│   ├── service.py     # Refresh orchestration: fetch → cache → enrich
+│   ├── cache_repos.py # DB access for market indicator/ATR/bar caches
+│   ├── staleness.py   # Cache staleness and stale-cleanup logic
+│   └── exceptions.py  # Market data error types
 ├── templates/         # Jinja2 templates (splash, portfolio, edit, etc.)
 └── static/            # CSS and a small amount of JS
 alembic/               # Database migrations
