@@ -142,7 +142,7 @@
                                 // order after a row is swapped in place.
                                 var originalIndex =
                                     existing.getAttribute("data-original-index");
-                                if (originalIndex !== null) {
+                                if (originalIndex !== null && originalIndex !== "") {
                                     newRow.setAttribute(
                                         "data-original-index",
                                         originalIndex

@@ -38,7 +38,7 @@
         // ("reset") can restore the original order. Rows that get swapped in
         // place later carry this attribute forward, so it stays stable.
         Array.from(tbody.rows).forEach(function (row, index) {
-            if (typeof row.dataset.originalIndex === "undefined") {
+            if (!("originalIndex" in row.dataset)) {
                 row.dataset.originalIndex = String(index);
             }
         });
