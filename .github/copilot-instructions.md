@@ -72,17 +72,20 @@ Rules are evaluated highest-priority first; the first triggered rule wins. Sell 
 | `investment_type` | string | `"long-term"` or `"short-term"` |
 | `current_price` | float | Manually entered fallback |
 | `notes` | string (optional) | Freeform |
-| `daily_close` | float (optional) | Cached from market data provider |
-| `daily_sma_21` | float (optional) | Cached from market data provider |
-| `daily_market_date` | date (optional) | Date of cached daily data |
-| `weekly_close` | float (optional) | Cached from market data provider |
-| `weekly_sma_20` | float (optional) | Cached from market data provider |
-| `weekly_market_date` | date (optional) | Date of cached weekly data |
-| `refresh_error` | string (optional) | Last refresh error message |
-| `refresh_in_progress` | boolean | True while a refresh is running |
-| `previous_verdict` | string (optional) | Verdict from last refresh cycle |
-| `sector_benchmark_ticker` | string (optional) | For relative-weakness rule |
-| `user_id` | string (FK → users) | Owner |
+|| `daily_close` | float (optional) | Cached from market data provider |
+|| `daily_sma_21` | float (optional) | Cached from market data provider |
+|| `daily_market_date` | date (optional) | Date of cached daily data |
+|| `daily_retrieved_at` | datetime (optional) | When daily data was fetched |
+|| `weekly_close` | float (optional) | Cached from market data provider |
+|| `weekly_sma_20` | float (optional) | Cached from market data provider |
+|| `weekly_market_date` | date (optional) | Date of cached weekly data |
+|| `weekly_retrieved_at` | datetime (optional) | When weekly data was fetched |
+|| `refresh_error` | string (optional) | Last refresh error message |
+|| `refresh_in_progress` | boolean | True while a refresh is running |
+|| `refresh_started_at` | datetime (optional) | When the current refresh began |
+|| `previous_verdict` | string (optional) | Verdict from last refresh cycle |
+|| `sector_benchmark_ticker` | string (optional) | For relative-weakness rule |
+|| `user_id` | string (FK → users) | Owner |
 
 ### Other ORM models
 - **User** — Supabase Auth UUID, email, display_name, tier, is_admin, refresh quota
