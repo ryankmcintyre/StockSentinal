@@ -325,9 +325,11 @@ class TestRulesPage:
     def test_stylesheet_locks_portfolio_header_row_while_scrolling(self, client):
         resp = client.get("/static/styles.css")
         assert resp.status_code == 200
-        assert ".positions-table thead th {" in resp.text
-        assert "position: sticky;" in resp.text
-        assert "top: 0;" in resp.text
+        match = re.search(r"\.positions-table thead th\s*\{([^}]*)\}", resp.text, re.DOTALL)
+        assert match is not None
+        rule_block = match.group(1)
+        assert "position: sticky;" in rule_block
+        assert "top: 0;" in rule_block
 
     def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
         from app.main import _refresh_single_position_task
