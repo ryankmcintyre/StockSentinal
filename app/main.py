@@ -169,8 +169,6 @@ FLASH_MESSAGES = {
     "refresh_limit": "You've used 5 of 5 refreshes today. Your limit resets at midnight UTC.",
     "admin_updated": "Admin user settings updated.",
 }
-TRIM_ACKNOWLEDGED_REASON = "Trim acknowledged"
-
 
 def _get_request_user_id(request: Request, uow: UnitOfWork | None = None) -> str | None:
     """Return the authenticated user id, falling back to a scoped test UoW when needed."""
@@ -395,13 +393,7 @@ def _enrich_position(
     displayed_triggered = triggered
     if trim_acknowledged and computed_verdict == Verdict.trim:
         verdict = Verdict.hold
-        displayed_triggered = [
-            RuleResult(
-                rule_label="TRIM_ACKNOWLEDGED",
-                verdict=Verdict.hold,
-                description=TRIM_ACKNOWLEDGED_REASON,
-            )
-        ]
+        displayed_triggered = []
     reason_sort_value = (
         pos.refresh_error
         or (displayed_triggered[0].description if displayed_triggered else "")
