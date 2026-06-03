@@ -318,6 +318,10 @@ h3 {
     white-space: nowrap;
 }
 
+.actions-last-updated {
+    margin-top: 0.35rem;
+}
+
 .inline-form {
     display: inline;
 }

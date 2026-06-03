@@ -406,6 +406,8 @@ def _enrich_position(
         pos.refresh_error
         or (displayed_triggered[0].description if displayed_triggered else "")
     )
+    retrieved_timestamps = [ts for ts in (pos.daily_retrieved_at, pos.weekly_retrieved_at) if ts is not None]
+    last_market_data_updated = max(retrieved_timestamps) if retrieved_timestamps else None
     return {
         "id": pos.id,
         "ticker": pos.ticker,
@@ -435,6 +437,7 @@ def _enrich_position(
         "weekly_sma_20": pos.weekly_sma_20,
         "weekly_market_date": pos.weekly_market_date,
         "weekly_retrieved_at": pos.weekly_retrieved_at,
+        "last_market_data_updated": last_market_data_updated,
         "refresh_error": pos.refresh_error,
         "refresh_in_progress": bool(pos.refresh_in_progress),
         "refresh_started_at": pos.refresh_started_at,
