@@ -68,7 +68,7 @@ The provider is auto-detected from whichever API key you set. Set the key, leave
 | `MARKET_DATA_PROVIDER` | auto | Explicit override: `alphavantage` or `twelvedata`. |
 | `ALPHA_VANTAGE_MIN_INTERVAL_SECONDS` | `12.0` | Gate between Alpha Vantage calls (free tier: 5/min). |
 | `TWELVE_DATA_MIN_INTERVAL_SECONDS` | `8.0` | Gate between Twelve Data calls (free tier: 8/min, 800/day). |
-| `TWELVE_DATA_CREDITS_PER_MINUTE` | — | Optional. When set (e.g. `50`), Twelve Data uses a rolling 60s credit-budget gate that allows concurrent calls up to this many per minute, instead of the strict per-call interval. Leave headroom under your plan's hard cap (e.g. `50` for the 55/min Grow plan). Unset = use `TWELVE_DATA_MIN_INTERVAL_SECONDS`. |
+| `TWELVE_DATA_CREDITS_PER_MINUTE` | — | Optional rolling 60-second credit-budget gate for Twelve Data. **Takes precedence over `TWELVE_DATA_MIN_INTERVAL_SECONDS`.** When set, up to this many calls per minute may run concurrently; when unset, the app falls back to strict per-call spacing. See below. |
 
 Paid tiers can lower these intervals without changing code. Recommended starting points:
 
@@ -79,7 +79,14 @@ Paid tiers can lower these intervals without changing code. Recommended starting
 | Alpha Vantage Free | 5 | `12.0` |
 | Alpha Vantage Premium | 75 | `0.8` |
 
-For Twelve Data, setting `TWELVE_DATA_CREDITS_PER_MINUTE` enables a sliding-window budget that lets a single refresh fire its independent daily/weekly/benchmark calls concurrently (up to the budget), rather than spacing every call out in series.
+#### `TWELVE_DATA_CREDITS_PER_MINUTE` (Twelve Data concurrency)
+
+A single position refresh fetches several independent Twelve Data series (e.g. daily + weekly, plus a benchmark for relative-weakness rules). How those calls are paced depends on this variable:
+
+- **Set** (e.g. `TWELVE_DATA_CREDITS_PER_MINUTE=50`): Twelve Data uses a rolling 60-second credit-budget gate. As long as fewer than the budgeted number of calls happened in the trailing minute, calls proceed **without delay**, so the independent daily/weekly/benchmark fetches in one refresh run **concurrently**. A single default refresh completes in ~1–2s.
+- **Unset**: the app falls back to the strict per-call `TWELVE_DATA_MIN_INTERVAL_SECONDS` gate, which spaces **every** call out in series. With the default `8.0`s interval, two serialized calls plus HTTP make a single refresh take ~10s.
+
+**This variable takes precedence over `TWELVE_DATA_MIN_INTERVAL_SECONDS`** for Twelve Data. Pick a value safely **under your plan's hard cap** to leave headroom for retries and other traffic — e.g. `50` for the Grow plan (55/min cap, 5-credit headroom). Even when this is unset, concurrent prewarm fetches still overlap their interval waits (the gate reserves each call's slot without holding a lock during the wait), so pacing is respected on average without fully serializing every call.
 
 On startup, the app logs the active provider and effective rate-limit interval so you can confirm what is configured.
 

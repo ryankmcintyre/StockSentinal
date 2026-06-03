@@ -92,19 +92,23 @@ class AlphaVantageProvider:
 
     @classmethod
     def _wait_for_slot(cls) -> None:
+        # Reserve the next slot under the lock, then release it before
+        # sleeping so the lock is never held during ``time.sleep``.
+        min_interval_seconds = get_alpha_vantage_min_interval_seconds()
         with cls._lock:
-            min_interval_seconds = get_alpha_vantage_min_interval_seconds()
             now = time.monotonic()
-            if cls._last_call_at is not None:
-                elapsed = now - cls._last_call_at
-                remaining = min_interval_seconds - elapsed
-                if remaining > 0:
-                    logger.debug(
-                        "Rate-limit: sleeping %.1fs before next API call",
-                        remaining,
-                    )
-                    time.sleep(remaining)
-            cls._last_call_at = time.monotonic()
+            if cls._last_call_at is None:
+                reserved = now
+            else:
+                reserved = max(now, cls._last_call_at + min_interval_seconds)
+            cls._last_call_at = reserved
+        wait_for = reserved - time.monotonic()
+        if wait_for > 0:
+            logger.debug(
+                "Rate-limit: sleeping %.1fs before next API call",
+                wait_for,
+            )
+            time.sleep(wait_for)
 
     # -- protocol methods ---------------------------------------------------
 
@@ -178,37 +182,53 @@ class TwelveDataProvider:
 
     @classmethod
     def _wait_for_interval_slot(cls) -> None:
+        # Reserve the next evenly-spaced slot atomically under the lock, then
+        # release the lock before sleeping. Holding the lock across the sleep
+        # would serialize concurrent prewarm threads; reserving the slot first
+        # lets their waits overlap while still spacing calls by the configured
+        # interval on average.
+        min_interval_seconds = get_twelve_data_min_interval_seconds()
         with cls._lock:
-            min_interval_seconds = get_twelve_data_min_interval_seconds()
             now = time.monotonic()
-            if cls._last_call_at is not None:
-                elapsed = now - cls._last_call_at
-                remaining = min_interval_seconds - elapsed
-                if remaining > 0:
-                    logger.debug(
-                        "Rate-limit: sleeping %.1fs before next API call",
-                        remaining,
-                    )
-                    time.sleep(remaining)
-            cls._last_call_at = time.monotonic()
+            if cls._last_call_at is None:
+                reserved = now
+            else:
+                reserved = max(now, cls._last_call_at + min_interval_seconds)
+            cls._last_call_at = reserved
+        wait_for = reserved - time.monotonic()
+        if wait_for > 0:
+            logger.debug(
+                "Rate-limit: sleeping %.1fs before next API call",
+                wait_for,
+            )
+            time.sleep(wait_for)
 
     @classmethod
     def _wait_for_budget_slot(cls, credits_per_minute: int) -> None:
+        # Reserve a slot in the rolling window under the lock, then sleep
+        # outside it. When the budget is exhausted, space the new slot 60s
+        # after the reservation ``credits_per_minute`` entries back, rather
+        # than after the single oldest call. Reserving relative to prior
+        # reservations stops concurrent callers from all claiming the same
+        # ``oldest + 60`` slot and bursting past the cap at the window edge.
         with cls._lock:
             now = time.monotonic()
             cls._prune_call_window(now)
             if len(cls._call_window) >= credits_per_minute:
-                # Budget exhausted: wait until the oldest call leaves the
-                # trailing 60s window, then re-prune.
-                wait_for = cls._call_window[0] + cls._WINDOW_SECONDS - now
-                if wait_for > 0:
-                    logger.debug(
-                        "Rate-limit budget exhausted: sleeping %.1fs",
-                        wait_for,
-                    )
-                    time.sleep(wait_for)
-                cls._prune_call_window(time.monotonic())
-            cls._call_window.append(time.monotonic())
+                reserved = max(
+                    now,
+                    cls._call_window[-credits_per_minute] + cls._WINDOW_SECONDS,
+                )
+            else:
+                reserved = now
+            cls._call_window.append(reserved)
+        wait_for = reserved - time.monotonic()
+        if wait_for > 0:
+            logger.debug(
+                "Rate-limit budget exhausted: sleeping %.1fs",
+                wait_for,
+            )
+            time.sleep(wait_for)
 
     @classmethod
     def _prune_call_window(cls, now: float) -> None:

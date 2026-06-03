@@ -388,6 +388,19 @@ h3 {
     animation: spinner-rotate 0.8s linear infinite;
 }
 
+.btn-refresh {
+    /* Keep the glyph centered so spinning rotates it in place. */
+    display: inline-block;
+    line-height: 1;
+}
+
+/* Spin the refresh glyph itself rather than adding a separate spinner. */
+.btn-refresh-spinning {
+    opacity: 0.8;
+    pointer-events: none;
+    animation: spinner-rotate 0.8s linear infinite;
+}
+
 /* --- Forms --- */
 
 .position-form {
@@ -533,15 +546,6 @@ h3 {
 
 .rule-tag-error::before {
     color: #ef9a9a;
-}
-
-.rule-tag-refreshing {
-    color: #4a5568;
-    font-weight: 600;
-}
-
-.rule-tag-refreshing::before {
-    color: #a0aec0;
 }
 
 /* --- Form hint text --- */

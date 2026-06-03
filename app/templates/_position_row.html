@@ -34,13 +34,6 @@
         {% if pos.refresh_error %}
             <span class="rule-tag rule-tag-error" title="{{ pos.refresh_error }}">Refresh failed</span>
         {% endif %}
-        {% if pos.refresh_in_progress %}
-            <span
-                class="rule-tag rule-tag-refreshing"
-                data-refreshing-badge="true"
-                data-position-id="{{ pos.id }}"
-            >Refreshing...</span>
-        {% endif %}
     </td>
     <td class="actions" data-sort-value="{{ pos.id }}">
         <a href="/edit/{{ pos.id }}" class="btn btn-small">Edit</a>
@@ -56,13 +49,14 @@
         </form>
         {% endif %}
         {% if api_configured %}
-        <form method="post" action="/refresh/{{ pos.id }}" class="inline-form" data-api-submit="true">
+        <form method="post" action="/refresh/{{ pos.id }}" class="inline-form" data-refresh-form="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button
                 type="submit"
-                class="btn btn-small"
+                class="btn btn-small btn-refresh{% if pos.refresh_in_progress %} btn-refresh-spinning{% endif %}"
                 title="Refresh market data"
-                {% if pos.refresh_in_progress %}disabled{% endif %}
+                data-refresh-button="true"
+                {% if pos.refresh_in_progress %}disabled aria-busy="true"{% endif %}
             >&#8635;</button>
         </form>
         {% endif %}

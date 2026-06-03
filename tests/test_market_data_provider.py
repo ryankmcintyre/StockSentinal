@@ -74,13 +74,48 @@ class TestTwelveDataProvider:
             "app.market_data.provider.get_twelve_data_min_interval_seconds",
             return_value=0.5,
         )
-        mocker.patch("app.market_data.provider.time.monotonic", side_effect=[100.2, 100.7])
+        # First monotonic() reserves the slot under the lock; the second
+        # computes how long to sleep after the lock is released.
+        mocker.patch("app.market_data.provider.time.monotonic", side_effect=[100.2, 100.2])
         sleep = mocker.patch("app.market_data.provider.time.sleep")
 
         TwelveDataProvider._wait_for_slot()
 
         sleep.assert_called_once()
+        # Next slot is reserved at 100.0 + 0.5 = 100.5, so sleep ~0.3s.
         assert sleep.call_args.args[0] == pytest.approx(0.3)
+        assert TwelveDataProvider._last_call_at == pytest.approx(100.5)
+        TwelveDataProvider._last_call_at = None
+
+    def test_interval_slot_reserved_without_holding_lock_during_sleep(self, mocker):
+        # Two concurrent callers must reserve distinct, correctly-spaced slots
+        # without holding the lock while sleeping, so their waits can overlap.
+        TwelveDataProvider._last_call_at = None
+        mocker.patch(
+            "app.market_data.provider.get_twelve_data_min_interval_seconds",
+            return_value=8.0,
+        )
+        slept = []
+
+        # The lock must be free while sleeping; assert it is acquirable then.
+        def fake_sleep(secs):
+            assert TwelveDataProvider._lock.acquire(blocking=False)
+            TwelveDataProvider._lock.release()
+            slept.append(secs)
+
+        mocker.patch("app.market_data.provider.time.sleep", side_effect=fake_sleep)
+        # Caller A reserves at t=0 (no prior call) -> no sleep.
+        # Caller B reserves at t=0 -> spaced to t=8 -> sleeps ~8s.
+        mocker.patch(
+            "app.market_data.provider.time.monotonic",
+            side_effect=[0.0, 0.0, 0.0, 0.0],
+        )
+
+        TwelveDataProvider._wait_for_slot()
+        TwelveDataProvider._wait_for_slot()
+
+        assert slept == [pytest.approx(8.0)]
+        assert TwelveDataProvider._last_call_at == pytest.approx(8.0)
         TwelveDataProvider._last_call_at = None
 
     def test_credit_budget_gate_allows_calls_under_budget(self, mocker):
@@ -107,10 +142,11 @@ class TestTwelveDataProvider:
             "app.market_data.provider.get_twelve_data_credits_per_minute",
             return_value=2,
         )
-        # now=1010: oldest call leaves the window at 1000+60=1060, so wait ~50s.
+        # now=1010: oldest call leaves the window at 1000+60=1060, so the
+        # reserved slot is 1060 and we sleep ~50s after releasing the lock.
         mocker.patch(
             "app.market_data.provider.time.monotonic",
-            side_effect=[1010.0, 1060.0, 1060.0],
+            side_effect=[1010.0, 1010.0],
         )
         sleep = mocker.patch("app.market_data.provider.time.sleep")
 
@@ -135,6 +171,33 @@ class TestTwelveDataProvider:
 
         sleep.assert_not_called()
         assert list(TwelveDataProvider._call_window) == [1000.0]
+        TwelveDataProvider._call_window.clear()
+
+    def test_credit_budget_gate_never_exceeds_cap_in_any_window(self, mocker):
+        # With N = credits_per_minute, no rolling 60s window may ever contain
+        # more than N reserved slots, even when many callers pile in at once
+        # while the budget is exhausted (no thundering herd past the cap).
+        TwelveDataProvider._call_window.clear()
+        credits_per_minute = 3
+        mocker.patch(
+            "app.market_data.provider.get_twelve_data_credits_per_minute",
+            return_value=credits_per_minute,
+        )
+        # All callers arrive at the same instant; sleeping is a no-op.
+        mocker.patch("app.market_data.provider.time.monotonic", return_value=1000.0)
+        mocker.patch("app.market_data.provider.time.sleep")
+
+        for _ in range(2 * credits_per_minute + 1):
+            TwelveDataProvider._wait_for_slot()
+
+        reserved = sorted(TwelveDataProvider._call_window)
+        # Each slot must be spaced at least one window behind the slot
+        # credits_per_minute positions ahead of it; this is equivalent to
+        # "no 60s window contains more than credits_per_minute slots".
+        for i in range(len(reserved) - credits_per_minute):
+            assert reserved[i + credits_per_minute] >= reserved[i] + (
+                TwelveDataProvider._WINDOW_SECONDS - 1e-6
+            )
         TwelveDataProvider._call_window.clear()
 
     def test_supports_parallel_fetch_flags(self):
