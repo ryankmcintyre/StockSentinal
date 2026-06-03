@@ -212,6 +212,9 @@ h3 {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: #52606d;
+    position: sticky;
+    top: 0;
+    z-index: 1;
 }
 
 .table-sort-button {

@@ -322,6 +322,13 @@ class TestRulesPage:
         assert "Your portfolio is ready for its first position." in resp.text
         assert "Add a stock to start getting clear Sell, Trim, or Hold guidance." in resp.text
 
+    def test_stylesheet_locks_portfolio_header_row_while_scrolling(self, client):
+        resp = client.get("/static/styles.css")
+        assert resp.status_code == 200
+        assert ".positions-table thead th {" in resp.text
+        assert "position: sticky;" in resp.text
+        assert "top: 0;" in resp.text
+
     def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
         from app.main import _refresh_single_position_task
 
