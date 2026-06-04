@@ -311,6 +311,16 @@ class TestRulesPage:
         assert 'data-sort-value="190.0"' in resp.text
         assert "/static/portfolio-table.js" in resp.text
 
+    def test_portfolio_table_js_persists_sort_and_focus_state(self):
+        from pathlib import Path
+
+        source = Path("app/static/portfolio-table.js").read_text(encoding="utf-8")
+        assert "portfolioTableSortState" in source
+        assert "portfolioFocusPositionId" in source
+        assert "sessionStorage" in source
+        assert "focusPositionFromStorage" in source
+        assert "rememberFocusedPositionOnSubmit" in source
+
     def test_portfolio_renders_branding_and_empty_state(self, client):
         resp = client.get("/")
         assert resp.status_code == 200
