@@ -36,14 +36,14 @@
         {% endif %}
     </td>
     <td class="actions" data-sort-value="{{ pos.id }}">
-        <a href="/edit/{{ pos.id }}" class="btn btn-small">Edit</a>
+        <a href="/edit/{{ pos.id }}" class="btn btn-small" data-focus-restore-on-redirect="true">Edit</a>
         {% if pos.trim_acknowledged %}
-        <form method="post" action="/trim-unacknowledge/{{ pos.id }}" class="inline-form">
+        <form method="post" action="/trim-unacknowledge/{{ pos.id }}" class="inline-form" data-focus-restore-on-redirect="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-small">Clear Trim</button>
         </form>
         {% elif pos.computed_verdict.value == "Trim" %}
-        <form method="post" action="/trim-acknowledge/{{ pos.id }}" class="inline-form">
+        <form method="post" action="/trim-acknowledge/{{ pos.id }}" class="inline-form" data-focus-restore-on-redirect="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-small">Mark as Trimmed</button>
         </form>
