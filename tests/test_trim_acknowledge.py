@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import get_authenticated_uow, get_optional_uow, get_uow
-from app.main import TRIM_ACKNOWLEDGED_REASON, _enrich_position, _format_relative_time, app
+from app.main import _enrich_position, _format_relative_time, app
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.schemas import Verdict
 from app.unit_of_work import SqlAlchemyUnitOfWork
@@ -100,8 +100,9 @@ class TestTrimAcknowledgementLogic:
         assert enriched["computed_verdict"] == Verdict.trim
         assert enriched["verdict"] == Verdict.hold
         assert enriched["trim_acknowledged"] is True
-        assert enriched["triggered_rules"][0].description == TRIM_ACKNOWLEDGED_REASON
-        assert enriched["reason_sort_value"] == TRIM_ACKNOWLEDGED_REASON
+        trim_rule_desc = "Price is 15.0% above cost basis (>10%)"
+        assert any(r.description == trim_rule_desc for r in enriched["triggered_rules"])
+        assert trim_rule_desc in enriched["reason_sort_value"]
 
     def test_enrich_position_does_not_suppress_sell_when_trim_is_acknowledged(self):
         pos = Position(
@@ -259,7 +260,7 @@ class TestTrimAcknowledgementPortfolioUi:
         assert resp.text.count("Mark as Trimmed") == 1
         assert "Clear Trim" not in resp.text
 
-    def test_portfolio_shows_trimmed_indicator_clear_button_and_override_reason(
+    def test_portfolio_shows_trimmed_indicator_clear_button_and_original_trim_rule(
         self, client, _setup_db
     ):
         db = _setup_db()
@@ -285,8 +286,8 @@ class TestTrimAcknowledgementPortfolioUi:
         assert "Hold" in resp.text
         assert "Trimmed ✓" in resp.text
         assert "Clear Trim" in resp.text
-        assert TRIM_ACKNOWLEDGED_REASON in resp.text
-        assert "Price is 15.0% above cost basis (&gt;10%)" not in resp.text
+        assert "Trim acknowledged" not in resp.text
+        assert "Price is 15.0% above cost basis (&gt;10%)" in resp.text
 
     def test_portfolio_does_not_show_trimmed_indicator_for_natural_hold(self, client, _setup_db):
         db = _setup_db()
