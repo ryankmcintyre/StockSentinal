@@ -311,7 +311,7 @@ class TestRulesPage:
         assert 'data-sort-value="190.0"' in resp.text
         assert "/static/portfolio-table.js" in resp.text
 
-    def test_portfolio_marks_only_redirecting_row_forms_for_focus_restore(
+    def test_portfolio_focus_restore_marker_only_on_redirecting_forms(
         self, client, _setup_db, mocker
     ):
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
@@ -343,6 +343,13 @@ class TestRulesPage:
         assert refresh_form is not None
         assert 'data-refresh-form="true"' in refresh_form.group(0)
         assert 'data-focus-restore-on-redirect="true"' not in refresh_form.group(0)
+
+        refresh_all_form = re.search(
+            r'<form[^>]*action="/refresh"[^>]*>',
+            resp.text,
+        )
+        assert refresh_all_form is not None
+        assert 'data-focus-restore-on-redirect="true"' not in refresh_all_form.group(0)
 
         trim_form = re.search(
             rf'<form[^>]*action="/trim-unacknowledge/{position_id}"[^>]*>',
