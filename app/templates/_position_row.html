@@ -65,5 +65,10 @@
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-small btn-danger">Delete</button>
         </form>
+        {% if pos.last_market_data_updated_relative %}
+            <div class="text-muted actions-last-updated">
+                Last updated: {{ pos.last_market_data_updated_relative }}
+            </div>
+        {% endif %}
     </td>
 </tr>

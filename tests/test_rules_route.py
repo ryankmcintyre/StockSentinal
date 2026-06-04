@@ -1,7 +1,7 @@
 """Tests for strategy rule configuration routes and integration."""
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -272,6 +272,36 @@ class TestRulesPage:
         assert "Refresh failed" in resp.text
         assert 'title="Daily refresh failed: Alpha Vantage API rate limit exceeded"' in resp.text
         assert "rule-tag-error" in resp.text
+
+    def test_portfolio_shows_last_updated_timestamp_under_actions(self, client, _setup_db):
+        now = datetime.now(timezone.utc)
+        db = _setup_db()
+        try:
+            db.add(
+                Position(
+                    ticker="AAPL",
+                    company_name="Apple Inc.",
+                    cost_basis=100.0,
+                    initial_purchase_date=date(2025, 1, 1),
+                    investment_type="long-term",
+                    current_price=115.0,
+                    notes=None,
+                    daily_retrieved_at=now - timedelta(hours=2, minutes=5),
+                    weekly_retrieved_at=now - timedelta(hours=3),
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert re.search(
+            r"Last updated:\s+(just now|\d+\s+(minute|minutes|hour|hours|day|days)\s+ago)",
+            resp.text,
+        )
+        assert not re.search(r"Last updated:\s+\d{4}-\d{2}-\d{2}", resp.text)
+        assert 'class="text-muted actions-last-updated"' in resp.text
 
     def test_portfolio_renders_sortable_column_headers(self, client, _setup_db):
         db = _setup_db()

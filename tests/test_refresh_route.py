@@ -40,7 +40,7 @@ def _setup_db():
                 obj.user_id = "test-user-id"
 
     db = TestingSession()
-    db.add(User(id="test-user-id", email="test@example.com", display_name="Test User", created_at=datetime.now()))
+    db.add(User(id="test-user-id", email="test@example.com", display_name="Test User", created_at=datetime.now(timezone.utc)))
     db.commit()
     db.close()
 
@@ -93,7 +93,7 @@ class TestRefreshLoadingCues:
                     current_price=115.0,
                     notes=None,
                     refresh_in_progress=True,
-                    refresh_started_at=datetime.now(),
+                    refresh_started_at=datetime.now(timezone.utc),
                 )
             )
             db.commit()
@@ -184,7 +184,7 @@ class TestRefreshLoadingCues:
                         current_price=115.0,
                         notes=None,
                         refresh_in_progress=True,
-                        refresh_started_at=datetime.now(),
+                        refresh_started_at=datetime.now(timezone.utc),
                     ),
                     Position(
                         ticker="MSFT",
@@ -227,7 +227,7 @@ class TestRefreshLoadingCues:
                 current_price=115.0,
                 notes=None,
                 refresh_in_progress=True,
-                refresh_started_at=datetime.now() - timedelta(minutes=6),
+                refresh_started_at=datetime.now(timezone.utc) - timedelta(minutes=6),
             )
             db.add(pos)
             db.commit()
@@ -262,7 +262,7 @@ class TestRefreshLoadingCues:
                 current_price=115.0,
                 notes=None,
                 refresh_in_progress=True,
-                refresh_started_at=datetime.now(),
+                refresh_started_at=datetime.now(timezone.utc),
             )
             idle = Position(
                 ticker="MSFT",
@@ -443,13 +443,13 @@ class TestRefreshLoadingCues:
                         id="alice-user-id",
                         email="alice@example.com",
                         display_name="Alice",
-                        created_at=datetime.now(),
+                        created_at=datetime.now(timezone.utc),
                     ),
                     User(
                         id="bob-user-id",
                         email="bob@example.com",
                         display_name="Bob",
-                        created_at=datetime.now(),
+                        created_at=datetime.now(timezone.utc),
                     ),
                     Position(
                         ticker="AAPL",
@@ -460,7 +460,7 @@ class TestRefreshLoadingCues:
                         current_price=115.0,
                         user_id="alice-user-id",
                         refresh_in_progress=True,
-                        refresh_started_at=datetime.now() - timedelta(minutes=6),
+                        refresh_started_at=datetime.now(timezone.utc) - timedelta(minutes=6),
                     ),
                     Position(
                         ticker="MSFT",
@@ -471,7 +471,7 @@ class TestRefreshLoadingCues:
                         current_price=215.0,
                         user_id="bob-user-id",
                         refresh_in_progress=True,
-                        refresh_started_at=datetime.now() - timedelta(minutes=6),
+                        refresh_started_at=datetime.now(timezone.utc) - timedelta(minutes=6),
                     ),
                     Position(
                         ticker="NVDA",
@@ -482,7 +482,7 @@ class TestRefreshLoadingCues:
                         current_price=315.0,
                         user_id="test-user-id",
                         refresh_in_progress=True,
-                        refresh_started_at=datetime.now(),
+                        refresh_started_at=datetime.now(timezone.utc),
                     ),
                 ]
             )
@@ -537,7 +537,7 @@ class TestRefreshLoadingCues:
                 current_price=115.0,
                 notes=None,
                 refresh_in_progress=True,
-                refresh_started_at=datetime.now(),
+                refresh_started_at=datetime.now(timezone.utc),
             )
             db.add(pos)
             db.commit()

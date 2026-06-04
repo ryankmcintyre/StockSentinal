@@ -10,7 +10,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date as date_type
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Optional
 
 import app.rule_config as rule_config
@@ -786,7 +786,7 @@ class MarketDataService:
             if sma_points:
                 position.daily_sma_21 = sma_points[0].sma
 
-        position.daily_retrieved_at = datetime.now()
+        position.daily_retrieved_at = datetime.now(timezone.utc)
 
     def _refresh_weekly(
         self, position: Position, fetch_cache: Optional["_FetchCache"] = None,
@@ -828,7 +828,7 @@ class MarketDataService:
                 else:
                     position.weekly_sma_20 = sma_points[0].sma
 
-        position.weekly_retrieved_at = datetime.now()
+        position.weekly_retrieved_at = datetime.now(timezone.utc)
 
     @staticmethod
     def _copy_daily_cache(source: Position, target: Position) -> None:
@@ -1238,7 +1238,7 @@ class MarketDataService:
             # Heartbeat: advance refresh_started_at for positions still marked
             # in-progress so a long-but-progressing refresh-all is not treated
             # as stale (and cleared) by the periodic stale-flag sweep.
-            heartbeat = datetime.now()
+            heartbeat = datetime.now(timezone.utc)
             for pos in group:
                 if getattr(pos, "refresh_in_progress", False):
                     pos.refresh_started_at = heartbeat
