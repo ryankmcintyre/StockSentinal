@@ -350,6 +350,10 @@ class TestRulesPage:
         resp = client.get("/static/styles.css")
         assert resp.status_code == 200
 
+        shared_table_match = re.search(r"\.positions-table\s*\{([^}]*)\}", resp.text, re.DOTALL)
+        assert shared_table_match is not None
+        assert "overflow: hidden;" not in shared_table_match.group(1)
+
         portfolio_table_match = re.search(r"\.portfolio-table\s*\{([^}]*)\}", resp.text, re.DOTALL)
         assert portfolio_table_match is not None
         assert "overflow: visible;" in portfolio_table_match.group(1)
