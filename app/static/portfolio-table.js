@@ -144,16 +144,21 @@
             return;
         }
         removeSessionStorage(FOCUS_POSITION_STORAGE_KEY);
-        if (!/^\d+$/.test(focusPositionId)) {
-            return;
-        }
-        var row = table.querySelector(
-            "tr[data-position-id='" + focusPositionId + "']"
-        );
+        var row = Array.from(
+            table.querySelectorAll("tr[data-position-id]")
+        ).find(function (candidate) {
+            return (
+                candidate.getAttribute("data-position-id") === focusPositionId
+            );
+        });
         if (!row) {
             return;
         }
         row.setAttribute("tabindex", "-1");
+        row.addEventListener("blur", function handleBlur() {
+            row.removeAttribute("tabindex");
+            row.removeEventListener("blur", handleBlur);
+        });
         try {
             row.focus({ preventScroll: true });
         } catch (_error) {
