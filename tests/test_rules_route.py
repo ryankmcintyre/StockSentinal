@@ -322,7 +322,7 @@ class TestRulesPage:
         assert "Your portfolio is ready for its first position." in resp.text
         assert "Add a stock to start getting clear Sell, Trim, or Hold guidance." in resp.text
 
-    def test_stylesheet_locks_portfolio_header_row_while_scrolling(self, client, _setup_db):
+    def test_portfolio_table_has_scoped_sticky_header_styling(self, client, _setup_db):
         db = _setup_db()
         try:
             db.add(
@@ -345,7 +345,7 @@ class TestRulesPage:
         assert re.search(
             r'<table class="[^"]*\bpositions-table\b[^"]*\bportfolio-table\b[^"]*"[^>]*data-sortable-table="true"',
             portfolio_resp.text,
-        )
+        ) is not None, "Portfolio table should include the scoped portfolio-table class"
 
         resp = client.get("/static/styles.css")
         assert resp.status_code == 200
