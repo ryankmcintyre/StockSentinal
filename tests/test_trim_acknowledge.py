@@ -100,8 +100,9 @@ class TestTrimAcknowledgementLogic:
         assert enriched["computed_verdict"] == Verdict.trim
         assert enriched["verdict"] == Verdict.hold
         assert enriched["trim_acknowledged"] is True
-        assert len(enriched["triggered_rules"]) > 0
-        assert enriched["reason_sort_value"] != ""
+        trim_rule_desc = "Price is 15.0% above cost basis (>10%)"
+        assert any(r.description == trim_rule_desc for r in enriched["triggered_rules"])
+        assert trim_rule_desc in enriched["reason_sort_value"]
 
     def test_enrich_position_does_not_suppress_sell_when_trim_is_acknowledged(self):
         pos = Position(
