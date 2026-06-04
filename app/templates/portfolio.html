@@ -144,6 +144,11 @@
         {% endfor %}
     </tbody>
 </table>
+<div class="empty-state filtered-empty-state" data-filtered-empty-state hidden role="status" aria-live="polite">
+    <span class="empty-state-mark" aria-hidden="true">∅</span>
+    <h2>No <span data-empty-filter-label>Sell</span> positions match this filter.</h2>
+    <p>Try another summary card to view positions with a different verdict.</p>
+</div>
 {% else %}
 <div class="empty-state">
     <span class="empty-state-mark" aria-hidden="true">↗</span>

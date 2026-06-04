@@ -517,6 +517,15 @@ h3 {
     font-size: 1rem;
 }
 
+.filtered-empty-state {
+    margin-top: 1rem;
+    padding: 2rem 1.5rem;
+}
+
+.filtered-empty-state p {
+    margin-bottom: 0;
+}
+
 /* --- Refresh controls --- */
 
 .refresh-controls {

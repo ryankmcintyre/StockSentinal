@@ -353,6 +353,9 @@ class TestRulesPage:
         assert re.search(r'data-summary-count="hold">\s*1\s*<', resp.text)
         assert 'data-verdict="trim"' in resp.text
         assert 'data-verdict="hold"' in resp.text
+        assert 'data-filtered-empty-state' in resp.text
+        assert 'hidden role="status" aria-live="polite"' in resp.text
+        assert 'No <span data-empty-filter-label>Sell</span> positions match this filter.' in resp.text
 
     def test_portfolio_renders_branding_and_empty_state(self, client):
         resp = client.get("/")

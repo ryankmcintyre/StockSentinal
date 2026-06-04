@@ -67,16 +67,39 @@
         });
     }
 
+    function formatFilterLabel(activeFilter) {
+        return activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1);
+    }
+
+    function updateFilteredEmptyState(tbody, activeFilter, emptyState) {
+        if (!emptyState) {
+            return;
+        }
+
+        var hasVisibleRows = Array.from(tbody.rows).some(function (row) {
+            return !row.hidden;
+        });
+        var emptyLabel = emptyState.querySelector("[data-empty-filter-label]");
+
+        if (emptyLabel) {
+            emptyLabel.textContent = formatFilterLabel(activeFilter);
+        }
+
+        emptyState.hidden = activeFilter === "total" || hasVisibleRows;
+    }
+
     function wireSummaryFilters(table, headers) {
         var tbody = table.tBodies[0];
         var filters = Array.from(
             document.querySelectorAll("[data-summary-filter]")
         );
+        var emptyState = document.querySelector("[data-filtered-empty-state]");
         var activeFilter = "total";
 
         function syncFilterUi() {
             updateFilterState(filters, activeFilter);
             applyFilter(tbody, activeFilter);
+            updateFilteredEmptyState(tbody, activeFilter, emptyState);
         }
 
         if (!filters.length) {
