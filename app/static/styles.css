@@ -218,6 +218,10 @@ h3 {
     color: #52606d;
 }
 
+.portfolio-table {
+    overflow: visible;
+}
+
 .portfolio-table thead th {
     position: sticky;
     top: 0;
