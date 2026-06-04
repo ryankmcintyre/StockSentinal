@@ -153,6 +153,17 @@ def test_authenticated_get_root_returns_portfolio(auth_client):
     assert "splash-headline" not in resp.text
 
 
+def test_authenticated_get_root_shows_profile_theme_menu(auth_client):
+    resp = auth_client.get("/")
+
+    assert resp.status_code == 200
+    assert 'aria-label="Profile"' in resp.text
+    assert 'data-theme-option="system"' in resp.text
+    assert 'data-theme-option="light"' in resp.text
+    assert 'data-theme-option="dark"' in resp.text
+    assert "Test User" not in resp.text
+
+
 # ---------------------------------------------------------------------------
 # /privacy
 # ---------------------------------------------------------------------------
