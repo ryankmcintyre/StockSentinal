@@ -1,6 +1,6 @@
 """Tests for trim acknowledgement routes and portfolio overrides."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -122,6 +122,9 @@ class TestTrimAcknowledgementLogic:
         assert enriched["triggered_rules"][0].description == "Daily close (90.00) < SMA-21 (100.00)"
 
     def test_enrich_position_sets_relative_last_updated_from_latest_timestamp(self):
+        now = datetime.now()
+        daily_retrieved_at = now - timedelta(days=2)
+        weekly_retrieved_at = now - timedelta(days=1, hours=3)
         pos = Position(
             ticker="AAPL",
             company_name="Apple Inc.",
@@ -129,15 +132,14 @@ class TestTrimAcknowledgementLogic:
             initial_purchase_date=date(2025, 1, 1),
             investment_type="long-term",
             current_price=115.0,
-            daily_retrieved_at=datetime(2025, 1, 1, 9, 0),
-            weekly_retrieved_at=datetime(2025, 1, 2, 10, 0),
+            daily_retrieved_at=daily_retrieved_at,
+            weekly_retrieved_at=weekly_retrieved_at,
         )
 
         enriched = _enrich_position(pos)
+        expected_latest = max(daily_retrieved_at, weekly_retrieved_at).astimezone(timezone.utc)
 
-        assert enriched["last_market_data_updated"].year == 2025
-        assert enriched["last_market_data_updated"].month == 1
-        assert enriched["last_market_data_updated"].day == 2
+        assert enriched["last_market_data_updated"] == expected_latest
         assert isinstance(enriched["last_market_data_updated_relative"], str)
         assert "ago" in enriched["last_market_data_updated_relative"]
 

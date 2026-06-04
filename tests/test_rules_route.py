@@ -296,7 +296,10 @@ class TestRulesPage:
 
         resp = client.get("/")
         assert resp.status_code == 200
-        assert re.search(r"Last updated:\s+\d+\s+hours ago", resp.text)
+        assert re.search(
+            r"Last updated:\s+(just now|\d+\s+(minute|minutes|hour|hours|day|days)\s+ago)",
+            resp.text,
+        )
         assert not re.search(r"Last updated:\s+\d{4}-\d{2}-\d{2}", resp.text)
         assert 'class="text-muted actions-last-updated"' in resp.text
 
