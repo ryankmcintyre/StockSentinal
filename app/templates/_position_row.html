@@ -38,12 +38,12 @@
     <td class="actions" data-sort-value="{{ pos.id }}">
         <a href="/edit/{{ pos.id }}" class="btn btn-small">Edit</a>
         {% if pos.trim_acknowledged %}
-        <form method="post" action="/trim-unacknowledge/{{ pos.id }}" class="inline-form">
+        <form method="post" action="/trim-unacknowledge/{{ pos.id }}" class="inline-form" data-focus-restore-on-redirect="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-small">Clear Trim</button>
         </form>
         {% elif pos.computed_verdict.value == "Trim" %}
-        <form method="post" action="/trim-acknowledge/{{ pos.id }}" class="inline-form">
+        <form method="post" action="/trim-acknowledge/{{ pos.id }}" class="inline-form" data-focus-restore-on-redirect="true">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-small">Mark as Trimmed</button>
         </form>
@@ -60,7 +60,7 @@
             >&#8635;</button>
         </form>
         {% endif %}
-        <form method="post" action="/delete/{{ pos.id }}" class="inline-form"
+        <form method="post" action="/delete/{{ pos.id }}" class="inline-form" data-focus-restore-on-redirect="true"
               onsubmit="return confirm('Delete {{ pos.ticker }}?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-small btn-danger">Delete</button>

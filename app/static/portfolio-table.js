@@ -177,6 +177,10 @@
             if (!form) {
                 return;
             }
+            if (form.getAttribute("data-focus-restore-on-redirect") !== "true") {
+                removeSessionStorage(FOCUS_POSITION_STORAGE_KEY);
+                return;
+            }
             var row = form.closest("tr[data-position-id]");
             if (!row || !row.dataset.positionId) {
                 return;

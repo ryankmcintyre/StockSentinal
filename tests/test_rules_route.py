@@ -311,15 +311,52 @@ class TestRulesPage:
         assert 'data-sort-value="190.0"' in resp.text
         assert "/static/portfolio-table.js" in resp.text
 
-    def test_portfolio_table_js_persists_sort_and_focus_state(self):
-        from pathlib import Path
+    def test_portfolio_marks_only_redirecting_row_forms_for_focus_restore(
+        self, client, _setup_db, mocker
+    ):
+        mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
+        db = _setup_db()
+        try:
+            pos = Position(
+                ticker="AAPL",
+                company_name="Apple Inc.",
+                cost_basis=100.0,
+                initial_purchase_date=date(2025, 1, 1),
+                investment_type="long-term",
+                current_price=115.0,
+                notes=None,
+                trim_acknowledged=True,
+            )
+            db.add(pos)
+            db.commit()
+            position_id = pos.id
+        finally:
+            db.close()
 
-        source = Path("app/static/portfolio-table.js").read_text(encoding="utf-8")
-        assert "portfolioTableSortState" in source
-        assert "portfolioFocusPositionId" in source
-        assert "sessionStorage" in source
-        assert "focusPositionFromStorage" in source
-        assert "rememberFocusedPositionOnSubmit" in source
+        resp = client.get("/")
+        assert resp.status_code == 200
+
+        refresh_form = re.search(
+            rf'<form[^>]*action="/refresh/{position_id}"[^>]*>',
+            resp.text,
+        )
+        assert refresh_form is not None
+        assert 'data-refresh-form="true"' in refresh_form.group(0)
+        assert 'data-focus-restore-on-redirect="true"' not in refresh_form.group(0)
+
+        trim_form = re.search(
+            rf'<form[^>]*action="/trim-unacknowledge/{position_id}"[^>]*>',
+            resp.text,
+        )
+        assert trim_form is not None
+        assert 'data-focus-restore-on-redirect="true"' in trim_form.group(0)
+
+        delete_form = re.search(
+            rf'<form[^>]*action="/delete/{position_id}"[^>]*>',
+            resp.text,
+        )
+        assert delete_form is not None
+        assert 'data-focus-restore-on-redirect="true"' in delete_form.group(0)
 
     def test_portfolio_renders_branding_and_empty_state(self, client):
         resp = client.get("/")
