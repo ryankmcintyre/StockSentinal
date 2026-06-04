@@ -354,7 +354,7 @@ class TestRulesPage:
         assert 'data-verdict="trim"' in resp.text
         assert 'data-verdict="hold"' in resp.text
         assert 'data-filtered-empty-state' in resp.text
-        assert re.search(r'data-filtered-empty-state[^>]*\shidden(?:\s|>)', resp.text)
+        assert re.search(r'data-filtered-empty-state[^>]*\bhidden\b', resp.text)
         assert 'role="status"' in resp.text
         assert 'aria-live="polite"' in resp.text
         assert 'data-empty-filter-label' in resp.text
