@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import get_authenticated_uow, get_optional_uow, get_uow
-from app.main import TRIM_ACKNOWLEDGED_REASON, _enrich_position, app
+from app.main import TRIM_ACKNOWLEDGED_REASON, _enrich_position, _format_relative_time, app
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.schemas import Verdict
 from app.unit_of_work import SqlAlchemyUnitOfWork
@@ -143,6 +143,11 @@ class TestTrimAcknowledgementLogic:
         assert enriched["last_market_data_updated"] == expected_latest
         assert isinstance(enriched["last_market_data_updated_relative"], str)
         assert "ago" in enriched["last_market_data_updated_relative"]
+
+    def test_format_relative_time_uses_expected_singular_and_plural_units(self):
+        now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        assert _format_relative_time(now - timedelta(minutes=1), now=now) == "1 minute ago"
+        assert _format_relative_time(now - timedelta(hours=2), now=now) == "2 hours ago"
 
 
 class TestTrimAcknowledgementRoutes:
