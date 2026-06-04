@@ -1,6 +1,6 @@
 """Tests for the market data service layer."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from unittest.mock import ANY, Mock
 
 import pytest
@@ -464,6 +464,7 @@ class TestLocalSmaComputation:
         expected_sma = sum(b.close for b in bars[:21]) / 21
         assert position.daily_sma_21 == pytest.approx(expected_sma)
         assert position.daily_close == bars[0].close
+        assert position.daily_retrieved_at.tzinfo == timezone.utc
 
     def test_refresh_weekly_computes_sma_locally(self):
         from datetime import timedelta
@@ -491,6 +492,7 @@ class TestLocalSmaComputation:
         # SMA-20 should be computed from completed bars
         assert position.weekly_sma_20 is not None
         assert position.weekly_close is not None
+        assert position.weekly_retrieved_at.tzinfo == timezone.utc
 
     def test_refresh_daily_fetches_bars_only_once_with_cache(self):
         from app.alpha_vantage_client import DailyBar as DB
