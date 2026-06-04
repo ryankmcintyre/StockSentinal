@@ -60,7 +60,7 @@
             >&#8635;</button>
         </form>
         {% endif %}
-        <form method="post" action="/delete/{{ pos.id }}" class="inline-form" data-focus-restore-on-redirect="true"
+        <form method="post" action="/delete/{{ pos.id }}" class="inline-form"
               onsubmit="return confirm('Delete {{ pos.ticker }}?')">
             <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-small btn-danger">Delete</button>

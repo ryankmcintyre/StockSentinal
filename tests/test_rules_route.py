@@ -363,7 +363,7 @@ class TestRulesPage:
             resp.text,
         )
         assert delete_form is not None
-        assert 'data-focus-restore-on-redirect="true"' in delete_form.group(0)
+        assert 'data-focus-restore-on-redirect="true"' not in delete_form.group(0)
 
     def test_portfolio_renders_branding_and_empty_state(self, client):
         resp = client.get("/")
