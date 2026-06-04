@@ -67,7 +67,7 @@
         </form>
         {% if pos.last_market_data_updated %}
             <div class="text-muted actions-last-updated">
-                Last updated: {{ pos.last_market_data_updated.strftime("%Y-%m-%d %H:%M") }}
+                Last updated: {{ pos.last_market_data_updated.strftime("%Y-%m-%d %H:%M UTC") }}
             </div>
         {% endif %}
     </td>

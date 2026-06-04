@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from math import isclose
 from pathlib import Path
 from urllib.parse import quote
@@ -320,6 +320,11 @@ def _clear_position_market_data(position: Position) -> None:
     position.refresh_error = None
 
 
+def _normalize_timestamp_to_utc(ts: datetime) -> datetime:
+    """Normalize naive/aware datetimes to UTC for consistent display."""
+    return ts.astimezone(timezone.utc)
+
+
 def _enrich_position(
     pos: Position,
     enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
@@ -406,7 +411,11 @@ def _enrich_position(
         pos.refresh_error
         or (displayed_triggered[0].description if displayed_triggered else "")
     )
-    retrieved_timestamps = [ts for ts in (pos.daily_retrieved_at, pos.weekly_retrieved_at) if ts is not None]
+    retrieved_timestamps = [
+        _normalize_timestamp_to_utc(ts)
+        for ts in (pos.daily_retrieved_at, pos.weekly_retrieved_at)
+        if ts is not None
+    ]
     last_market_data_updated = max(retrieved_timestamps) if retrieved_timestamps else None
     return {
         "id": pos.id,

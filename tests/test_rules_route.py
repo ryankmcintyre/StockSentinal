@@ -1,7 +1,7 @@
 """Tests for strategy rule configuration routes and integration."""
 
 import re
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -274,6 +274,9 @@ class TestRulesPage:
         assert "rule-tag-error" in resp.text
 
     def test_portfolio_shows_last_updated_timestamp_under_actions(self, client, _setup_db):
+        expected_last_updated = (
+            datetime(2025, 1, 3, 14, 5).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        )
         db = _setup_db()
         try:
             db.add(
@@ -295,7 +298,7 @@ class TestRulesPage:
 
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "Last updated: 2025-01-03 14:05" in resp.text
+        assert f"Last updated: {expected_last_updated}" in resp.text
         assert 'class="text-muted actions-last-updated"' in resp.text
 
     def test_portfolio_renders_sortable_column_headers(self, client, _setup_db):
