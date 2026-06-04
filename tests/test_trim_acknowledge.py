@@ -146,8 +146,12 @@ class TestTrimAcknowledgementLogic:
 
     def test_format_relative_time_uses_expected_singular_and_plural_units(self):
         now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        assert _format_relative_time(now - timedelta(seconds=30), now=now) == "just now"
         assert _format_relative_time(now - timedelta(minutes=1), now=now) == "1 minute ago"
+        assert _format_relative_time(now - timedelta(hours=1), now=now) == "1 hour ago"
         assert _format_relative_time(now - timedelta(hours=2), now=now) == "2 hours ago"
+        assert _format_relative_time(now - timedelta(days=1), now=now) == "1 day ago"
+        assert _format_relative_time(now - timedelta(days=2), now=now) == "2 days ago"
 
 
 class TestTrimAcknowledgementRoutes:
