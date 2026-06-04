@@ -193,9 +193,12 @@ h3 {
     background: #fff;
     border: 1px solid #e0e0e0;
     border-radius: 10px;
-    overflow: hidden;
     font-size: 0.9rem;
     box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.portfolio-table {
+    overflow: visible;
 }
 
 .positions-table th,
@@ -212,6 +215,12 @@ h3 {
     text-transform: uppercase;
     letter-spacing: 0.5px;
     color: #52606d;
+}
+
+.portfolio-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
 }
 
 .table-sort-button {
@@ -316,6 +325,10 @@ h3 {
 
 .actions {
     white-space: nowrap;
+}
+
+.actions-last-updated {
+    margin-top: 0.35rem;
 }
 
 .inline-form {
