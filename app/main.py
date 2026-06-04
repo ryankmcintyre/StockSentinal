@@ -325,6 +325,28 @@ def _normalize_timestamp_to_utc(ts: datetime) -> datetime:
     return ts.astimezone(timezone.utc)
 
 
+def _format_relative_time(ts: datetime, *, now: datetime | None = None) -> str:
+    """Return a human-readable relative timestamp like '2 hours ago'."""
+    now_utc = _normalize_timestamp_to_utc(now or datetime.now(timezone.utc))
+    ts_utc = _normalize_timestamp_to_utc(ts)
+    delta_seconds = int((now_utc - ts_utc).total_seconds())
+    if delta_seconds <= 0:
+        return "just now"
+    if delta_seconds < 60:
+        return "just now"
+    if delta_seconds < 3600:
+        minutes = delta_seconds // 60
+        unit = "minute" if minutes == 1 else "minutes"
+        return f"{minutes} {unit} ago"
+    if delta_seconds < 86400:
+        hours = delta_seconds // 3600
+        unit = "hour" if hours == 1 else "hours"
+        return f"{hours} {unit} ago"
+    days = delta_seconds // 86400
+    unit = "day" if days == 1 else "days"
+    return f"{days} {unit} ago"
+
+
 def _enrich_position(
     pos: Position,
     enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
@@ -417,6 +439,11 @@ def _enrich_position(
         if ts is not None
     ]
     last_market_data_updated = max(retrieved_timestamps) if retrieved_timestamps else None
+    last_market_data_updated_relative = (
+        _format_relative_time(last_market_data_updated)
+        if last_market_data_updated is not None
+        else None
+    )
     return {
         "id": pos.id,
         "ticker": pos.ticker,
@@ -447,6 +474,7 @@ def _enrich_position(
         "weekly_market_date": pos.weekly_market_date,
         "weekly_retrieved_at": pos.weekly_retrieved_at,
         "last_market_data_updated": last_market_data_updated,
+        "last_market_data_updated_relative": last_market_data_updated_relative,
         "refresh_error": pos.refresh_error,
         "refresh_in_progress": bool(pos.refresh_in_progress),
         "refresh_started_at": pos.refresh_started_at,

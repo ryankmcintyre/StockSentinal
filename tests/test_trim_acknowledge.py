@@ -121,6 +121,26 @@ class TestTrimAcknowledgementLogic:
         assert enriched["triggered_rules"][0].verdict == Verdict.sell
         assert enriched["triggered_rules"][0].description == "Daily close (90.00) < SMA-21 (100.00)"
 
+    def test_enrich_position_sets_relative_last_updated_from_latest_timestamp(self):
+        pos = Position(
+            ticker="AAPL",
+            company_name="Apple Inc.",
+            cost_basis=100.0,
+            initial_purchase_date=date(2025, 1, 1),
+            investment_type="long-term",
+            current_price=115.0,
+            daily_retrieved_at=datetime(2025, 1, 1, 9, 0),
+            weekly_retrieved_at=datetime(2025, 1, 2, 10, 0),
+        )
+
+        enriched = _enrich_position(pos)
+
+        assert enriched["last_market_data_updated"].year == 2025
+        assert enriched["last_market_data_updated"].month == 1
+        assert enriched["last_market_data_updated"].day == 2
+        assert isinstance(enriched["last_market_data_updated_relative"], str)
+        assert "ago" in enriched["last_market_data_updated_relative"]
+
 
 class TestTrimAcknowledgementRoutes:
     def test_acknowledge_route_sets_flag_and_redirects(self, client, _setup_db):

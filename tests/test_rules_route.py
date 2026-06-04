@@ -1,7 +1,7 @@
 """Tests for strategy rule configuration routes and integration."""
 
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -274,9 +274,7 @@ class TestRulesPage:
         assert "rule-tag-error" in resp.text
 
     def test_portfolio_shows_last_updated_timestamp_under_actions(self, client, _setup_db):
-        expected_last_updated = (
-            datetime(2025, 1, 3, 14, 5).astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
-        )
+        now = datetime.now(timezone.utc)
         db = _setup_db()
         try:
             db.add(
@@ -288,8 +286,8 @@ class TestRulesPage:
                     investment_type="long-term",
                     current_price=115.0,
                     notes=None,
-                    daily_retrieved_at=datetime(2025, 1, 3, 14, 5),
-                    weekly_retrieved_at=datetime(2025, 1, 2, 9, 30),
+                    daily_retrieved_at=now - timedelta(hours=2, minutes=5),
+                    weekly_retrieved_at=now - timedelta(hours=3),
                 )
             )
             db.commit()
@@ -298,7 +296,8 @@ class TestRulesPage:
 
         resp = client.get("/")
         assert resp.status_code == 200
-        assert f"Last updated: {expected_last_updated}" in resp.text
+        assert re.search(r"Last updated:\s+\d+\s+hours ago", resp.text)
+        assert not re.search(r"Last updated:\s+\d{4}-\d{2}-\d{2}", resp.text)
         assert 'class="text-muted actions-last-updated"' in resp.text
 
     def test_portfolio_renders_sortable_column_headers(self, client, _setup_db):
