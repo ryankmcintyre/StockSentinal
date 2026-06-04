@@ -122,7 +122,7 @@ class TestTrimAcknowledgementLogic:
         assert enriched["triggered_rules"][0].description == "Daily close (90.00) < SMA-21 (100.00)"
 
     def test_enrich_position_sets_relative_last_updated_from_latest_timestamp(self):
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         daily_retrieved_at = now - timedelta(days=2)
         weekly_retrieved_at = now - timedelta(days=1, hours=3)
         pos = Position(
@@ -139,6 +139,7 @@ class TestTrimAcknowledgementLogic:
         enriched = _enrich_position(pos)
         expected_latest = max(daily_retrieved_at, weekly_retrieved_at).astimezone(timezone.utc)
 
+        assert expected_latest == weekly_retrieved_at
         assert enriched["last_market_data_updated"] == expected_latest
         assert isinstance(enriched["last_market_data_updated_relative"], str)
         assert "ago" in enriched["last_market_data_updated_relative"]
