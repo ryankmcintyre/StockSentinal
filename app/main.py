@@ -259,7 +259,7 @@ def _mark_positions_refresh_state(
         return 0
 
     positions = uow.positions.get_by_ids(position_ids)
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
     for pos in positions:
         pos.refresh_in_progress = in_progress
         pos.refresh_started_at = now if in_progress else None
@@ -271,7 +271,7 @@ def _mark_positions_refresh_state(
 
 def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
     """Reset stale in-progress flags left behind by interrupted refreshes."""
-    cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
     cleared_count = uow.positions.clear_stale_refreshing(cutoff)
     if not cleared_count:
         return 0
@@ -282,7 +282,7 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
 
 def _clear_all_stale_refresh_flags() -> int:
     """Reset stale refresh flags across all users during application startup."""
-    cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
     with engine.begin() as conn:
         result = conn.execute(
             text(
@@ -1182,7 +1182,7 @@ def add_position(
                 current_price = bars[0].close
                 daily_close = bars[0].close
                 daily_market_date = bars[0].date
-                daily_retrieved_at = datetime.now()
+                daily_retrieved_at = datetime.now(timezone.utc)
         except Exception:
             logger.warning(
                 "Failed to fetch price for %s from %s",
