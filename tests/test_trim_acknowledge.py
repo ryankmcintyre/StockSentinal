@@ -1,6 +1,6 @@
 """Tests for trim acknowledgement routes and portfolio overrides."""
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,7 +9,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import get_authenticated_uow, get_optional_uow, get_uow
-from app.main import TRIM_ACKNOWLEDGED_REASON, _enrich_position, app
+from app.main import _enrich_position, _format_relative_time, app
 from app.models import Base, Position, StrategyRuleConfig, User
 from app.schemas import Verdict
 from app.unit_of_work import SqlAlchemyUnitOfWork
@@ -100,8 +100,9 @@ class TestTrimAcknowledgementLogic:
         assert enriched["computed_verdict"] == Verdict.trim
         assert enriched["verdict"] == Verdict.hold
         assert enriched["trim_acknowledged"] is True
-        assert enriched["triggered_rules"][0].description == TRIM_ACKNOWLEDGED_REASON
-        assert enriched["reason_sort_value"] == TRIM_ACKNOWLEDGED_REASON
+        trim_rule_desc = "Price is 15.0% above cost basis (>10%)"
+        assert any(r.description == trim_rule_desc for r in enriched["triggered_rules"])
+        assert trim_rule_desc in enriched["reason_sort_value"]
 
     def test_enrich_position_does_not_suppress_sell_when_trim_is_acknowledged(self):
         pos = Position(
@@ -120,6 +121,38 @@ class TestTrimAcknowledgementLogic:
         assert enriched["verdict"] == Verdict.sell
         assert enriched["triggered_rules"][0].verdict == Verdict.sell
         assert enriched["triggered_rules"][0].description == "Daily close (90.00) < SMA-21 (100.00)"
+
+    def test_enrich_position_sets_relative_last_updated_from_latest_timestamp(self):
+        now = datetime.now(timezone.utc)
+        daily_retrieved_at = now - timedelta(days=2)
+        weekly_retrieved_at = now - timedelta(days=1, hours=3)
+        pos = Position(
+            ticker="AAPL",
+            company_name="Apple Inc.",
+            cost_basis=100.0,
+            initial_purchase_date=date(2025, 1, 1),
+            investment_type="long-term",
+            current_price=115.0,
+            daily_retrieved_at=daily_retrieved_at,
+            weekly_retrieved_at=weekly_retrieved_at,
+        )
+
+        enriched = _enrich_position(pos)
+        expected_latest = max(daily_retrieved_at, weekly_retrieved_at).astimezone(timezone.utc)
+
+        assert expected_latest == weekly_retrieved_at
+        assert enriched["last_market_data_updated"] == expected_latest
+        assert isinstance(enriched["last_market_data_updated_relative"], str)
+        assert "ago" in enriched["last_market_data_updated_relative"]
+
+    def test_format_relative_time_uses_expected_singular_and_plural_units(self):
+        now = datetime(2026, 1, 1, 12, 0, tzinfo=timezone.utc)
+        assert _format_relative_time(now - timedelta(seconds=30), now=now) == "just now"
+        assert _format_relative_time(now - timedelta(minutes=1), now=now) == "1 minute ago"
+        assert _format_relative_time(now - timedelta(hours=1), now=now) == "1 hour ago"
+        assert _format_relative_time(now - timedelta(hours=2), now=now) == "2 hours ago"
+        assert _format_relative_time(now - timedelta(days=1), now=now) == "1 day ago"
+        assert _format_relative_time(now - timedelta(days=2), now=now) == "2 days ago"
 
 
 class TestTrimAcknowledgementRoutes:
@@ -227,7 +260,7 @@ class TestTrimAcknowledgementPortfolioUi:
         assert resp.text.count("Mark as Trimmed") == 1
         assert "Clear Trim" not in resp.text
 
-    def test_portfolio_shows_trimmed_indicator_clear_button_and_override_reason(
+    def test_portfolio_shows_trimmed_indicator_clear_button_and_original_trim_rule(
         self, client, _setup_db
     ):
         db = _setup_db()
@@ -253,8 +286,8 @@ class TestTrimAcknowledgementPortfolioUi:
         assert "Hold" in resp.text
         assert "Trimmed ✓" in resp.text
         assert "Clear Trim" in resp.text
-        assert TRIM_ACKNOWLEDGED_REASON in resp.text
-        assert "Price is 15.0% above cost basis (&gt;10%)" not in resp.text
+        assert "Trim acknowledged" not in resp.text
+        assert "Price is 15.0% above cost basis (&gt;10%)" in resp.text
 
     def test_portfolio_does_not_show_trimmed_indicator_for_natural_hold(self, client, _setup_db):
         db = _setup_db()

@@ -1,6 +1,6 @@
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from math import isclose
 from pathlib import Path
 from urllib.parse import quote
@@ -169,8 +169,6 @@ FLASH_MESSAGES = {
     "refresh_limit": "You've used 5 of 5 refreshes today. Your limit resets at midnight UTC.",
     "admin_updated": "Admin user settings updated.",
 }
-TRIM_ACKNOWLEDGED_REASON = "Trim acknowledged"
-
 
 def _get_request_user_id(request: Request, uow: UnitOfWork | None = None) -> str | None:
     """Return the authenticated user id, falling back to a scoped test UoW when needed."""
@@ -259,7 +257,7 @@ def _mark_positions_refresh_state(
         return 0
 
     positions = uow.positions.get_by_ids(position_ids)
-    now = datetime.now()
+    now = _normalize_timestamp_for_storage(datetime.now(timezone.utc))
     for pos in positions:
         pos.refresh_in_progress = in_progress
         pos.refresh_started_at = now if in_progress else None
@@ -271,7 +269,9 @@ def _mark_positions_refresh_state(
 
 def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
     """Reset stale in-progress flags left behind by interrupted refreshes."""
-    cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    cutoff = _normalize_timestamp_for_storage(
+        datetime.now(timezone.utc) - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    )
     cleared_count = uow.positions.clear_stale_refreshing(cutoff)
     if not cleared_count:
         return 0
@@ -282,7 +282,9 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
 
 def _clear_all_stale_refresh_flags() -> int:
     """Reset stale refresh flags across all users during application startup."""
-    cutoff = datetime.now() - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    cutoff = _normalize_timestamp_for_storage(
+        datetime.now(timezone.utc) - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    )
     with engine.begin() as conn:
         result = conn.execute(
             text(
@@ -318,6 +320,40 @@ def _clear_position_market_data(position: Position) -> None:
     position.weekly_market_date = None
     position.weekly_retrieved_at = None
     position.refresh_error = None
+
+
+def _normalize_timestamp_to_utc(ts: datetime) -> datetime:
+    """Normalize naive/aware datetimes to UTC for consistent display."""
+    if ts.tzinfo is None or ts.utcoffset() is None:
+        # SQLite DateTime columns round-trip as naive values; treat them as UTC
+        # so relative-time rendering and stale checks stay host-timezone agnostic.
+        return ts.replace(tzinfo=timezone.utc)
+    return ts.astimezone(timezone.utc)
+
+
+def _normalize_timestamp_for_storage(ts: datetime) -> datetime:
+    """Normalize timestamps to UTC-naive values for DateTime columns."""
+    return _normalize_timestamp_to_utc(ts).replace(tzinfo=None)
+
+
+def _format_relative_time(ts: datetime, *, now: datetime | None = None) -> str:
+    """Return a human-readable relative timestamp like '2 hours ago'."""
+    now_utc = _normalize_timestamp_to_utc(now or datetime.now(timezone.utc))
+    ts_utc = _normalize_timestamp_to_utc(ts)
+    delta_seconds = int((now_utc - ts_utc).total_seconds())
+    if delta_seconds < 60:
+        return "just now"
+    if delta_seconds < 3600:
+        minutes = delta_seconds // 60
+        unit = "minute" if minutes == 1 else "minutes"
+        return f"{minutes} {unit} ago"
+    if delta_seconds < 86400:
+        hours = delta_seconds // 3600
+        unit = "hour" if hours == 1 else "hours"
+        return f"{hours} {unit} ago"
+    days = delta_seconds // 86400
+    unit = "day" if days == 1 else "days"
+    return f"{days} {unit} ago"
 
 
 def _enrich_position(
@@ -395,16 +431,20 @@ def _enrich_position(
     displayed_triggered = triggered
     if trim_acknowledged and computed_verdict == Verdict.trim:
         verdict = Verdict.hold
-        displayed_triggered = [
-            RuleResult(
-                rule_label="TRIM_ACKNOWLEDGED",
-                verdict=Verdict.hold,
-                description=TRIM_ACKNOWLEDGED_REASON,
-            )
-        ]
     reason_sort_value = (
         pos.refresh_error
         or (displayed_triggered[0].description if displayed_triggered else "")
+    )
+    retrieved_timestamps = [
+        _normalize_timestamp_to_utc(ts)
+        for ts in (pos.daily_retrieved_at, pos.weekly_retrieved_at)
+        if ts is not None
+    ]
+    last_market_data_updated = max(retrieved_timestamps) if retrieved_timestamps else None
+    last_market_data_updated_relative = (
+        _format_relative_time(last_market_data_updated)
+        if last_market_data_updated is not None
+        else None
     )
     return {
         "id": pos.id,
@@ -435,6 +475,8 @@ def _enrich_position(
         "weekly_sma_20": pos.weekly_sma_20,
         "weekly_market_date": pos.weekly_market_date,
         "weekly_retrieved_at": pos.weekly_retrieved_at,
+        "last_market_data_updated": last_market_data_updated,
+        "last_market_data_updated_relative": last_market_data_updated_relative,
         "refresh_error": pos.refresh_error,
         "refresh_in_progress": bool(pos.refresh_in_progress),
         "refresh_started_at": pos.refresh_started_at,
@@ -1144,7 +1186,7 @@ def add_position(
                 current_price = bars[0].close
                 daily_close = bars[0].close
                 daily_market_date = bars[0].date
-                daily_retrieved_at = datetime.now()
+                daily_retrieved_at = datetime.now(timezone.utc)
         except Exception:
             logger.warning(
                 "Failed to fetch price for %s from %s",

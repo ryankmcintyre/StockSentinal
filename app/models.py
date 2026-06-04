@@ -1,7 +1,30 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, relationship
+from sqlalchemy.types import TypeDecorator
+
+
+class UTCDateTime(TypeDecorator):
+    """Store datetimes as UTC and return timezone-aware UTC values."""
+    impl = DateTime
+    cache_ok = True
+
+    def process_bind_param(self, value, dialect):
+        """Store datetimes as UTC-naive; treat naive inputs as already UTC."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc).replace(tzinfo=None)
+
+    def process_result_value(self, value, dialect):
+        """Return persisted timestamps as timezone-aware UTC datetimes."""
+        if value is None:
+            return None
+        if value.tzinfo is None:
+            return value.replace(tzinfo=timezone.utc)
+        return value.astimezone(timezone.utc)
 
 
 class Base(DeclarativeBase):
@@ -49,18 +72,18 @@ class Position(Base):
     daily_close = Column(Float, nullable=True)
     daily_sma_21 = Column(Float, nullable=True)
     daily_market_date = Column(Date, nullable=True)
-    daily_retrieved_at = Column(DateTime, nullable=True)
+    daily_retrieved_at = Column(UTCDateTime(), nullable=True)
 
     # Weekly data (used by long-term sell rule)
     weekly_close = Column(Float, nullable=True)
     weekly_sma_20 = Column(Float, nullable=True)
     weekly_market_date = Column(Date, nullable=True)
-    weekly_retrieved_at = Column(DateTime, nullable=True)
+    weekly_retrieved_at = Column(UTCDateTime(), nullable=True)
 
     # Refresh status
     refresh_error = Column(String, nullable=True)
     refresh_in_progress = Column(Boolean, nullable=True, default=False)
-    refresh_started_at = Column(DateTime, nullable=True)
+    refresh_started_at = Column(UTCDateTime(), nullable=True)
     previous_verdict = Column(String, nullable=True)
     trim_acknowledged = Column(Boolean, nullable=False, default=False)
 
