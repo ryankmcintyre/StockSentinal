@@ -322,6 +322,52 @@ class TestRulesPage:
         assert "Your portfolio is ready for its first position." in resp.text
         assert "Add a stock to start getting clear Sell, Trim, or Hold guidance." in resp.text
 
+    def test_portfolio_table_has_scoped_sticky_header_styling(self, client, _setup_db):
+        db = _setup_db()
+        try:
+            db.add(
+                Position(
+                    ticker="AAPL",
+                    company_name="Apple Inc.",
+                    cost_basis=100.0,
+                    initial_purchase_date=date(2025, 1, 1),
+                    investment_type="long-term",
+                    current_price=115.0,
+                    notes=None,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        portfolio_resp = client.get("/")
+        assert portfolio_resp.status_code == 200
+        assert re.search(
+            r'<table class="[^"]*\bpositions-table\b[^"]*\bportfolio-table\b[^"]*"[^>]*data-sortable-table="true"',
+            portfolio_resp.text,
+        ) is not None, "Portfolio table should include the scoped portfolio-table class"
+
+        resp = client.get("/static/styles.css")
+        assert resp.status_code == 200
+
+        shared_table_match = re.search(r"\.positions-table\s*\{([^}]*)\}", resp.text, re.DOTALL)
+        assert shared_table_match is not None
+        assert "overflow: hidden;" not in shared_table_match.group(1)
+
+        portfolio_table_match = re.search(r"\.portfolio-table\s*\{([^}]*)\}", resp.text, re.DOTALL)
+        assert portfolio_table_match is not None
+        assert "overflow: visible;" in portfolio_table_match.group(1)
+
+        portfolio_header_match = re.search(r"\.portfolio-table thead th\s*\{([^}]*)\}", resp.text, re.DOTALL)
+        assert portfolio_header_match is not None
+        portfolio_header_rule_block = portfolio_header_match.group(1)
+        assert "position: sticky;" in portfolio_header_rule_block
+        assert "top: 0;" in portfolio_header_rule_block
+
+        shared_header_match = re.search(r"\.positions-table thead th\s*\{([^}]*)\}", resp.text, re.DOTALL)
+        assert shared_header_match is not None
+        assert "position: sticky;" not in shared_header_match.group(1)
+
     def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
         from app.main import _refresh_single_position_task
 
