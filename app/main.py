@@ -393,7 +393,6 @@ def _enrich_position(
     displayed_triggered = triggered
     if trim_acknowledged and computed_verdict == Verdict.trim:
         verdict = Verdict.hold
-        displayed_triggered = []
     reason_sort_value = (
         pos.refresh_error
         or (displayed_triggered[0].description if displayed_triggered else "")
