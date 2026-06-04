@@ -10,6 +10,14 @@
         return rawValue.trim().toLowerCase();
     }
 
+    function stampOriginalIndexes(tbody) {
+        Array.from(tbody.rows).forEach(function (row, index) {
+            if (!("originalIndex" in row.dataset)) {
+                row.dataset.originalIndex = String(index);
+            }
+        });
+    }
+
     function updateHeaderState(headers, activeHeader, direction) {
         headers.forEach(function (header) {
             var th = header.closest("th");
@@ -29,6 +37,68 @@
         });
     }
 
+    function resetTableOrder(tbody) {
+        Array.from(tbody.rows)
+            .slice()
+            .sort(function (left, right) {
+                return (
+                    Number(left.dataset.originalIndex) -
+                    Number(right.dataset.originalIndex)
+                );
+            })
+            .forEach(function (row) {
+                tbody.appendChild(row);
+            });
+    }
+
+    function updateFilterState(filters, activeFilter) {
+        filters.forEach(function (filter) {
+            var isActive = filter.dataset.summaryFilter === activeFilter;
+            filter.setAttribute("aria-pressed", isActive ? "true" : "false");
+            filter.classList.toggle("is-active", isActive);
+        });
+    }
+
+    function applyFilter(tbody, activeFilter) {
+        Array.from(tbody.rows).forEach(function (row) {
+            row.hidden =
+                activeFilter !== "total" &&
+                (row.dataset.verdict || "").toLowerCase() !== activeFilter;
+        });
+    }
+
+    function wireSummaryFilters(table, headers) {
+        var tbody = table.tBodies[0];
+        var filters = Array.from(
+            document.querySelectorAll("[data-summary-filter]")
+        );
+        var activeFilter = "total";
+
+        function syncFilterUi() {
+            updateFilterState(filters, activeFilter);
+            applyFilter(tbody, activeFilter);
+        }
+
+        if (!filters.length) {
+            return;
+        }
+
+        filters.forEach(function (filter) {
+            filter.addEventListener("click", function () {
+                activeFilter = filter.dataset.summaryFilter || "total";
+                updateHeaderState(headers, null, null);
+                resetTableOrder(tbody);
+                syncFilterUi();
+            });
+        });
+
+        document.addEventListener("portfolio:rows-updated", function () {
+            syncFilterUi();
+        });
+
+        syncFilterUi();
+    }
+
     function sortTable(table) {
         var tbody = table.tBodies[0];
         var headers = Array.from(
@@ -37,11 +107,9 @@
         // Stamp each row with its load-order index once so the third click
         // ("reset") can restore the original order. Rows that get swapped in
         // place later carry this attribute forward, so it stays stable.
-        Array.from(tbody.rows).forEach(function (row, index) {
-            if (!("originalIndex" in row.dataset)) {
-                row.dataset.originalIndex = String(index);
-            }
-        });
+        stampOriginalIndexes(tbody);
+
+        wireSummaryFilters(table, headers);
 
         headers.forEach(function (header) {
             header.addEventListener("click", function () {
@@ -61,16 +129,7 @@
                 var rows = Array.from(tbody.rows);
 
                 if (nextDirection === null) {
-                    rows.slice()
-                        .sort(function (left, right) {
-                            return (
-                                Number(left.dataset.originalIndex) -
-                                Number(right.dataset.originalIndex)
-                            );
-                        })
-                        .forEach(function (row) {
-                            tbody.appendChild(row);
-                        });
+                    resetTableOrder(tbody);
                     return;
                 }
 
