@@ -330,8 +330,6 @@ def _format_relative_time(ts: datetime, *, now: datetime | None = None) -> str:
     now_utc = _normalize_timestamp_to_utc(now or datetime.now(timezone.utc))
     ts_utc = _normalize_timestamp_to_utc(ts)
     delta_seconds = int((now_utc - ts_utc).total_seconds())
-    if delta_seconds <= 0:
-        return "just now"
     if delta_seconds < 60:
         return "just now"
     if delta_seconds < 3600:
