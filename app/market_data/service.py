@@ -1238,7 +1238,7 @@ class MarketDataService:
             # Heartbeat: advance refresh_started_at for positions still marked
             # in-progress so a long-but-progressing refresh-all is not treated
             # as stale (and cleared) by the periodic stale-flag sweep.
-            heartbeat = datetime.now()
+            heartbeat = datetime.now(timezone.utc)
             for pos in group:
                 if getattr(pos, "refresh_in_progress", False):
                     pos.refresh_started_at = heartbeat

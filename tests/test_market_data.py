@@ -647,7 +647,7 @@ class TestRefreshAllPositions:
     def test_advances_refresh_started_at_heartbeat_for_in_progress_positions(
         self, mocker
     ):
-        old_started = datetime(2026, 4, 21, 9, 0, 0)
+        old_started = datetime(2026, 4, 21, 9, 0, 0, tzinfo=timezone.utc)
         pos = FakePosition(ticker="AAPL", investment_type="long-term")
         pos.refresh_in_progress = True
         pos.refresh_started_at = old_started
@@ -661,6 +661,7 @@ class TestRefreshAllPositions:
         self.service.refresh_all_positions(db, force=False)
 
         assert pos.refresh_started_at > old_started
+        assert pos.refresh_started_at.tzinfo == timezone.utc
 
     def test_user_id_scopes_refresh_all_query(self, mocker):
         positions = [FakePosition(ticker="AAPL", investment_type="long-term")]
