@@ -86,8 +86,10 @@
         filters.forEach(function (filter) {
             filter.addEventListener("click", function () {
                 activeFilter = filter.dataset.summaryFilter || "total";
-                updateHeaderState(headers, null, null);
-                resetTableOrder(tbody);
+                if (activeFilter === "total") {
+                    updateHeaderState(headers, null, null);
+                    resetTableOrder(tbody);
+                }
                 syncFilterUi();
             });
         });
