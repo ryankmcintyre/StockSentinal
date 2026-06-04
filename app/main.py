@@ -327,6 +327,8 @@ def _clear_position_market_data(position: Position) -> None:
 def _normalize_timestamp_to_utc(ts: datetime) -> datetime:
     """Normalize naive/aware datetimes to UTC for consistent display."""
     if ts.tzinfo is None or ts.utcoffset() is None:
+        # SQLite DateTime columns round-trip as naive values; treat them as UTC
+        # so relative-time rendering and stale checks stay host-timezone agnostic.
         return ts.replace(tzinfo=timezone.utc)
     return ts.astimezone(timezone.utc)
 

@@ -11,13 +11,15 @@ class UTCDateTime(TypeDecorator):
     cache_ok = True
 
     def process_bind_param(self, value, dialect):
+        """Store datetimes as UTC-naive; treat naive inputs as already UTC."""
         if value is None:
             return None
         if value.tzinfo is None:
-            return value
+            value = value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc).replace(tzinfo=None)
 
     def process_result_value(self, value, dialect):
+        """Return persisted timestamps as timezone-aware UTC datetimes."""
         if value is None:
             return None
         if value.tzinfo is None:
