@@ -2,6 +2,30 @@
     var SORT_STATE_STORAGE_KEY = "portfolioTableSortState";
     var FOCUS_POSITION_STORAGE_KEY = "portfolioFocusPositionId";
 
+    function readLocalStorage(key) {
+        try {
+            return window.localStorage.getItem(key);
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    function writeLocalStorage(key, value) {
+        try {
+            window.localStorage.setItem(key, value);
+        } catch (_error) {
+            // Ignore storage failures (privacy mode, quota, etc.).
+        }
+    }
+
+    function removeLocalStorage(key) {
+        try {
+            window.localStorage.removeItem(key);
+        } catch (_error) {
+            // Ignore storage failures (privacy mode, quota, etc.).
+        }
+    }
+
     function readSessionStorage(key) {
         try {
             return window.sessionStorage.getItem(key);
@@ -58,10 +82,10 @@
 
     function persistSortState(activeHeader, direction) {
         if (!activeHeader || !direction) {
-            removeSessionStorage(SORT_STATE_STORAGE_KEY);
+            removeLocalStorage(SORT_STATE_STORAGE_KEY);
             return;
         }
-        writeSessionStorage(
+        writeLocalStorage(
             SORT_STATE_STORAGE_KEY,
             JSON.stringify({
                 column: activeHeader.dataset.sortColumn,
@@ -71,21 +95,21 @@
     }
 
     function loadSortState(headers) {
-        var raw = readSessionStorage(SORT_STATE_STORAGE_KEY);
+        var raw = readLocalStorage(SORT_STATE_STORAGE_KEY);
         if (!raw) {
             return null;
         }
         try {
             var parsed = JSON.parse(raw);
             if (!parsed || (parsed.direction !== "asc" && parsed.direction !== "desc")) {
-                removeSessionStorage(SORT_STATE_STORAGE_KEY);
+                removeLocalStorage(SORT_STATE_STORAGE_KEY);
                 return null;
             }
             var header = headers.find(function (candidate) {
                 return candidate.dataset.sortColumn === parsed.column;
             });
             if (!header) {
-                removeSessionStorage(SORT_STATE_STORAGE_KEY);
+                removeLocalStorage(SORT_STATE_STORAGE_KEY);
                 return null;
             }
             return {
@@ -93,7 +117,7 @@
                 direction: parsed.direction,
             };
         } catch (_error) {
-            removeSessionStorage(SORT_STATE_STORAGE_KEY);
+            removeLocalStorage(SORT_STATE_STORAGE_KEY);
             return null;
         }
     }
@@ -189,6 +213,34 @@
         });
     }
 
+    function rememberFocusedPositionOnRedirectLinkClick(table) {
+        table.addEventListener("click", function (event) {
+            var target = event.target;
+            if (!target || typeof target.closest !== "function") {
+                return;
+            }
+            if (
+                event.defaultPrevented ||
+                event.button !== 0 ||
+                event.metaKey ||
+                event.ctrlKey ||
+                event.shiftKey ||
+                event.altKey
+            ) {
+                return;
+            }
+            var link = target.closest("a[data-focus-restore-on-redirect='true']");
+            if (!link || link.getAttribute("target") === "_blank") {
+                return;
+            }
+            var row = link.closest("tr[data-position-id]");
+            if (!row || !row.dataset.positionId) {
+                return;
+            }
+            writeSessionStorage(FOCUS_POSITION_STORAGE_KEY, row.dataset.positionId);
+        });
+    }
+
     function sortTable(table) {
         var tbody = table.tBodies[0];
         var headers = Array.from(
@@ -226,6 +278,7 @@
         }
 
         rememberFocusedPositionOnSubmit(table);
+        rememberFocusedPositionOnRedirectLinkClick(table);
         focusPositionFromStorage(table);
     }
 

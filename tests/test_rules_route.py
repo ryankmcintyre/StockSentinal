@@ -311,7 +311,7 @@ class TestRulesPage:
         assert 'data-sort-value="190.0"' in resp.text
         assert "/static/portfolio-table.js" in resp.text
 
-    def test_portfolio_focus_restore_marker_only_on_redirecting_forms(
+    def test_portfolio_focus_restore_marker_only_on_redirecting_actions(
         self, client, _setup_db, mocker
     ):
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
@@ -335,6 +335,13 @@ class TestRulesPage:
 
         resp = client.get("/")
         assert resp.status_code == 200
+
+        edit_link = re.search(
+            rf'<a[^>]*href="/edit/{position_id}"[^>]*>',
+            resp.text,
+        )
+        assert edit_link is not None
+        assert 'data-focus-restore-on-redirect="true"' in edit_link.group(0)
 
         refresh_form = re.search(
             rf'<form[^>]*action="/refresh/{position_id}"[^>]*>',
