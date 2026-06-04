@@ -1,4 +1,8 @@
-<tr data-position-id="{{ pos.id }}" data-refresh-in-progress="{{ 'true' if pos.refresh_in_progress else 'false' }}">
+<tr
+    data-position-id="{{ pos.id }}"
+    data-refresh-in-progress="{{ 'true' if pos.refresh_in_progress else 'false' }}"
+    data-verdict="{{ pos.verdict.value | lower }}"
+>
     <td data-sort-value="{{ pos.verdict_sort_priority }}">
         <span class="verdict verdict-{{ pos.verdict.value | lower }}">
             {{ pos.verdict.value }}

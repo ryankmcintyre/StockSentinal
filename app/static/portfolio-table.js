@@ -61,6 +61,14 @@
         return rawValue.trim().toLowerCase();
     }
 
+    function stampOriginalIndexes(tbody) {
+        Array.from(tbody.rows).forEach(function (row, index) {
+            if (!("originalIndex" in row.dataset)) {
+                row.dataset.originalIndex = String(index);
+            }
+        });
+    }
+
     function updateHeaderState(headers, activeHeader, direction) {
         headers.forEach(function (header) {
             var th = header.closest("th");
@@ -78,6 +86,75 @@
             );
             indicator.textContent = isActive ? (direction === "asc" ? "↑" : "↓") : "";
         });
+    }
+
+    function updateFilterState(filters, activeFilter) {
+        filters.forEach(function (filter) {
+            var isActive = filter.dataset.summaryFilter === activeFilter;
+            filter.setAttribute("aria-pressed", isActive ? "true" : "false");
+            filter.classList.toggle("is-active", isActive);
+        });
+    }
+
+    function applyFilter(tbody, activeFilter) {
+        Array.from(tbody.rows).forEach(function (row) {
+            row.hidden =
+                activeFilter !== "total" &&
+                (row.dataset.verdict || "").toLowerCase() !== activeFilter;
+        });
+    }
+
+    function formatFilterLabel(activeFilter) {
+        return activeFilter.charAt(0).toUpperCase() + activeFilter.slice(1);
+    }
+
+    function updateFilteredEmptyState(tbody, activeFilter, emptyState) {
+        if (!emptyState) {
+            return;
+        }
+
+        var hasVisibleRows = Array.from(tbody.rows).some(function (row) {
+            return !row.hidden;
+        });
+        var emptyLabel = emptyState.querySelector("[data-empty-filter-label]");
+
+        if (emptyLabel) {
+            emptyLabel.textContent = formatFilterLabel(activeFilter);
+        }
+
+        emptyState.hidden = activeFilter === "total" || hasVisibleRows;
+    }
+
+    function wireSummaryFilters(table) {
+        var tbody = table.tBodies[0];
+        var filters = Array.from(
+            document.querySelectorAll("[data-summary-filter]")
+        );
+        var emptyState = document.querySelector("[data-filtered-empty-state]");
+        var activeFilter = "total";
+
+        function syncFilterUi() {
+            updateFilterState(filters, activeFilter);
+            applyFilter(tbody, activeFilter);
+            updateFilteredEmptyState(tbody, activeFilter, emptyState);
+        }
+
+        if (!filters.length) {
+            return;
+        }
+
+        filters.forEach(function (filter) {
+            filter.addEventListener("click", function () {
+                activeFilter = filter.dataset.summaryFilter || "total";
+                syncFilterUi();
+            });
+        });
+
+        document.addEventListener("portfolio:rows-updated", function () {
+            syncFilterUi();
+        });
+
+        syncFilterUi();
     }
 
     function persistSortState(activeHeader, direction) {
@@ -234,26 +311,24 @@
                 return;
             }
             var row = link.closest("tr[data-position-id]");
-            if (!row || !row.dataset.positionId) {
-                return;
-            }
-            writeSessionStorage(FOCUS_POSITION_STORAGE_KEY, row.dataset.positionId);
-        });
-    }
+        if (!row || !row.dataset.positionId) {
+            return;
+        }
+        writeSessionStorage(FOCUS_POSITION_STORAGE_KEY, row.dataset.positionId);
+    });
+}
 
-    function sortTable(table) {
-        var tbody = table.tBodies[0];
-        var headers = Array.from(
+function sortTable(table) {
+    var tbody = table.tBodies[0];
+    var headers = Array.from(
             table.querySelectorAll("[data-sort-header='true']")
         );
         // Stamp each row with its load-order index once so the third click
         // ("reset") can restore the original order. Rows that get swapped in
         // place later carry this attribute forward, so it stays stable.
-        Array.from(tbody.rows).forEach(function (row, index) {
-            if (!("originalIndex" in row.dataset)) {
-                row.dataset.originalIndex = String(index);
-            }
-        });
+        stampOriginalIndexes(tbody);
+
+        wireSummaryFilters(table);
 
         headers.forEach(function (header) {
             header.addEventListener("click", function () {

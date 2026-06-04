@@ -341,6 +341,56 @@ class TestRulesPage:
         assert 'data-sort-value="190.0"' in resp.text
         assert "/static/portfolio-table.js" in resp.text
 
+    def test_portfolio_renders_filterable_summary_cards(self, client, _setup_db):
+        db = _setup_db()
+        try:
+            db.add_all(
+                [
+                    Position(
+                        ticker="AAPL",
+                        company_name="Apple Inc.",
+                        cost_basis=100.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=115.0,
+                        notes=None,
+                    ),
+                    Position(
+                        ticker="MSFT",
+                        company_name="Microsoft Corp.",
+                        cost_basis=100.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=100.0,
+                        notes=None,
+                    ),
+                ]
+            )
+            db.commit()
+
+        finally:
+            db.close()
+
+        resp = client.get("/")
+
+        assert resp.status_code == 200
+        assert resp.text.count('data-summary-filter="') == 4
+        assert 'data-summary-filter="total" aria-pressed="true"' in resp.text
+        assert 'data-summary-filter="sell" aria-pressed="false"' in resp.text
+        assert 'data-summary-filter="trim" aria-pressed="false"' in resp.text
+        assert 'data-summary-filter="hold" aria-pressed="false"' in resp.text
+        assert re.search(r'data-summary-count="total">\s*2\s*<', resp.text)
+        assert re.search(r'data-summary-count="trim">\s*1\s*<', resp.text)
+        assert re.search(r'data-summary-count="hold">\s*1\s*<', resp.text)
+        assert 'data-verdict="trim"' in resp.text
+        assert 'data-verdict="hold"' in resp.text
+        assert 'data-filtered-empty-state' in resp.text
+        assert re.search(r'data-filtered-empty-state[^>]*\bhidden\b', resp.text)
+        assert 'role="status"' in resp.text
+        assert 'aria-live="polite"' in resp.text
+        assert 'data-empty-filter-label' in resp.text
+        assert "positions match this filter." in resp.text
+
     def test_portfolio_focus_restore_marker_only_on_redirecting_actions(
         self, client, _setup_db, mocker
     ):

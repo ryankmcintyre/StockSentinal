@@ -11,22 +11,22 @@
 </section>
 
 <section class="summary">
-    <div class="summary-card summary-total">
+    <button type="button" class="summary-card summary-total is-active" data-summary-filter="total" aria-pressed="true">
         <span class="summary-count" data-summary-count="total">{{ summary.total }}</span>
         <span class="summary-label">Total</span>
-    </div>
-    <div class="summary-card summary-sell">
+    </button>
+    <button type="button" class="summary-card summary-sell" data-summary-filter="sell" aria-pressed="false">
         <span class="summary-count" data-summary-count="sell">{{ summary.sell }}</span>
         <span class="summary-label">Sell</span>
-    </div>
-    <div class="summary-card summary-trim">
+    </button>
+    <button type="button" class="summary-card summary-trim" data-summary-filter="trim" aria-pressed="false">
         <span class="summary-count" data-summary-count="trim">{{ summary.trim }}</span>
         <span class="summary-label">Trim</span>
-    </div>
-    <div class="summary-card summary-hold">
+    </button>
+    <button type="button" class="summary-card summary-hold" data-summary-filter="hold" aria-pressed="false">
         <span class="summary-count" data-summary-count="hold">{{ summary.hold }}</span>
         <span class="summary-label">Hold</span>
-    </div>
+    </button>
 </section>
 
 {% if api_configured and positions %}
@@ -144,6 +144,11 @@
         {% endfor %}
     </tbody>
 </table>
+<div class="empty-state filtered-empty-state" data-filtered-empty-state hidden role="status" aria-live="polite">
+    <span class="empty-state-mark" aria-hidden="true">∅</span>
+    <h2>No <span data-empty-filter-label>Sell</span> positions match this filter.</h2>
+    <p>Try another summary card to view positions with a different verdict.</p>
+</div>
 {% else %}
 <div class="empty-state">
     <span class="empty-state-mark" aria-hidden="true">↗</span>

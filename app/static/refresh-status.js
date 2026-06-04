@@ -159,6 +159,7 @@
                     // A single authoritative summary from the batch response
                     // avoids stale counters from out-of-order per-row updates.
                     updateSummary(payload.summary);
+                    document.dispatchEvent(new Event("portfolio:rows-updated"));
                 });
         }
 
