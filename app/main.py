@@ -259,7 +259,7 @@ def _mark_positions_refresh_state(
         return 0
 
     positions = uow.positions.get_by_ids(position_ids)
-    now = datetime.now(timezone.utc)
+    now = _normalize_timestamp_for_storage(datetime.now(timezone.utc))
     for pos in positions:
         pos.refresh_in_progress = in_progress
         pos.refresh_started_at = now if in_progress else None
@@ -271,7 +271,9 @@ def _mark_positions_refresh_state(
 
 def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
     """Reset stale in-progress flags left behind by interrupted refreshes."""
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    cutoff = _normalize_timestamp_for_storage(
+        datetime.now(timezone.utc) - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    )
     cleared_count = uow.positions.clear_stale_refreshing(cutoff)
     if not cleared_count:
         return 0
@@ -282,7 +284,9 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
 
 def _clear_all_stale_refresh_flags() -> int:
     """Reset stale refresh flags across all users during application startup."""
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    cutoff = _normalize_timestamp_for_storage(
+        datetime.now(timezone.utc) - timedelta(minutes=REFRESH_STALE_TIMEOUT_MINUTES)
+    )
     with engine.begin() as conn:
         result = conn.execute(
             text(
@@ -322,7 +326,14 @@ def _clear_position_market_data(position: Position) -> None:
 
 def _normalize_timestamp_to_utc(ts: datetime) -> datetime:
     """Normalize naive/aware datetimes to UTC for consistent display."""
+    if ts.tzinfo is None or ts.utcoffset() is None:
+        return ts.replace(tzinfo=timezone.utc)
     return ts.astimezone(timezone.utc)
+
+
+def _normalize_timestamp_for_storage(ts: datetime) -> datetime:
+    """Normalize timestamps to UTC-naive values for DateTime columns."""
+    return _normalize_timestamp_to_utc(ts).replace(tzinfo=None)
 
 
 def _format_relative_time(ts: datetime, *, now: datetime | None = None) -> str:
