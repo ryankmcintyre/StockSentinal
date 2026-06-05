@@ -175,9 +175,12 @@ class TestFetchWeeklySeries:
         mock_resp.status_code = 200
         mock_resp.json.return_value = fake_data
         mock_resp.raise_for_status = mocker.Mock()
-        mocker.patch("app.twelve_data_client.requests.get", return_value=mock_resp)
+        mock_get = mocker.patch(
+            "app.twelve_data_client.requests.get", return_value=mock_resp,
+        )
 
         bars = fetch_weekly_series("IBM", "fake_key")
+        assert mock_get.call_args.kwargs["params"]["outputsize"] == "52"
         assert bars == [
             WeeklyBar(
                 date=date(2026, 4, 17),
@@ -239,6 +242,7 @@ class TestFetchWeeklySeriesBatch:
         assert mock_get.call_count == 1
         assert mock_get.call_args.kwargs["params"]["symbol"] == "IBM,AAPL"
         assert mock_get.call_args.kwargs["params"]["interval"] == "1week"
+        assert mock_get.call_args.kwargs["params"]["outputsize"] == "52"
         assert bars_by_symbol["IBM"] == [
             WeeklyBar(
                 date=date(2026, 4, 17),
