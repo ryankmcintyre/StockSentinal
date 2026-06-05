@@ -1,6 +1,7 @@
 """Tests for the splash page (GET /) and root route auth-branching."""
 
 from datetime import datetime
+import re
 
 import pytest
 from fastapi.testclient import TestClient
@@ -158,9 +159,17 @@ def test_authenticated_get_root_shows_profile_theme_menu(auth_client):
 
     assert resp.status_code == 200
     assert 'aria-label="Profile"' in resp.text
+    assert 'aria-label="Profile menu"' in resp.text
+    assert 'class="theme-submenu-options"' in resp.text
     assert 'data-theme-option="system"' in resp.text
     assert 'data-theme-option="light"' in resp.text
     assert 'data-theme-option="dark"' in resp.text
+    assert re.search(
+        r'<details class="profile-menu">.*class="theme-submenu-label">Theme</span>.*action="/auth/logout".*</details>',
+        resp.text,
+        re.DOTALL,
+    )
+    assert resp.text.count('action="/auth/logout"') == 1
     assert 'aria-pressed="false"' in resp.text
     assert 'role="menu"' not in resp.text
     assert 'role="menuitemradio"' not in resp.text

@@ -888,14 +888,63 @@ h3 {
     z-index: 20;
 }
 
-.theme-menu-title {
-    margin: 0 0 0.35rem;
-    padding: 0.4rem 0.55rem;
-    color: #52606d;
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
+.profile-menu-item {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.75rem;
+    padding: 0.55rem;
+    border: 0;
+    border-radius: 0.65rem;
+    background: transparent;
+    color: #1f2933;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+}
+
+.profile-menu-item:hover,
+.profile-menu-item:focus-visible {
+    background: #eef6ff;
+    outline: none;
+}
+
+.profile-menu-form {
+    margin: 0.35rem 0 0;
+}
+
+.theme-submenu[open] {
+    margin-bottom: 0.35rem;
+}
+
+.theme-submenu-summary {
+    list-style: none;
+}
+
+.theme-submenu-summary::-webkit-details-marker {
+    display: none;
+}
+
+.theme-submenu-summary::marker {
+    content: "";
+}
+
+.theme-submenu-label {
+    font-weight: 600;
+}
+
+.theme-submenu-chevron {
+    color: #64748b;
+    transition: transform 0.2s ease;
+}
+
+.theme-submenu[open] .theme-submenu-chevron {
+    transform: rotate(90deg);
+}
+
+.theme-submenu-options {
+    margin-top: 0.2rem;
 }
 
 .theme-menu-option {
@@ -1254,6 +1303,7 @@ html[data-theme="dark"] .privacy-page h1,
 html[data-theme="dark"] .privacy-page h2,
 html[data-theme="dark"] .splash-feature-title,
 html[data-theme="dark"] .ticker-lookup-picker-title,
+html[data-theme="dark"] .profile-menu-item,
 html[data-theme="dark"] .theme-menu-option {
     color: #f8fafc;
 }
@@ -1269,7 +1319,7 @@ html[data-theme="dark"] .login-tier-note,
 html[data-theme="dark"] .login-email-note,
 html[data-theme="dark"] .site-footer,
 html[data-theme="dark"] .site-footer a,
-html[data-theme="dark"] .theme-menu-title,
+html[data-theme="dark"] .theme-submenu-chevron,
 html[data-theme="dark"] .splash-feature-body,
 html[data-theme="dark"] .splash-tier-note,
 html[data-theme="dark"] .splash-disclaimer,
@@ -1317,6 +1367,8 @@ html[data-theme="dark"] .profile-button {
 }
 
 html[data-theme="dark"] .profile-button:hover,
+html[data-theme="dark"] .profile-menu-item:hover,
+html[data-theme="dark"] .profile-menu-item:focus-visible,
 html[data-theme="dark"] .theme-menu-option:hover,
 html[data-theme="dark"] .theme-menu-option:focus-visible {
     background: #1e293b;
