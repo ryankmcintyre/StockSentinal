@@ -538,4 +538,6 @@ class TestKeyLevelRoutes:
         )
 
         assert resp.status_code == 303
-        mock_refresh.assert_called_once_with(pos_id, "test-user-id")
+        mock_refresh.assert_called_once()
+        assert mock_refresh.call_args.args[:2] == (pos_id, "test-user-id")
+        assert mock_refresh.call_args.args[2].startswith("refresh-")

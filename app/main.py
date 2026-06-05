@@ -53,6 +53,7 @@ from app.database import (
     get_uow,
     init_db,
 )
+from app.logging_utils import configure_refresh_logging, new_refresh_id, refresh_logging_context
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 from app.market_data.service import MarketDataService
@@ -81,8 +82,9 @@ from app.tiers import TIER_LIMITS, TierLimitExceeded, check_and_consume_refresh,
 log_level = get_log_level()
 logging.basicConfig(
     level=log_level,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    format="%(asctime)s [%(levelname)s] %(refresh_prefix)s%(name)s: %(message)s",
 )
+configure_refresh_logging()
 logging.getLogger().setLevel(log_level)
 
 # Suppress third-party HTTP loggers that leak sensitive query parameters
@@ -1408,50 +1410,63 @@ def unacknowledge_trim(
 # ---------------------------------------------------------------------------
 
 
-def _refresh_all_positions_task(position_ids: list[int], user_id: str):
+def _refresh_all_positions_task(
+    position_ids: list[int], user_id: str, refresh_id: str | None = None,
+):
     """Run a full market data refresh in the background with its own DB session."""
-    uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
-    try:
+    active_refresh_id = refresh_id or new_refresh_id()
+    with refresh_logging_context(active_refresh_id):
+        uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
         try:
-            _market_service.refresh_all_positions(uow.session, user_id=user_id)
-        except Exception as exc:
-            logger.warning("Background refresh-all failed", exc_info=True)
-            detail = str(exc).strip() or exc.__class__.__name__
-            uow.rollback()
-            for pos in uow.positions.get_by_ids(position_ids):
-                pos.refresh_error = f"Refresh failed: {detail}"
-            uow.commit()
-    finally:
-        _mark_positions_refresh_state(uow, position_ids, in_progress=False)
-        uow.session.close()
-
-
-def _refresh_single_position_task(position_id: int, user_id: str):
-    """Run a single-position market data refresh in the background with its own DB session."""
-    uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
-    pos = None
-    try:
-        # The in-progress flag is set by the /refresh/{position_id} route
-        # handler before scheduling this task, so we skip the redundant write
-        # here.
-        try:
-            pos = uow.positions.get_by_id(position_id)
-            if pos:
-                _market_service.refresh_position(pos, uow.session)
-        except Exception as exc:
-            logger.warning(
-                "Background refresh failed for position id=%d", position_id, exc_info=True
+            logger.info(
+                "Starting refresh-all for %d positions",
+                len(position_ids),
             )
-            if pos is not None:
+            try:
+                _market_service.refresh_all_positions(uow.session, user_id=user_id)
+            except Exception as exc:
+                logger.warning("Background refresh-all failed", exc_info=True)
                 detail = str(exc).strip() or exc.__class__.__name__
                 uow.rollback()
-                pos = uow.positions.get_by_id(position_id)
-                if pos is not None:
+                for pos in uow.positions.get_by_ids(position_ids):
                     pos.refresh_error = f"Refresh failed: {detail}"
-                    uow.commit()
-    finally:
-        _mark_positions_refresh_state(uow, [position_id], in_progress=False)
-        uow.session.close()
+                uow.commit()
+        finally:
+            _mark_positions_refresh_state(uow, position_ids, in_progress=False)
+            uow.session.close()
+
+
+def _refresh_single_position_task(
+    position_id: int, user_id: str, refresh_id: str | None = None,
+):
+    """Run a single-position market data refresh in the background with its own DB session."""
+    active_refresh_id = refresh_id or new_refresh_id()
+    with refresh_logging_context(active_refresh_id):
+        uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
+        pos = None
+        try:
+            logger.info("Starting refresh for position id=%d", position_id)
+            # The in-progress flag is set by the /refresh/{position_id} route
+            # handler before scheduling this task, so we skip the redundant write
+            # here.
+            try:
+                pos = uow.positions.get_by_id(position_id)
+                if pos:
+                    _market_service.refresh_position(pos, uow.session)
+            except Exception as exc:
+                logger.warning(
+                    "Background refresh failed for position id=%d", position_id, exc_info=True
+                )
+                if pos is not None:
+                    detail = str(exc).strip() or exc.__class__.__name__
+                    uow.rollback()
+                    pos = uow.positions.get_by_id(position_id)
+                    if pos is not None:
+                        pos.refresh_error = f"Refresh failed: {detail}"
+                        uow.commit()
+        finally:
+            _mark_positions_refresh_state(uow, [position_id], in_progress=False)
+            uow.session.close()
 
 
 @app.post("/refresh")
@@ -1477,7 +1492,12 @@ def refresh_all(
             uow.rollback()
             return _redirect_with_refresh_limit_flash()
         _mark_positions_refresh_state(uow, position_ids, in_progress=True)
-        background_tasks.add_task(_refresh_all_positions_task, position_ids, uow.user_id)
+        refresh_id = new_refresh_id()
+        with refresh_logging_context(refresh_id):
+            logger.info("Queued refresh-all for %d positions", len(position_ids))
+        background_tasks.add_task(
+            _refresh_all_positions_task, position_ids, uow.user_id, refresh_id
+        )
     return RedirectResponse(url="/", status_code=303)
 
 
@@ -1515,7 +1535,12 @@ def refresh_single(
                 )
             return _redirect_with_refresh_limit_flash()
         _mark_positions_refresh_state(uow, [position_id], in_progress=True)
-        background_tasks.add_task(_refresh_single_position_task, position_id, uow.user_id)
+        refresh_id = new_refresh_id()
+        with refresh_logging_context(refresh_id):
+            logger.info("Queued refresh for position id=%d", position_id)
+        background_tasks.add_task(
+            _refresh_single_position_task, position_id, uow.user_id, refresh_id
+        )
     if wants_json:
         return JSONResponse(status_code=202, content={"status": "started", "id": position_id})
     return RedirectResponse(url="/", status_code=303)

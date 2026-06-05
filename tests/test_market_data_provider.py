@@ -1,10 +1,12 @@
 """Tests for market data provider implementations and selection."""
 
 from datetime import date
+import logging
 
 import pytest
 
 from app.alpha_vantage_client import DailyBar, WeeklyBar
+from app.logging_utils import refresh_logging_context
 from app.main import _create_market_data_provider
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 
@@ -134,6 +136,21 @@ class TestTwelveDataProvider:
         assert len(TwelveDataProvider._call_window) == 5
         TwelveDataProvider._call_window.clear()
 
+    def test_credit_budget_gate_logs_window_depth_without_wait(self, mocker, caplog):
+        TwelveDataProvider._call_window.clear()
+        mocker.patch(
+            "app.market_data.provider.get_twelve_data_credits_per_minute",
+            return_value=50,
+        )
+        mocker.patch("app.market_data.provider.time.monotonic", return_value=1000.0)
+        mocker.patch("app.market_data.provider.time.sleep")
+        caplog.set_level(logging.INFO, logger="app.market_data.provider")
+
+        TwelveDataProvider._wait_for_slot()
+
+        assert "TwelveDataProvider rate_limit: window=0/50 (no wait)" in caplog.text
+        TwelveDataProvider._call_window.clear()
+
     def test_credit_budget_gate_sleeps_when_budget_exhausted(self, mocker):
         TwelveDataProvider._call_window.clear()
         # Two prior calls at t=1000 fill a budget of 2.
@@ -154,6 +171,25 @@ class TestTwelveDataProvider:
 
         sleep.assert_called_once()
         assert sleep.call_args.args[0] == pytest.approx(50.0)
+        TwelveDataProvider._call_window.clear()
+
+    def test_credit_budget_gate_logs_window_depth_with_wait(self, mocker, caplog):
+        TwelveDataProvider._call_window.clear()
+        TwelveDataProvider._call_window.extend([1000.0, 1000.0])
+        mocker.patch(
+            "app.market_data.provider.get_twelve_data_credits_per_minute",
+            return_value=2,
+        )
+        mocker.patch(
+            "app.market_data.provider.time.monotonic",
+            side_effect=[1010.0, 1010.0],
+        )
+        mocker.patch("app.market_data.provider.time.sleep")
+        caplog.set_level(logging.INFO, logger="app.market_data.provider")
+
+        TwelveDataProvider._wait_for_slot()
+
+        assert "TwelveDataProvider rate_limit: window=2/2 (sleeping 50.0s)" in caplog.text
         TwelveDataProvider._call_window.clear()
 
     def test_credit_budget_gate_prunes_expired_calls(self, mocker):
@@ -203,6 +239,30 @@ class TestTwelveDataProvider:
     def test_supports_parallel_fetch_flags(self):
         assert TwelveDataProvider.supports_parallel_fetch is True
         assert AlphaVantageProvider.supports_parallel_fetch is False
+
+    def test_fetch_daily_bars_logs_wait_and_fetch_duration(self, mocker, caplog):
+        provider = TwelveDataProvider(get_api_key=lambda: "fake_key")
+        mocker.patch.object(provider, "_wait_for_slot", return_value=1.25)
+        mocker.patch(
+            "app.market_data.provider._td_fetch_daily_series",
+            return_value=[DailyBar(date=date(2026, 4, 17), close=185.5)],
+        )
+        mocker.patch(
+            "app.market_data.provider.time.monotonic",
+            side_effect=[10.0, 12.5],
+        )
+        caplog.set_level(logging.INFO, logger="app.market_data.provider")
+
+        with refresh_logging_context("refresh-test"):
+            provider.fetch_daily_bars("AAPL")
+
+        assert "TwelveDataProvider fetch_daily_bars AAPL: waited=1.25s fetch=2.50s" in caplog.text
+        matching_records = [
+            record for record in caplog.records
+            if "fetch_daily_bars AAPL" in record.getMessage()
+        ]
+        assert matching_records
+        assert matching_records[-1].refresh_id == "refresh-test"
 
 
 class TestCreateMarketDataProvider:

@@ -5,6 +5,8 @@ import logging
 
 import pytest
 
+from app.logging_utils import refresh_logging_context
+
 
 class TestHttpLoggersSuppressed:
     """Third-party HTTP loggers must stay at WARNING or above to prevent
@@ -89,3 +91,18 @@ class TestHttpLoggersSuppressed:
 
         assert "Market data provider: unconfigured" in caplog.text
         assert "rate-limit interval" not in caplog.text
+
+    def test_refresh_logging_context_populates_log_record_fields(self, caplog):
+        logger = logging.getLogger("app.main")
+        caplog.set_level(logging.INFO, logger="app.main")
+
+        with refresh_logging_context("refresh-abcd"):
+            logger.info("queued refresh")
+
+        matching_records = [
+            record for record in caplog.records
+            if record.name == "app.main" and record.getMessage() == "queued refresh"
+        ]
+        assert matching_records
+        assert matching_records[-1].refresh_id == "refresh-abcd"
+        assert matching_records[-1].refresh_prefix == "[refresh-abcd] "
