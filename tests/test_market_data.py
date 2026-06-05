@@ -1,10 +1,12 @@
 """Tests for the market data service layer."""
 
 from datetime import date, datetime, timezone
+import logging
 from unittest.mock import ANY, Mock
 
 import pytest
 
+from app.logging_utils import refresh_logging_context
 from app.schemas import Verdict
 from app.market_data.staleness import (
     daily_bar_cache_is_stale,
@@ -427,6 +429,31 @@ class TestRefreshPosition:
         assert position.previous_verdict == Verdict.hold.value
         refresh_indicator_cache.assert_called_once()
         assert calculate_verdicts.call_count == 2
+
+    def test_refresh_position_logs_phase_breakdown(self, mocker, caplog):
+        position = FakePosition(investment_type="long-term")
+        db = mocker.Mock()
+
+        mocker.patch.object(self.service, "_refresh_daily")
+        mocker.patch.object(self.service, "_refresh_weekly")
+        mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
+        mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        caplog.set_level(logging.INFO, logger="app.market_data.service")
+
+        with refresh_logging_context("refresh-test"):
+            self.service.refresh_position(position, db, force=False)
+
+        matching_records = [
+            record for record in caplog.records
+            if record.name == "app.market_data.service"
+            and "refresh_position completed for AAPL" in record.getMessage()
+        ]
+        assert matching_records
+        message = matching_records[-1].getMessage()
+        assert "phases: rule_config=" in message
+        assert "prewarm=" in message
+        assert "commit=" in message
+        assert matching_records[-1].refresh_id == "refresh-test"
 
 
 # ---------------------------------------------------------------------------

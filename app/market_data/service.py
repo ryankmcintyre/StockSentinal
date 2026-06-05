@@ -862,11 +862,24 @@ class MarketDataService:
         """
         errors: list[str] = []
         started_at = time.monotonic()
+        phase_timings = {
+            "rule_config": 0.0,
+            "prewarm": 0.0,
+            "daily_refresh": 0.0,
+            "weekly_refresh": 0.0,
+            "indicator_cache": 0.0,
+            "atr_cache": 0.0,
+            "weekly_bar_cache": 0.0,
+            "daily_bar_cache": 0.0,
+            "verdicts": 0.0,
+            "commit": 0.0,
+        }
         cache = _FetchCache(self._provider)
         should_refresh_daily = force or daily_data_is_stale(position)
         should_refresh_weekly = self._needs_weekly(position) and (
             force or weekly_data_is_stale(position)
         )
+        phase_started_at = time.monotonic()
         rule_uow = as_uow(db, user_id=position.user_id)
         rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
         investment_type = position.investment_type
@@ -894,6 +907,7 @@ class MarketDataService:
             if should_refresh_daily or should_refresh_weekly or rule_inputs_may_refresh
             else {}
         )
+        phase_timings["rule_config"] = time.monotonic() - phase_started_at
 
         # Warm the per-operation fetch cache by firing independent API calls
         # (daily, weekly, benchmark-daily) concurrently when the provider
@@ -912,6 +926,7 @@ class MarketDataService:
             or self._has_interval(required_atr, "weekly")
         )
         need_benchmark_daily = daily_lookback > 0 and bool(benchmark)
+        phase_started_at = time.monotonic()
         self._prewarm_fetch_cache(
             cache,
             position.ticker,
@@ -920,8 +935,10 @@ class MarketDataService:
             benchmark=benchmark.upper() if benchmark else None,
             need_benchmark_daily=need_benchmark_daily,
         )
+        phase_timings["prewarm"] = time.monotonic() - phase_started_at
 
         # Daily refresh
+        phase_started_at = time.monotonic()
         if should_refresh_daily:
             logger.debug("%s daily data is stale, refreshing", position.ticker)
             try:
@@ -931,8 +948,10 @@ class MarketDataService:
                 errors.append(f"Daily refresh failed: {exc}")
         else:
             logger.debug("%s daily data is fresh, skipping", position.ticker)
+        phase_timings["daily_refresh"] = time.monotonic() - phase_started_at
 
         # Weekly refresh (long-term only)
+        phase_started_at = time.monotonic()
         if self._needs_weekly(position):
             if should_refresh_weekly:
                 logger.debug("%s weekly data is stale, refreshing", position.ticker)
@@ -950,29 +969,37 @@ class MarketDataService:
                 "%s is short-term, skipping Position weekly snapshot refresh",
                 position.ticker,
             )
+        phase_timings["weekly_refresh"] = time.monotonic() - phase_started_at
 
         # Refresh indicator caches for configured rules
+        phase_started_at = time.monotonic()
         if required:
             cache_errors = self.refresh_indicator_cache(
                 db, {position.ticker}, required, force=force,
                 fetch_cache=cache,
             )
             errors.extend(cache_errors)
+        phase_timings["indicator_cache"] = time.monotonic() - phase_started_at
 
+        phase_started_at = time.monotonic()
         if required_atr:
             atr_errors = self.refresh_atr_cache(
                 db, {position.ticker}, required_atr, force=force,
                 fetch_cache=cache,
             )
             errors.extend(atr_errors)
+        phase_timings["atr_cache"] = time.monotonic() - phase_started_at
 
+        phase_started_at = time.monotonic()
         if weekly_lookback > 0:
             weekly_bar_errors = self.refresh_weekly_bar_cache(
                 db, {position.ticker}, weekly_lookback, force=force,
                 fetch_cache=cache,
             )
             errors.extend(weekly_bar_errors)
+        phase_timings["weekly_bar_cache"] = time.monotonic() - phase_started_at
 
+        phase_started_at = time.monotonic()
         if daily_lookback > 0:
             if benchmark:
                 daily_tickers: set[str] = {position.ticker, benchmark.upper()}
@@ -981,16 +1008,37 @@ class MarketDataService:
                     fetch_cache=cache,
                 )
                 errors.extend(daily_bar_errors)
+        phase_timings["daily_bar_cache"] = time.monotonic() - phase_started_at
 
         position.refresh_error = "; ".join(errors) if errors else None
+        phase_started_at = time.monotonic()
         if previous_verdicts:
             self._update_previous_verdicts(db, [position], previous_verdicts)
+        phase_timings["verdicts"] = time.monotonic() - phase_started_at
+        phase_started_at = time.monotonic()
         db.commit()
+        phase_timings["commit"] = time.monotonic() - phase_started_at
         logger.info(
-            "refresh_position completed for %s in %.3fs (errors=%d)",
+            (
+                "refresh_position completed for %s in %.3fs "
+                "(errors=%d, phases: rule_config=%.3fs prewarm=%.3fs "
+                "daily_refresh=%.3fs weekly_refresh=%.3fs indicator_cache=%.3fs "
+                "atr_cache=%.3fs weekly_bar_cache=%.3fs daily_bar_cache=%.3fs "
+                "verdicts=%.3fs commit=%.3fs)"
+            ),
             position.ticker,
             time.monotonic() - started_at,
             len(errors),
+            phase_timings["rule_config"],
+            phase_timings["prewarm"],
+            phase_timings["daily_refresh"],
+            phase_timings["weekly_refresh"],
+            phase_timings["indicator_cache"],
+            phase_timings["atr_cache"],
+            phase_timings["weekly_bar_cache"],
+            phase_timings["daily_bar_cache"],
+            phase_timings["verdicts"],
+            phase_timings["commit"],
         )
 
     @staticmethod

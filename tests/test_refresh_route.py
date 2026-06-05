@@ -577,7 +577,9 @@ class TestRefreshLoadingCues:
         mock_refresh_all = mocker.patch("app.main._refresh_all_positions_task", return_value=None)
         resp = client.post("/refresh", data=csrf_form_data(client), follow_redirects=False)
         assert resp.status_code == 303
-        mock_refresh_all.assert_called_once_with([position_id], "test-user-id")
+        mock_refresh_all.assert_called_once()
+        assert mock_refresh_all.call_args.args[:2] == ([position_id], "test-user-id")
+        assert mock_refresh_all.call_args.args[2].startswith("refresh-")
 
         verify_db = _setup_db()
         try:
@@ -614,7 +616,7 @@ class TestRefreshLoadingCues:
         request_errors = []
         messages = []
 
-        def blocking_refresh_single(_position_id, _user_id):
+        def blocking_refresh_single(_position_id, _user_id, _refresh_id):
             task_started.set()
             assert response_sent.is_set()
             assert allow_task_to_finish.wait(timeout=1)
@@ -682,7 +684,9 @@ class TestRefreshLoadingCues:
 
         assert not request_thread.is_alive()
         assert not request_errors
-        mock_refresh_single.assert_called_once_with(position_id, "test-user-id")
+        mock_refresh_single.assert_called_once()
+        assert mock_refresh_single.call_args.args[:2] == (position_id, "test-user-id")
+        assert mock_refresh_single.call_args.args[2].startswith("refresh-")
         response_start = next(
             message for message in messages if message["type"] == "http.response.start"
         )
@@ -730,7 +734,7 @@ class TestRefreshLoadingCues:
             return_value=0,
         )
 
-        _refresh_all_positions_task(expected_position_ids, "test-user-id")
+        _refresh_all_positions_task(expected_position_ids, "test-user-id", "refresh-test")
 
         assert created_user_ids == ["test-user-id"]
         refresh_all.assert_called_once_with(session, user_id="test-user-id")
@@ -792,7 +796,9 @@ class TestRefreshRouteTierLimits:
         )
 
         assert resp.status_code == 303
-        mock_refresh_single.assert_called_once_with(position_id, "test-user-id")
+        mock_refresh_single.assert_called_once()
+        assert mock_refresh_single.call_args.args[:2] == (position_id, "test-user-id")
+        assert mock_refresh_single.call_args.args[2].startswith("refresh-")
         db = _setup_db()
         try:
             user = db.query(User).filter(User.id == "test-user-id").one()
@@ -828,7 +834,9 @@ class TestRefreshRouteTierLimits:
 
         assert resp.status_code == 202
         assert resp.json() == {"status": "started", "id": position_id}
-        mock_refresh_single.assert_called_once_with(position_id, "test-user-id")
+        mock_refresh_single.assert_called_once()
+        assert mock_refresh_single.call_args.args[:2] == (position_id, "test-user-id")
+        assert mock_refresh_single.call_args.args[2].startswith("refresh-")
 
     def test_single_refresh_returns_json_202_for_x_requested_with_fetch(
         self, client, _setup_db, mocker
