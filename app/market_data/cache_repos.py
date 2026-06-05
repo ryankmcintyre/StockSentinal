@@ -8,6 +8,8 @@ that callers control the transaction boundary.
 from datetime import date, datetime, timezone
 from typing import Optional
 
+from sqlalchemy.dialects.postgresql import insert as postgresql_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from app.models import (
@@ -18,6 +20,52 @@ from app.models import (
 )
 
 from .staleness import last_completed_trading_day, last_completed_trading_week_end
+
+
+def _utc_now_for_storage() -> datetime:
+    """Return the current UTC time normalized for plain DateTime columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _bulk_upsert_bar_cache_rows(db: Session, table, ticker: str, bars: list) -> None:
+    """Bulk upsert OHLCV cache rows for SQLite and PostgreSQL."""
+    values_by_date = {}
+    now = _utc_now_for_storage()
+    for bar in bars:
+        values_by_date[bar.date] = {
+            "ticker": ticker,
+            "bar_date": bar.date,
+            "open": bar.open,
+            "high": bar.high,
+            "low": bar.low,
+            "close": bar.close,
+            "volume": bar.volume,
+            "retrieved_at": now,
+        }
+
+    dialect_name = db.get_bind().dialect.name
+    if dialect_name == "postgresql":
+        insert_stmt = postgresql_insert(table)
+    elif dialect_name == "sqlite":
+        insert_stmt = sqlite_insert(table)
+    else:
+        raise NotImplementedError(f"Unsupported SQLAlchemy dialect for bar cache upsert: {dialect_name}")
+
+    statement = insert_stmt.values(list(values_by_date.values()))
+    excluded = statement.excluded
+    db.execute(
+        statement.on_conflict_do_update(
+            index_elements=["ticker", "bar_date"],
+            set_={
+                "open": excluded.open,
+                "high": excluded.high,
+                "low": excluded.low,
+                "close": excluded.close,
+                "volume": excluded.volume,
+                "retrieved_at": excluded.retrieved_at,
+            },
+        )
+    )
 
 
 class IndicatorCacheRepository:
@@ -164,29 +212,7 @@ class WeeklyBarCacheRepository:
             MarketWeeklyBarCache.bar_date < cutoff_date,
         ).delete(synchronize_session=False)
 
-        # Upsert only the bars we're keeping
-        existing_rows = (
-            db.query(MarketWeeklyBarCache)
-            .filter(
-                MarketWeeklyBarCache.ticker == ticker,
-                MarketWeeklyBarCache.bar_date >= cutoff_date,
-            )
-            .all()
-        )
-        rows_by_date = {row.bar_date: row for row in existing_rows}
-
-        now = datetime.now(timezone.utc)
-        for bar in keep:
-            row = rows_by_date.get(bar.date)
-            if row is None:
-                row = MarketWeeklyBarCache(ticker=ticker, bar_date=bar.date)
-                db.add(row)
-            row.open = bar.open
-            row.high = bar.high
-            row.low = bar.low
-            row.close = bar.close
-            row.volume = bar.volume
-            row.retrieved_at = now
+        _bulk_upsert_bar_cache_rows(db, MarketWeeklyBarCache.__table__, ticker, keep)
 
     def load_for_tickers(
         self, db: Session, tickers: set[str],
@@ -248,28 +274,7 @@ class DailyBarCacheRepository:
             MarketDailyBarCache.bar_date < cutoff_date,
         ).delete(synchronize_session=False)
 
-        # Upsert only the bars we're keeping
-        existing_rows = (
-            db.query(MarketDailyBarCache)
-            .filter(
-                MarketDailyBarCache.ticker == ticker,
-                MarketDailyBarCache.bar_date >= cutoff_date,
-            )
-            .all()
-        )
-        rows_by_date = {row.bar_date: row for row in existing_rows}
-        now = datetime.now(timezone.utc)
-        for bar in keep:
-            row = rows_by_date.get(bar.date)
-            if row is None:
-                row = MarketDailyBarCache(ticker=ticker, bar_date=bar.date)
-                db.add(row)
-            row.open = bar.open
-            row.high = bar.high
-            row.low = bar.low
-            row.close = bar.close
-            row.volume = bar.volume
-            row.retrieved_at = now
+        _bulk_upsert_bar_cache_rows(db, MarketDailyBarCache.__table__, ticker, keep)
 
     def load_for_tickers(
         self, db: Session, tickers: set[str],
