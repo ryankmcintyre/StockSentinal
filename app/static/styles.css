@@ -1332,6 +1332,21 @@ html[data-theme="dark"] .positions-table td {
     border-bottom-color: #334155;
 }
 
+html[data-theme="dark"] .ma-conditions-cell {
+    background: #0f172a;
+    color: #e2e8f0;
+}
+
+html[data-theme="dark"] .ma-conditions-table th,
+html[data-theme="dark"] .ma-conditions-table td {
+    border-bottom-color: #334155;
+}
+
+html[data-theme="dark"] .ma-conditions-table th,
+html[data-theme="dark"] .ma-add-form label {
+    color: #cbd5e1;
+}
+
 html[data-theme="dark"] .positions-table tbody tr:hover {
     background: #172033;
 }

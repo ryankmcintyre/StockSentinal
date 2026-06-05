@@ -537,6 +537,29 @@ class TestRulesPage:
         assert dark_reason_marker_match is not None
         assert "background: #475569;" in dark_reason_marker_match.group(1)
 
+    def test_rules_ma_conditions_have_dark_mode_contrast_styles(self, client):
+        resp = client.get("/static/styles.css")
+        assert resp.status_code == 200
+
+        dark_conditions_cell_match = re.search(
+            r'html\[data-theme="dark"\] \.ma-conditions-cell\s*\{([^}]*)\}',
+            resp.text,
+            re.DOTALL,
+        )
+        assert dark_conditions_cell_match is not None
+        dark_conditions_cell_block = dark_conditions_cell_match.group(1)
+        assert "background: #0f172a;" in dark_conditions_cell_block
+        assert "color: #e2e8f0;" in dark_conditions_cell_block
+
+        dark_table_header_match = re.search(
+            r'html\[data-theme="dark"\] \.ma-conditions-table th,\s*'
+            r'html\[data-theme="dark"\] \.ma-add-form label\s*\{([^}]*)\}',
+            resp.text,
+            re.DOTALL,
+        )
+        assert dark_table_header_match is not None
+        assert "color: #cbd5e1;" in dark_table_header_match.group(1)
+
     def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
         from app.main import _refresh_single_position_task
 
