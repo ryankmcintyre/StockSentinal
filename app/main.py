@@ -1419,11 +1419,10 @@ def unacknowledge_trim(
 
 
 def _refresh_all_positions_task(
-    position_ids: list[int], user_id: str, refresh_id: str | None = None,
+    position_ids: list[int], user_id: str, refresh_id: str,
 ):
     """Run a full market data refresh in the background with its own DB session."""
-    active_refresh_id = refresh_id or new_refresh_id()
-    with refresh_logging_context(active_refresh_id):
+    with refresh_logging_context(refresh_id):
         uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
         try:
             logger.info(
@@ -1445,11 +1444,10 @@ def _refresh_all_positions_task(
 
 
 def _refresh_single_position_task(
-    position_id: int, user_id: str, refresh_id: str | None = None,
+    position_id: int, user_id: str, refresh_id: str,
 ):
     """Run a single-position market data refresh in the background with its own DB session."""
-    active_refresh_id = refresh_id or new_refresh_id()
-    with refresh_logging_context(active_refresh_id):
+    with refresh_logging_context(refresh_id):
         uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
         pos = None
         try:

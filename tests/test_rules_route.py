@@ -541,7 +541,7 @@ class TestRulesPage:
             side_effect=RuntimeError("Alpha Vantage API rate limit exceeded"),
         )
 
-        _refresh_single_position_task(position_id, "test-user-id")
+        _refresh_single_position_task(position_id, "test-user-id", "refresh-test")
 
         verify_db = testing_session()
         try:

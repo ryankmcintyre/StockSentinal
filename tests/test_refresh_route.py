@@ -734,7 +734,7 @@ class TestRefreshLoadingCues:
             return_value=0,
         )
 
-        _refresh_all_positions_task(expected_position_ids, "test-user-id")
+        _refresh_all_positions_task(expected_position_ids, "test-user-id", "refresh-test")
 
         assert created_user_ids == ["test-user-id"]
         refresh_all.assert_called_once_with(session, user_id="test-user-id")
