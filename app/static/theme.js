@@ -44,7 +44,7 @@
     function syncThemeMenu(theme) {
         document.querySelectorAll("[data-theme-option]").forEach(function (option) {
             option.setAttribute(
-                "aria-checked",
+                "aria-pressed",
                 option.dataset.themeOption === theme ? "true" : "false"
             );
         });

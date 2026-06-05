@@ -161,6 +161,9 @@ def test_authenticated_get_root_shows_profile_theme_menu(auth_client):
     assert 'data-theme-option="system"' in resp.text
     assert 'data-theme-option="light"' in resp.text
     assert 'data-theme-option="dark"' in resp.text
+    assert 'aria-pressed="false"' in resp.text
+    assert 'role="menu"' not in resp.text
+    assert 'role="menuitemradio"' not in resp.text
     assert "Test User" not in resp.text
 
 

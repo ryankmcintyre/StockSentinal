@@ -926,7 +926,7 @@ h3 {
     font-weight: 700;
 }
 
-.theme-menu-option[aria-checked="true"] .theme-menu-check {
+.theme-menu-option[aria-pressed="true"] .theme-menu-check {
     visibility: visible;
 }
 
@@ -1387,6 +1387,24 @@ html[data-theme="dark"] .alert-success {
     background: #052e16;
     border-color: #15803d;
     color: #bbf7d0;
+}
+
+html[data-theme="dark"] .verdict-sell {
+    background: #450a0a;
+    border-color: #7f1d1d;
+    color: #fca5a5;
+}
+
+html[data-theme="dark"] .verdict-trim {
+    background: #422006;
+    border-color: #92400e;
+    color: #fcd34d;
+}
+
+html[data-theme="dark"] .verdict-hold {
+    background: #052e16;
+    border-color: #166534;
+    color: #86efac;
 }
 
 html[data-theme="dark"] .site-footer,
