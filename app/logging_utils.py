@@ -7,11 +7,14 @@ from uuid import uuid4
 
 _refresh_id_var: ContextVar[str | None] = ContextVar("refresh_id", default=None)
 _configured = False
-_previous_factory = logging.getLogRecordFactory()
+_previous_factory = None
 
 
 def _record_factory(*args, **kwargs):
-    record = _previous_factory(*args, **kwargs)
+    if _previous_factory is None:  # pragma: no cover - guarded by configure_refresh_logging
+        record = logging.LogRecord(*args, **kwargs)
+    else:
+        record = _previous_factory(*args, **kwargs)
     refresh_id = _refresh_id_var.get()
     record.refresh_id = refresh_id or "-"
     record.refresh_prefix = f"[{refresh_id}] " if refresh_id else ""
@@ -19,9 +22,10 @@ def _record_factory(*args, **kwargs):
 
 
 def configure_refresh_logging() -> None:
-    global _configured
+    global _configured, _previous_factory
     if _configured:
         return
+    _previous_factory = logging.getLogRecordFactory()
     logging.setLogRecordFactory(_record_factory)
     _configured = True
 

@@ -46,7 +46,7 @@ logger = logging.getLogger(__name__)
 _T = TypeVar("_T")
 
 
-def _format_symbol_list(symbols: list[str]) -> str:
+def _join_symbols_for_logging(symbols: list[str]) -> str:
     return ",".join(symbols)
 
 
@@ -329,14 +329,14 @@ class TwelveDataProvider:
     def fetch_daily_bars_batch(self, symbols: list[str]) -> dict[str, list[DailyBar]]:
         return self._rate_limited_call(
             "fetch_daily_bars_batch",
-            _format_symbol_list(symbols),
+            _join_symbols_for_logging(symbols),
             lambda: _td_fetch_daily_series_batch(symbols, self._get_api_key()),
         )
 
     def fetch_weekly_bars_batch(self, symbols: list[str]) -> dict[str, list[WeeklyBar]]:
         return self._rate_limited_call(
             "fetch_weekly_bars_batch",
-            _format_symbol_list(symbols),
+            _join_symbols_for_logging(symbols),
             lambda: _td_fetch_weekly_series_batch(symbols, self._get_api_key()),
         )
 
@@ -369,7 +369,7 @@ class TwelveDataProvider:
     ) -> dict[str, list[ATRPoint]]:
         return self._rate_limited_call(
             f"fetch_atr_batch[{interval}:{time_period}]",
-            _format_symbol_list(symbols),
+            _join_symbols_for_logging(symbols),
             lambda: _td_fetch_atr_batch(
                 symbols, interval=interval, time_period=time_period,
                 api_key=self._get_api_key(),
