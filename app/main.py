@@ -1219,7 +1219,10 @@ def add_position(
     if api_key:
         uow.positions.refresh_instance(pos)
         _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
-        background_tasks.add_task(_refresh_single_position_task, pos.id, user_id)
+        refresh_id = new_refresh_id()
+        with refresh_logging_context(refresh_id):
+            logger.info("Queued refresh for new position id=%d", pos.id)
+        background_tasks.add_task(_refresh_single_position_task, pos.id, user_id, refresh_id)
 
     return RedirectResponse(url="/", status_code=303)
 
@@ -1294,7 +1297,12 @@ def edit_position(
     uow.commit()
     if ticker_changed and get_market_data_api_key():
         _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
-        background_tasks.add_task(_refresh_single_position_task, pos.id, uow.user_id)
+        refresh_id = new_refresh_id()
+        with refresh_logging_context(refresh_id):
+            logger.info("Queued refresh after ticker change for position id=%d", pos.id)
+        background_tasks.add_task(
+            _refresh_single_position_task, pos.id, uow.user_id, refresh_id
+        )
     logger.info("Updated position id=%d %s — current_price=%.2f", position_id, pos.ticker, submitted_current_price)
     return RedirectResponse(url="/", status_code=303)
 
