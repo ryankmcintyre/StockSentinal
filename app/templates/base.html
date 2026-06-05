@@ -58,10 +58,6 @@
             <div class="nav-right">
                 {% if current_user %}
                 <a href="/add" class="btn btn-primary">+ Add Position</a>
-                <form method="post" action="/auth/logout" style="display:inline">
-                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-                    <button type="submit" class="btn btn-small">Sign Out</button>
-                </form>
                 <details class="profile-menu">
                     <summary class="profile-button" aria-label="Profile">
                         <svg class="profile-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -70,20 +66,31 @@
                             <path d="M6.5 18.5a5.5 5.5 0 0 1 11 0"></path>
                         </svg>
                     </summary>
-                    <div class="theme-menu" aria-label="Theme">
-                        <p class="theme-menu-title">Theme</p>
-                        <button type="button" class="theme-menu-option" aria-pressed="false" data-theme-option="system">
-                            <span>System</span>
-                            <span class="theme-menu-check" aria-hidden="true">✓</span>
-                        </button>
-                        <button type="button" class="theme-menu-option" aria-pressed="false" data-theme-option="light">
-                            <span>Light</span>
-                            <span class="theme-menu-check" aria-hidden="true">✓</span>
-                        </button>
-                        <button type="button" class="theme-menu-option" aria-pressed="false" data-theme-option="dark">
-                            <span>Dark</span>
-                            <span class="theme-menu-check" aria-hidden="true">✓</span>
-                        </button>
+                    <div class="theme-menu" aria-label="Profile menu">
+                        <details class="theme-submenu">
+                            <summary class="profile-menu-item theme-submenu-summary">
+                                <span class="theme-submenu-label">Theme</span>
+                                <span class="theme-submenu-chevron" aria-hidden="true">›</span>
+                            </summary>
+                            <div class="theme-submenu-options" aria-label="Theme">
+                                <button type="button" class="theme-menu-option" aria-pressed="false" data-theme-option="system">
+                                    <span>System</span>
+                                    <span class="theme-menu-check" aria-hidden="true">✓</span>
+                                </button>
+                                <button type="button" class="theme-menu-option" aria-pressed="false" data-theme-option="light">
+                                    <span>Light</span>
+                                    <span class="theme-menu-check" aria-hidden="true">✓</span>
+                                </button>
+                                <button type="button" class="theme-menu-option" aria-pressed="false" data-theme-option="dark">
+                                    <span>Dark</span>
+                                    <span class="theme-menu-check" aria-hidden="true">✓</span>
+                                </button>
+                            </div>
+                        </details>
+                        <form method="post" action="/auth/logout" class="profile-menu-form">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                            <button type="submit" class="profile-menu-item">Sign Out</button>
+                        </form>
                     </div>
                 </details>
                 {% else %}

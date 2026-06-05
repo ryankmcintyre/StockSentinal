@@ -1,6 +1,7 @@
 """Tests for the splash page (GET /) and root route auth-branching."""
 
 from datetime import datetime
+from html.parser import HTMLParser
 
 import pytest
 from fastapi.testclient import TestClient
@@ -12,6 +13,41 @@ from app.database import get_authenticated_uow, get_optional_uow, get_uow
 from app.main import app
 from app.models import Base, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
+
+
+class ProfileMenuParser(HTMLParser):
+    def __init__(self):
+        super().__init__()
+        self.stack = []
+        self.theme_label_seen = False
+        self.logout_in_profile_menu = False
+        self.logout_in_theme_submenu = False
+        self._capture_theme_label = False
+
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        classes = set(attrs_dict.get("class", "").split())
+        self.stack.append((tag, classes))
+        if tag == "span" and "theme-submenu-label" in classes:
+            self._capture_theme_label = self._inside("details", "theme-submenu")
+        if tag == "form" and attrs_dict.get("action") == "/auth/logout" and self._inside("details", "profile-menu"):
+            self.logout_in_profile_menu = True
+            self.logout_in_theme_submenu = self._inside("details", "theme-submenu")
+
+    def handle_endtag(self, tag):
+        while self.stack:
+            closing_tag, closing_classes = self.stack.pop()
+            if closing_tag == "span" and "theme-submenu-label" in closing_classes:
+                self._capture_theme_label = False
+            if closing_tag == tag:
+                break
+
+    def handle_data(self, data):
+        if self._capture_theme_label and data.strip() == "Theme":
+            self.theme_label_seen = True
+
+    def _inside(self, tag, class_name):
+        return any(node_tag == tag and class_name in node_classes for node_tag, node_classes in self.stack)
 
 
 @pytest.fixture()
@@ -155,12 +191,20 @@ def test_authenticated_get_root_returns_portfolio(auth_client):
 
 def test_authenticated_get_root_shows_profile_theme_menu(auth_client):
     resp = auth_client.get("/")
+    parser = ProfileMenuParser()
+    parser.feed(resp.text)
 
     assert resp.status_code == 200
     assert 'aria-label="Profile"' in resp.text
+    assert 'aria-label="Profile menu"' in resp.text
+    assert 'class="theme-submenu-options"' in resp.text
     assert 'data-theme-option="system"' in resp.text
     assert 'data-theme-option="light"' in resp.text
     assert 'data-theme-option="dark"' in resp.text
+    assert parser.theme_label_seen
+    assert parser.logout_in_profile_menu
+    assert not parser.logout_in_theme_submenu
+    assert resp.text.count('action="/auth/logout"') == 1
     assert 'aria-pressed="false"' in resp.text
     assert 'role="menu"' not in resp.text
     assert 'role="menuitemradio"' not in resp.text
