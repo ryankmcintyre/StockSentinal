@@ -5,6 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Stock Sentinel{% endblock %}</title>
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <script>
+        (function () {
+            var preference = "system";
+            try {
+                var storedPreference = window.localStorage.getItem("themePreference");
+                if (
+                    storedPreference === "light" ||
+                    storedPreference === "dark" ||
+                    storedPreference === "system"
+                ) {
+                    preference = storedPreference;
+                }
+            } catch (_error) {
+                preference = "system";
+            }
+            var resolvedTheme = preference;
+            if (preference === "system" && window.matchMedia) {
+                resolvedTheme = window.matchMedia("(prefers-color-scheme: dark)").matches
+                    ? "dark"
+                    : "light";
+            }
+            document.documentElement.dataset.themePreference = preference;
+            document.documentElement.dataset.theme =
+                resolvedTheme === "dark" ? "dark" : "light";
+        }());
+    </script>
     <link rel="stylesheet" href="/static/styles.css">
 </head>
 <body>
@@ -31,12 +57,35 @@
             </div>
             <div class="nav-right">
                 {% if current_user %}
-                <span class="nav-user">{{ current_user.display_name or current_user.email or "User" }}</span>
+                <a href="/add" class="btn btn-primary">+ Add Position</a>
                 <form method="post" action="/auth/logout" style="display:inline">
                     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                     <button type="submit" class="btn btn-small">Sign Out</button>
                 </form>
-                <a href="/add" class="btn btn-primary">+ Add Position</a>
+                <details class="profile-menu">
+                    <summary class="profile-button" aria-label="Profile">
+                        <svg class="profile-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <circle cx="12" cy="12" r="9"></circle>
+                            <circle cx="12" cy="8.25" r="3.25"></circle>
+                            <path d="M6.5 18.5a5.5 5.5 0 0 1 11 0"></path>
+                        </svg>
+                    </summary>
+                    <div class="theme-menu" aria-label="Theme">
+                        <p class="theme-menu-title">Theme</p>
+                        <button type="button" class="theme-menu-option" aria-pressed="false" data-theme-option="system">
+                            <span>System</span>
+                            <span class="theme-menu-check" aria-hidden="true">✓</span>
+                        </button>
+                        <button type="button" class="theme-menu-option" aria-pressed="false" data-theme-option="light">
+                            <span>Light</span>
+                            <span class="theme-menu-check" aria-hidden="true">✓</span>
+                        </button>
+                        <button type="button" class="theme-menu-option" aria-pressed="false" data-theme-option="dark">
+                            <span>Dark</span>
+                            <span class="theme-menu-check" aria-hidden="true">✓</span>
+                        </button>
+                    </div>
+                </details>
                 {% else %}
                 <a href="/auth/login" class="btn btn-primary">Sign In</a>
                 {% endif %}
@@ -54,6 +103,7 @@
         <span class="footer-sep">·</span>
         <a href="mailto:admin@stocksentinal.com">Contact</a>
     </footer>
+    <script src="/static/theme.js" defer></script>
     <script src="/static/refresh-status.js" defer></script>
 </body>
 </html>
