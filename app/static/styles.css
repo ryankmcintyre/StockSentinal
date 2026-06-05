@@ -1336,6 +1336,22 @@ html[data-theme="dark"] .positions-table tbody tr:hover {
     background: #172033;
 }
 
+html[data-theme="dark"] .reason::before {
+    background: #475569;
+}
+
+html[data-theme="dark"] .rule-tag {
+    color: #e2e8f0;
+}
+
+html[data-theme="dark"] .rule-tag::before {
+    color: #94a3b8;
+}
+
+html[data-theme="dark"] .rule-tag-error {
+    color: #fca5a5;
+}
+
 html[data-theme="dark"] .refresh-banner {
     color: #cbd5e1;
 }
