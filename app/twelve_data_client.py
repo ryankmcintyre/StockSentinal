@@ -229,9 +229,14 @@ def _fetch_time_series_batch(
     symbols: list[str],
     interval: str,
     api_key: str,
+    *,
+    outputsize: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Fetch raw time-series payloads for one or more symbols."""
-    return _fetch_batch("/time_series", {"interval": interval}, symbols, api_key)
+    params: dict[str, str] = {"interval": interval}
+    if outputsize is not None:
+        params["outputsize"] = str(outputsize)
+    return _fetch_batch("/time_series", params, symbols, api_key)
 
 
 def fetch_daily_series(symbol: str, api_key: str) -> list[DailyBar]:
@@ -255,18 +260,27 @@ def fetch_daily_series_batch(
     return results
 
 
-def fetch_weekly_series(symbol: str, api_key: str) -> list[WeeklyBar]:
+def fetch_weekly_series(
+    symbol: str, api_key: str, outputsize: int = 52,
+) -> list[WeeklyBar]:
     """Fetch weekly time series bars from Twelve Data."""
-    data = _get("/time_series", {"symbol": symbol, "interval": "1week"}, api_key)
+    data = _get(
+        "/time_series",
+        {"symbol": symbol, "interval": "1week", "outputsize": str(outputsize)},
+        api_key,
+    )
     return _parse_weekly_bars(data, symbol)
 
 
 def fetch_weekly_series_batch(
     symbols: list[str],
     api_key: str,
+    outputsize: int = 52,
 ) -> dict[str, list[WeeklyBar]]:
     """Fetch weekly time series bars for multiple symbols in one request."""
-    payloads = _fetch_time_series_batch(symbols, "1week", api_key)
+    payloads = _fetch_time_series_batch(
+        symbols, "1week", api_key, outputsize=outputsize,
+    )
     results: dict[str, list[WeeklyBar]] = {}
     for symbol, payload in payloads.items():
         try:
