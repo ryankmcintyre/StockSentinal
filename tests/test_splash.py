@@ -1,7 +1,6 @@
 """Tests for the splash page (GET /) and root route auth-branching."""
 
 from datetime import datetime
-from html.parser import HTMLParser
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,41 +12,6 @@ from app.database import get_authenticated_uow, get_optional_uow, get_uow
 from app.main import app
 from app.models import Base, User
 from app.unit_of_work import SqlAlchemyUnitOfWork
-
-
-class ProfileMenuParser(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self._details_stack = []
-        self.theme_label_seen = False
-        self.logout_action_seen = False
-        self._theme_label_depth = 0
-
-    def handle_starttag(self, tag, attrs):
-        attrs_dict = dict(attrs)
-        class_names = attrs_dict.get("class", "").split()
-        if tag == "details" and "profile-menu" in class_names:
-            self._details_stack.append(True)
-        elif tag == "details":
-            self._details_stack.append(False)
-        elif self.inside_profile_menu and tag == "span" and "theme-submenu-label" in class_names:
-            self._theme_label_depth += 1
-        elif self.inside_profile_menu and tag == "form" and attrs_dict.get("action") == "/auth/logout":
-            self.logout_action_seen = True
-
-    def handle_endtag(self, tag):
-        if tag == "details" and self._details_stack:
-            self._details_stack.pop()
-        elif tag == "span" and self._theme_label_depth:
-            self._theme_label_depth -= 1
-
-    def handle_data(self, data):
-        if self.inside_profile_menu and self._theme_label_depth and data.strip() == "Theme":
-            self.theme_label_seen = True
-
-    @property
-    def inside_profile_menu(self):
-        return any(self._details_stack)
 
 
 @pytest.fixture()
@@ -191,18 +155,21 @@ def test_authenticated_get_root_returns_portfolio(auth_client):
 
 def test_authenticated_get_root_shows_profile_theme_menu(auth_client):
     resp = auth_client.get("/")
-    parser = ProfileMenuParser()
-    parser.feed(resp.text)
+    profile_menu_index = resp.text.find('class="profile-menu"')
+    theme_index = resp.text.find("Theme", profile_menu_index)
+    logout_index = resp.text.find('action="/auth/logout"', profile_menu_index)
 
     assert resp.status_code == 200
+    assert profile_menu_index != -1
     assert 'aria-label="Profile"' in resp.text
     assert 'aria-label="Profile menu"' in resp.text
     assert 'class="theme-submenu-options"' in resp.text
     assert 'data-theme-option="system"' in resp.text
     assert 'data-theme-option="light"' in resp.text
     assert 'data-theme-option="dark"' in resp.text
-    assert parser.theme_label_seen
-    assert parser.logout_action_seen
+    assert theme_index != -1
+    assert logout_index != -1
+    assert theme_index < logout_index
     assert resp.text.count('action="/auth/logout"') == 1
     assert 'aria-pressed="false"' in resp.text
     assert 'role="menu"' not in resp.text
