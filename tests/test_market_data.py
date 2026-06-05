@@ -1292,7 +1292,7 @@ class TestWeeklyBarCache:
 
         latest = MarketWeeklyBarCache(
             ticker="IBM", bar_date=date(2025, 6, 9), close=100.0,
-            retrieved_at=datetime.now(),
+            retrieved_at=datetime.now(timezone.utc),
         )
 
         assert weekly_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is False
@@ -1368,7 +1368,7 @@ class TestWeeklyBarCache:
                 low=99.0,
                 close=100.5,
                 volume=1000.0,
-                retrieved_at=datetime.now(),
+                retrieved_at=datetime.now(timezone.utc),
             ),
             MarketWeeklyBarCache(
                 ticker="IBM",
@@ -1378,7 +1378,7 @@ class TestWeeklyBarCache:
                 low=97.0,
                 close=98.5,
                 volume=900.0,
-                retrieved_at=datetime.now(),
+                retrieved_at=datetime.now(timezone.utc),
             ),
         ])
         db.commit()
