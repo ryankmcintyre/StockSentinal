@@ -5,7 +5,7 @@ Repositories are stateless — they receive a ``Session`` on every call so
 that callers control the transaction boundary.
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from sqlalchemy.orm import Session
@@ -175,7 +175,7 @@ class WeeklyBarCacheRepository:
         )
         rows_by_date = {row.bar_date: row for row in existing_rows}
 
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         for bar in keep:
             row = rows_by_date.get(bar.date)
             if row is None:
@@ -258,7 +258,7 @@ class DailyBarCacheRepository:
             .all()
         )
         rows_by_date = {row.bar_date: row for row in existing_rows}
-        now = datetime.now()
+        now = datetime.now(timezone.utc)
         for bar in keep:
             row = rows_by_date.get(bar.date)
             if row is None:

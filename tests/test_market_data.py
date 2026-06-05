@@ -9,8 +9,10 @@ import pytest
 from app.logging_utils import refresh_logging_context
 from app.schemas import Verdict
 from app.market_data.staleness import (
+    atr_cache_is_stale,
     daily_bar_cache_is_stale,
     daily_data_is_stale,
+    indicator_cache_is_stale,
     last_completed_trading_day,
     last_completed_trading_week_end,
     weekly_bar_cache_is_stale,
@@ -219,6 +221,40 @@ class TestWeeklyDataIsStale:
     def test_old_data_is_stale(self):
         pos = FakePosition(weekly_market_date=date(2026, 4, 10))
         assert weekly_data_is_stale(pos, today=date(2026, 4, 20)) is True
+
+    def test_monday_dated_same_week_data_is_not_stale(self):
+        pos = FakePosition(weekly_market_date=date(2026, 4, 13))
+        assert weekly_data_is_stale(pos, today=date(2026, 4, 20)) is False
+
+
+class TestWeeklyIndicatorAndAtrStaleness:
+    def test_weekly_indicator_cache_accepts_monday_dates_in_target_week(self):
+        from app.models import MarketIndicatorCache
+
+        cache_row = MarketIndicatorCache(
+            ticker="IBM",
+            interval="weekly",
+            time_period=20,
+            sma_value=100.0,
+            sma_date=date(2026, 4, 13),
+            close_value=101.0,
+            close_date=date(2026, 4, 13),
+        )
+
+        assert indicator_cache_is_stale(cache_row, "weekly", today=date(2026, 4, 20)) is False
+
+    def test_weekly_atr_cache_accepts_monday_dates_in_target_week(self):
+        from app.models import MarketAtrCache
+
+        cache_row = MarketAtrCache(
+            ticker="IBM",
+            interval="weekly",
+            time_period=14,
+            atr_value=3.5,
+            atr_date=date(2026, 4, 13),
+        )
+
+        assert atr_cache_is_stale(cache_row, "weekly", today=date(2026, 4, 20)) is False
 
 
 # ---------------------------------------------------------------------------
@@ -1251,6 +1287,16 @@ class TestWeeklyBarCache:
         )
         assert weekly_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is False
 
+    def test_is_fresh_when_latest_row_uses_monday_of_target_week(self):
+        from app.models import MarketWeeklyBarCache
+
+        latest = MarketWeeklyBarCache(
+            ticker="IBM", bar_date=date(2025, 6, 9), close=100.0,
+            retrieved_at=datetime.now(timezone.utc),
+        )
+
+        assert weekly_bar_cache_is_stale(latest, today=date(2025, 6, 15)) is False
+
     def test_refresh_skips_when_no_tickers(self, db, service):
         assert service.refresh_weekly_bar_cache(db, set(), lookback_weeks=10) == []
 
@@ -1289,9 +1335,13 @@ class TestWeeklyBarCache:
             "app.market_data.cache_repos.last_completed_trading_week_end",
             return_value=date(2025, 6, 13),
         )
+        mock_datetime = mocker.patch("app.market_data.cache_repos.datetime")
+        fake_now = datetime(2025, 6, 13, 20, 0, tzinfo=timezone.utc)
+        mock_datetime.now.return_value = fake_now
 
         errors = service.refresh_weekly_bar_cache(db, {"IBM"}, lookback_weeks=2, force=True)
         assert errors == []
+        mock_datetime.now.assert_called_once_with(timezone.utc)
 
         rows = (
             db.query(MarketWeeklyBarCache)
@@ -1305,6 +1355,43 @@ class TestWeeklyBarCache:
         assert rows[0].low == 95.0
         assert rows[0].close == 105.0
         assert rows[0].volume == 2000.0
+
+    def test_refresh_skips_when_cache_has_required_history_for_same_week(self, db, service, mocker):
+        from app.models import MarketWeeklyBarCache
+
+        db.add_all([
+            MarketWeeklyBarCache(
+                ticker="IBM",
+                bar_date=date(2025, 6, 9),
+                open=100.0,
+                high=101.0,
+                low=99.0,
+                close=100.5,
+                volume=1000.0,
+                retrieved_at=datetime.now(timezone.utc),
+            ),
+            MarketWeeklyBarCache(
+                ticker="IBM",
+                bar_date=date(2025, 6, 2),
+                open=98.0,
+                high=99.0,
+                low=97.0,
+                close=98.5,
+                volume=900.0,
+                retrieved_at=datetime.now(timezone.utc),
+            ),
+        ])
+        db.commit()
+
+        mocker.patch(
+            "app.market_data.staleness.last_completed_trading_week_end",
+            return_value=date(2025, 6, 13),
+        )
+
+        errors = service.refresh_weekly_bar_cache(db, {"IBM"}, lookback_weeks=2)
+
+        assert errors == []
+        service._provider.fetch_weekly_bars.assert_not_called()
 
     def test_refresh_records_error_on_exception(self, db, mocker):
         mock_provider = Mock()
@@ -1426,9 +1513,13 @@ class TestDailyBarCache:
             "app.market_data.cache_repos.last_completed_trading_day",
             return_value=date(2025, 6, 13),
         )
+        mock_datetime = mocker.patch("app.market_data.cache_repos.datetime")
+        fake_now = datetime(2025, 6, 13, 20, 0, tzinfo=timezone.utc)
+        mock_datetime.now.return_value = fake_now
 
         errors = service.refresh_daily_bar_cache(db, {"IBM"}, lookback_days=2, force=True)
         assert errors == []
+        mock_datetime.now.assert_called_once_with(timezone.utc)
 
         rows = (
             db.query(MarketDailyBarCache)

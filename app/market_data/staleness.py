@@ -15,6 +15,11 @@ _ET = ZoneInfo("America/New_York")
 _MARKET_CLOSE_HOUR = 16  # 4:00 PM ET
 
 
+def _week_start(day: date) -> date:
+    """Return the Monday for the week containing *day*."""
+    return day - timedelta(days=day.weekday())
+
+
 def _et_now() -> datetime:
     """Return the current time in US Eastern."""
     return datetime.now(_ET)
@@ -130,7 +135,7 @@ def weekly_data_is_stale(position: Position, today: Optional[date] = None) -> bo
     if position.weekly_market_date is None:
         return True
     target = last_completed_trading_week_end(today)
-    return position.weekly_market_date != target
+    return _week_start(position.weekly_market_date) < _week_start(target)
 
 
 def indicator_cache_is_stale(
@@ -151,7 +156,11 @@ def indicator_cache_is_stale(
         return cache_row.sma_date < target or cache_row.close_date != target
     elif interval == "weekly":
         target = last_completed_trading_week_end(today)
-        return cache_row.sma_date != target or cache_row.close_date != target
+        target_week = _week_start(target)
+        return (
+            _week_start(cache_row.sma_date) < target_week
+            or _week_start(cache_row.close_date) < target_week
+        )
     return True
 
 
@@ -168,7 +177,7 @@ def atr_cache_is_stale(
         return cache_row.atr_date < target
     elif interval == "weekly":
         target = last_completed_trading_week_end(today)
-        return cache_row.atr_date != target
+        return _week_start(cache_row.atr_date) < _week_start(target)
     return True
 
 
@@ -181,7 +190,7 @@ def weekly_bar_cache_is_stale(
     if latest_row is None or latest_row.bar_date is None:
         return True
     target = last_completed_trading_week_end(today)
-    return latest_row.bar_date < target
+    return _week_start(latest_row.bar_date) < _week_start(target)
 
 
 def daily_bar_cache_is_stale(
