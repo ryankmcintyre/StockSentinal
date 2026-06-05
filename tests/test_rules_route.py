@@ -509,6 +509,34 @@ class TestRulesPage:
         assert shared_header_match is not None
         assert "position: sticky;" not in shared_header_match.group(1)
 
+    def test_portfolio_reason_tags_have_dark_mode_contrast_styles(self, client):
+        resp = client.get("/static/styles.css")
+        assert resp.status_code == 200
+
+        dark_rule_tag_match = re.search(
+            r'html\[data-theme="dark"\] \.rule-tag\s*\{([^}]*)\}',
+            resp.text,
+            re.DOTALL,
+        )
+        assert dark_rule_tag_match is not None
+        assert "color: #e2e8f0;" in dark_rule_tag_match.group(1)
+
+        dark_error_tag_match = re.search(
+            r'html\[data-theme="dark"\] \.rule-tag-error\s*\{([^}]*)\}',
+            resp.text,
+            re.DOTALL,
+        )
+        assert dark_error_tag_match is not None
+        assert "color: #fca5a5;" in dark_error_tag_match.group(1)
+
+        dark_reason_marker_match = re.search(
+            r'html\[data-theme="dark"\] \.reason::before\s*\{([^}]*)\}',
+            resp.text,
+            re.DOTALL,
+        )
+        assert dark_reason_marker_match is not None
+        assert "background: #475569;" in dark_reason_marker_match.group(1)
+
     def test_single_refresh_task_persists_unexpected_error(self, _setup_db, mocker):
         from app.main import _refresh_single_position_task
 
