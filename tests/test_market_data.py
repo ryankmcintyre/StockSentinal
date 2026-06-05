@@ -1306,6 +1306,88 @@ class TestWeeklyBarCache:
         assert rows[0].close == 105.0
         assert rows[0].volume == 2000.0
 
+    @pytest.mark.parametrize(
+        ("existing_rows", "bars", "expected_dates", "expected_close_by_date"),
+        [
+            pytest.param(
+                [],
+                [
+                    {"date": date(2025, 6, 13), "open": 100.0, "high": 110.0, "low": 95.0, "close": 105.0, "volume": 2000.0},
+                    {"date": date(2025, 6, 6), "open": 98.0, "high": 105.0, "low": 92.0, "close": 100.0, "volume": 1800.0},
+                ],
+                [date(2025, 6, 13), date(2025, 6, 6)],
+                {date(2025, 6, 13): 105.0, date(2025, 6, 6): 100.0},
+                id="insert",
+            ),
+            pytest.param(
+                [
+                    {"bar_date": date(2025, 6, 13), "close": 90.0},
+                    {"bar_date": date(2025, 6, 6), "close": 80.0},
+                ],
+                [
+                    {"date": date(2025, 6, 13), "open": 100.0, "high": 110.0, "low": 95.0, "close": 105.0, "volume": 2000.0},
+                    {"date": date(2025, 6, 6), "open": 98.0, "high": 105.0, "low": 92.0, "close": 100.0, "volume": 1800.0},
+                ],
+                [date(2025, 6, 13), date(2025, 6, 6)],
+                {date(2025, 6, 13): 105.0, date(2025, 6, 6): 100.0},
+                id="update",
+            ),
+            pytest.param(
+                [{"bar_date": date(2025, 6, 13), "close": 90.0}],
+                [
+                    {"date": date(2025, 6, 13), "open": 100.0, "high": 110.0, "low": 95.0, "close": 105.0, "volume": 2000.0},
+                    {"date": date(2025, 6, 6), "open": 98.0, "high": 105.0, "low": 92.0, "close": 100.0, "volume": 1800.0},
+                ],
+                [date(2025, 6, 13), date(2025, 6, 6)],
+                {date(2025, 6, 13): 105.0, date(2025, 6, 6): 100.0},
+                id="mixed",
+            ),
+        ],
+    )
+    def test_repository_bulk_upsert_handles_insert_update_and_mixed_cases(
+        self, db, mocker, existing_rows, bars, expected_dates, expected_close_by_date,
+    ):
+        from app.alpha_vantage_client import WeeklyBar
+        from app.market_data.cache_repos import WeeklyBarCacheRepository
+        from app.models import MarketWeeklyBarCache
+
+        stale_timestamp = datetime(2020, 1, 1)
+        for row in existing_rows:
+            db.add(
+                MarketWeeklyBarCache(
+                    ticker="IBM",
+                    bar_date=row["bar_date"],
+                    close=row["close"],
+                    retrieved_at=stale_timestamp,
+                )
+            )
+        db.commit()
+
+        mocker.patch(
+            "app.market_data.cache_repos.last_completed_trading_week_end",
+            return_value=date(2025, 6, 13),
+        )
+
+        WeeklyBarCacheRepository().upsert_bars(
+            db,
+            "IBM",
+            [WeeklyBar(**bar) for bar in bars],
+            lookback_weeks=2,
+        )
+        db.commit()
+
+        rows = (
+            db.query(MarketWeeklyBarCache)
+            .filter(MarketWeeklyBarCache.ticker == "IBM")
+            .order_by(MarketWeeklyBarCache.bar_date.desc())
+            .all()
+        )
+        assert [row.bar_date for row in rows] == expected_dates
+        assert {row.bar_date: row.close for row in rows} == expected_close_by_date
+        assert all(row.retrieved_at is not None for row in rows)
+        if existing_rows:
+            assert all(row.retrieved_at > stale_timestamp for row in rows)
+
     def test_refresh_records_error_on_exception(self, db, mocker):
         mock_provider = Mock()
         mock_provider.fetch_weekly_bars.side_effect = RuntimeError("boom")
@@ -1444,6 +1526,88 @@ class TestDailyBarCache:
         assert rows[0].low == 95.0
         assert rows[0].close == 105.0
         assert rows[0].volume == 2000.0
+
+    @pytest.mark.parametrize(
+        ("existing_rows", "bars", "expected_dates", "expected_close_by_date"),
+        [
+            pytest.param(
+                [],
+                [
+                    {"date": date(2025, 6, 13), "open": 100.0, "high": 110.0, "low": 95.0, "close": 105.0, "volume": 2000.0},
+                    {"date": date(2025, 6, 12), "open": 98.0, "high": 105.0, "low": 92.0, "close": 100.0, "volume": 1800.0},
+                ],
+                [date(2025, 6, 13), date(2025, 6, 12)],
+                {date(2025, 6, 13): 105.0, date(2025, 6, 12): 100.0},
+                id="insert",
+            ),
+            pytest.param(
+                [
+                    {"bar_date": date(2025, 6, 13), "close": 90.0},
+                    {"bar_date": date(2025, 6, 12), "close": 80.0},
+                ],
+                [
+                    {"date": date(2025, 6, 13), "open": 100.0, "high": 110.0, "low": 95.0, "close": 105.0, "volume": 2000.0},
+                    {"date": date(2025, 6, 12), "open": 98.0, "high": 105.0, "low": 92.0, "close": 100.0, "volume": 1800.0},
+                ],
+                [date(2025, 6, 13), date(2025, 6, 12)],
+                {date(2025, 6, 13): 105.0, date(2025, 6, 12): 100.0},
+                id="update",
+            ),
+            pytest.param(
+                [{"bar_date": date(2025, 6, 13), "close": 90.0}],
+                [
+                    {"date": date(2025, 6, 13), "open": 100.0, "high": 110.0, "low": 95.0, "close": 105.0, "volume": 2000.0},
+                    {"date": date(2025, 6, 12), "open": 98.0, "high": 105.0, "low": 92.0, "close": 100.0, "volume": 1800.0},
+                ],
+                [date(2025, 6, 13), date(2025, 6, 12)],
+                {date(2025, 6, 13): 105.0, date(2025, 6, 12): 100.0},
+                id="mixed",
+            ),
+        ],
+    )
+    def test_repository_bulk_upsert_handles_insert_update_and_mixed_cases(
+        self, db, mocker, existing_rows, bars, expected_dates, expected_close_by_date,
+    ):
+        from app.alpha_vantage_client import DailyBar
+        from app.market_data.cache_repos import DailyBarCacheRepository
+        from app.models import MarketDailyBarCache
+
+        stale_timestamp = datetime(2020, 1, 1)
+        for row in existing_rows:
+            db.add(
+                MarketDailyBarCache(
+                    ticker="IBM",
+                    bar_date=row["bar_date"],
+                    close=row["close"],
+                    retrieved_at=stale_timestamp,
+                )
+            )
+        db.commit()
+
+        mocker.patch(
+            "app.market_data.cache_repos.last_completed_trading_day",
+            return_value=date(2025, 6, 13),
+        )
+
+        DailyBarCacheRepository().upsert_bars(
+            db,
+            "IBM",
+            [DailyBar(**bar) for bar in bars],
+            lookback_days=1,
+        )
+        db.commit()
+
+        rows = (
+            db.query(MarketDailyBarCache)
+            .filter(MarketDailyBarCache.ticker == "IBM")
+            .order_by(MarketDailyBarCache.bar_date.desc())
+            .all()
+        )
+        assert [row.bar_date for row in rows] == expected_dates
+        assert {row.bar_date: row.close for row in rows} == expected_close_by_date
+        assert all(row.retrieved_at is not None for row in rows)
+        if existing_rows:
+            assert all(row.retrieved_at > stale_timestamp for row in rows)
 
     def test_load_returns_per_ticker_lists_most_recent_first(self, db):
         from app.models import MarketDailyBarCache
