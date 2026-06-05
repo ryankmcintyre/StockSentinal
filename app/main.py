@@ -80,11 +80,11 @@ from app.schemas import InvestmentType, RuleResult, Verdict
 from app.tiers import TIER_LIMITS, TierLimitExceeded, check_and_consume_refresh, check_can_add_position
 
 log_level = get_log_level()
+configure_refresh_logging()
 logging.basicConfig(
     level=log_level,
     format="%(asctime)s [%(levelname)s] %(refresh_prefix)s%(name)s: %(message)s",
 )
-configure_refresh_logging()
 logging.getLogger().setLevel(log_level)
 
 # Suppress third-party HTTP loggers that leak sensitive query parameters

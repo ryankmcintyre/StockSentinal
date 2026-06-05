@@ -121,7 +121,17 @@ class AlphaVantageProvider:
     ) -> _T:
         waited = self._wait_for_slot()
         started_at = time.monotonic()
-        result = fetcher()
+        try:
+            result = fetcher()
+        except Exception:
+            logger.info(
+                "AlphaVantageProvider %s %s: waited=%.2fs fetch=ERROR after %.2fs",
+                endpoint,
+                target,
+                waited,
+                time.monotonic() - started_at,
+            )
+            raise
         logger.info(
             "AlphaVantageProvider %s %s: waited=%.2fs fetch=%.2fs",
             endpoint,
@@ -263,18 +273,20 @@ class TwelveDataProvider:
                 reserved = now
             cls._call_window.append(reserved)
         wait_for = reserved - time.monotonic()
-        logger.info(
-            "TwelveDataProvider rate_limit: window=%d/%d (%s)",
-            window_depth,
-            credits_per_minute,
-            (
-                f"sleeping {wait_for:.1f}s"
-                if wait_for > 0
-                else "no wait"
-            ),
-        )
         if wait_for > 0:
+            logger.info(
+                "TwelveDataProvider rate_limit: window=%d/%d (sleeping %.1fs)",
+                window_depth,
+                credits_per_minute,
+                wait_for,
+            )
             time.sleep(wait_for)
+        else:
+            logger.debug(
+                "TwelveDataProvider rate_limit: window=%d/%d (no wait)",
+                window_depth,
+                credits_per_minute,
+            )
         return max(wait_for, 0.0)
 
     @classmethod
@@ -288,7 +300,17 @@ class TwelveDataProvider:
     ) -> _T:
         waited = self._wait_for_slot()
         started_at = time.monotonic()
-        result = fetcher()
+        try:
+            result = fetcher()
+        except Exception:
+            logger.info(
+                "TwelveDataProvider %s %s: waited=%.2fs fetch=ERROR after %.2fs",
+                endpoint,
+                target,
+                waited,
+                time.monotonic() - started_at,
+            )
+            raise
         logger.info(
             "TwelveDataProvider %s %s: waited=%.2fs fetch=%.2fs",
             endpoint,

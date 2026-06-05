@@ -144,7 +144,7 @@ class TestTwelveDataProvider:
         )
         mocker.patch("app.market_data.provider.time.monotonic", return_value=1000.0)
         mocker.patch("app.market_data.provider.time.sleep")
-        caplog.set_level(logging.INFO, logger="app.market_data.provider")
+        caplog.set_level(logging.DEBUG, logger="app.market_data.provider")
 
         TwelveDataProvider._wait_for_slot()
 
@@ -263,6 +263,70 @@ class TestTwelveDataProvider:
         ]
         assert matching_records
         assert matching_records[-1].refresh_id == "refresh-test"
+
+    def test_fetch_daily_bars_logs_error_timing(self, mocker, caplog):
+        provider = TwelveDataProvider(get_api_key=lambda: "fake_key")
+        mocker.patch.object(provider, "_wait_for_slot", return_value=1.25)
+        mocker.patch(
+            "app.market_data.provider._td_fetch_daily_series",
+            side_effect=RuntimeError("boom"),
+        )
+        mocker.patch(
+            "app.market_data.provider.time.monotonic",
+            side_effect=[10.0, 12.5],
+        )
+        caplog.set_level(logging.INFO, logger="app.market_data.provider")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            provider.fetch_daily_bars("AAPL")
+
+        assert (
+            "TwelveDataProvider fetch_daily_bars AAPL: "
+            "waited=1.25s fetch=ERROR after 2.50s"
+        ) in caplog.text
+
+
+class TestAlphaVantageProvider:
+    def test_fetch_daily_bars_logs_wait_and_fetch_duration(self, mocker, caplog):
+        provider = AlphaVantageProvider(get_api_key=lambda: "fake_key")
+        mocker.patch.object(provider, "_wait_for_slot", return_value=1.25)
+        mocker.patch(
+            "app.market_data.provider._av_fetch_daily_series",
+            return_value=[DailyBar(date=date(2026, 4, 17), close=185.5)],
+        )
+        mocker.patch(
+            "app.market_data.provider.time.monotonic",
+            side_effect=[10.0, 12.5],
+        )
+        caplog.set_level(logging.INFO, logger="app.market_data.provider")
+
+        provider.fetch_daily_bars("AAPL")
+
+        assert (
+            "AlphaVantageProvider fetch_daily_bars AAPL: "
+            "waited=1.25s fetch=2.50s"
+        ) in caplog.text
+
+    def test_fetch_daily_bars_logs_error_timing(self, mocker, caplog):
+        provider = AlphaVantageProvider(get_api_key=lambda: "fake_key")
+        mocker.patch.object(provider, "_wait_for_slot", return_value=1.25)
+        mocker.patch(
+            "app.market_data.provider._av_fetch_daily_series",
+            side_effect=RuntimeError("boom"),
+        )
+        mocker.patch(
+            "app.market_data.provider.time.monotonic",
+            side_effect=[10.0, 12.5],
+        )
+        caplog.set_level(logging.INFO, logger="app.market_data.provider")
+
+        with pytest.raises(RuntimeError, match="boom"):
+            provider.fetch_daily_bars("AAPL")
+
+        assert (
+            "AlphaVantageProvider fetch_daily_bars AAPL: "
+            "waited=1.25s fetch=ERROR after 2.50s"
+        ) in caplog.text
 
 
 class TestCreateMarketDataProvider:

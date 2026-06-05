@@ -1,11 +1,11 @@
 """Tests for logging configuration — ensures secrets are not leaked via third-party loggers."""
 
-import asyncio
 import logging
+import asyncio
 
 import pytest
 
-from app.logging_utils import refresh_logging_context
+from app.logging_utils import configure_refresh_logging, refresh_logging_context
 
 
 class TestHttpLoggersSuppressed:
@@ -106,3 +106,25 @@ class TestHttpLoggersSuppressed:
         assert matching_records
         assert matching_records[-1].refresh_id == "refresh-abcd"
         assert matching_records[-1].refresh_prefix == "[refresh-abcd] "
+
+    def test_refresh_logging_without_context_uses_default_record_fields(self, caplog):
+        logger = logging.getLogger("app.main")
+        caplog.set_level(logging.INFO, logger="app.main")
+
+        logger.info("outside refresh")
+
+        matching_records = [
+            record for record in caplog.records
+            if record.name == "app.main" and record.getMessage() == "outside refresh"
+        ]
+        assert matching_records
+        assert matching_records[-1].refresh_id == "-"
+        assert matching_records[-1].refresh_prefix == ""
+
+    def test_configure_refresh_logging_is_idempotent(self):
+        initial_factory = logging.getLogRecordFactory()
+
+        configure_refresh_logging()
+        configure_refresh_logging()
+
+        assert logging.getLogRecordFactory() is initial_factory
