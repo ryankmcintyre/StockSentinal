@@ -566,6 +566,34 @@ h3 {
     font-size: 0.85rem;
 }
 
+.refresh-progress-copy {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+}
+
+.refresh-progress-percent {
+    font-weight: 700;
+}
+
+.refresh-progress-track {
+    width: 100%;
+    height: 0.55rem;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #dbe4ef;
+}
+
+.refresh-progress-fill {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: #1a73e8;
+    transition: width 0.2s ease;
+}
+
 .text-muted {
     color: #888;
     font-size: 0.85rem;
@@ -1421,6 +1449,14 @@ html[data-theme="dark"] .rule-tag-error {
 
 html[data-theme="dark"] .refresh-banner {
     color: #cbd5e1;
+}
+
+html[data-theme="dark"] .refresh-progress-track {
+    background: #334155;
+}
+
+html[data-theme="dark"] .refresh-progress-fill {
+    background: #60a5fa;
 }
 
 html[data-theme="dark"] .text-muted code,
