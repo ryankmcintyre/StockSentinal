@@ -314,6 +314,8 @@
 
         function start() {
             // (Re)start the fast-poll cadence whenever new work is queued.
+            progressTotal = 0;
+            progressCompleted = 0;
             setProgressTotal(pendingIds().length);
             stopAt = Date.now() + timeoutMs();
             pollCount = 0;
