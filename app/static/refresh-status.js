@@ -37,6 +37,8 @@
         var pollInFlight = false;
         var timerId = null;
         var running = false;
+        var progressTotal = 0;
+        var progressCompleted = 0;
 
         function timeoutMs() {
             var root = document.getElementById("refresh-status-root");
@@ -81,19 +83,72 @@
         function showTimeoutMessage() {
             var banner = document.getElementById("refresh-progress-banner");
             if (banner) {
-                banner.textContent =
-                    "Market data is still updating in the background.";
+                var text = banner.querySelector("[data-refresh-progress-text]");
+                if (text) {
+                    text.textContent =
+                        "Market data is still updating in the background.";
+                } else {
+                    banner.textContent =
+                        "Market data is still updating in the background.";
+                }
             }
         }
 
-        function hideBannerWhenDone() {
+        function updateProgress() {
+            var banner = document.getElementById("refresh-progress-banner");
+            if (!banner || progressTotal <= 0) {
+                return;
+            }
+            var completed = Math.min(progressCompleted, progressTotal);
+            var percent = Math.round((completed / progressTotal) * 100);
+            var text = banner.querySelector("[data-refresh-progress-text]");
+            var percentText = banner.querySelector(
+                "[data-refresh-progress-percent]"
+            );
+            var bar = banner.querySelector("[data-refresh-progressbar]");
+            var fill = banner.querySelector("[data-refresh-progress-fill]");
+            if (text) {
+                text.textContent =
+                    completed +
+                    " of " +
+                    progressTotal +
+                    " positions refreshed.";
+            }
+            if (percentText) {
+                percentText.textContent = percent + "% complete";
+            }
+            if (bar) {
+                bar.setAttribute("aria-valuemax", String(progressTotal));
+                bar.setAttribute("aria-valuenow", String(completed));
+            }
+            if (fill) {
+                fill.style.width = percent + "%";
+            }
+        }
+
+        function setProgressTotal(total) {
+            if (progressTotal > 0 || total <= 0) {
+                return;
+            }
+            progressTotal = total;
+            progressCompleted = 0;
+            updateProgress();
+        }
+
+        function completeProgressWhenDone() {
             if (pendingIds().length > 0) {
                 return;
             }
-            var banner = document.getElementById("refresh-progress-banner");
-            if (banner && banner.parentNode) {
-                banner.parentNode.removeChild(banner);
+            if (progressTotal > 0) {
+                progressCompleted = progressTotal;
+                updateProgress();
             }
+            document
+                .querySelectorAll("[data-refresh-all-button='true']")
+                .forEach(function (button) {
+                    button.disabled = false;
+                    button.removeAttribute("title");
+                });
         }
 
         function updateSummary(summary) {
@@ -187,7 +242,7 @@
             var ids = pendingIds();
             if (ids.length === 0) {
                 stopPolling();
-                hideBannerWhenDone();
+                completeProgressWhenDone();
                 return;
             }
             pollInFlight = true;
@@ -215,6 +270,10 @@
                     completed.forEach(function (id) {
                         delete pending[id];
                     });
+                    if (completed.length > 0) {
+                        progressCompleted += completed.length;
+                        updateProgress();
+                    }
                     // Patch all completed rows with one batch request so the
                     // server runs a single enrich-all (not one per row) and we
                     // apply a single authoritative summary. Patching re-renders
@@ -230,7 +289,7 @@
                         .then(function () {
                             if (pendingIds().length === 0) {
                                 stopPolling();
-                                hideBannerWhenDone();
+                                completeProgressWhenDone();
                                 return;
                             }
                             scheduleNext();
@@ -255,6 +314,9 @@
 
         function start() {
             // (Re)start the fast-poll cadence whenever new work is queued.
+            progressTotal = 0;
+            progressCompleted = 0;
+            setProgressTotal(pendingIds().length);
             stopAt = Date.now() + timeoutMs();
             pollCount = 0;
             intervalMs = FAST_INTERVAL_MS;

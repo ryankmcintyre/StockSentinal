@@ -42,6 +42,7 @@
         <button
             type="submit"
             class="btn btn-small"
+            data-refresh-all-button="true"
             {% if any_refresh_in_progress %}disabled title="Refresh already in progress"{% endif %}
         >
             Refresh All Market Data
@@ -67,8 +68,28 @@
 {% endif %}
 
 {% if any_refresh_in_progress %}
-<section class="refresh-banner" id="refresh-progress-banner">
-    Updating market data — rows will update automatically when finished.
+<section
+    class="refresh-banner refresh-progress"
+    id="refresh-progress-banner"
+    data-refresh-total="{{ refresh_in_progress_count }}"
+>
+    <div class="refresh-progress-copy">
+        <span data-refresh-progress-text>
+            Updating market data — 0 of {{ refresh_in_progress_count }} positions refreshed.
+        </span>
+        <span class="refresh-progress-percent" data-refresh-progress-percent>0% complete</span>
+    </div>
+    <div
+        class="refresh-progress-track"
+        role="progressbar"
+        aria-label="Market data refresh progress"
+        aria-valuemin="0"
+        aria-valuemax="{{ refresh_in_progress_count }}"
+        aria-valuenow="0"
+        data-refresh-progressbar
+    >
+        <div class="refresh-progress-fill" data-refresh-progress-fill></div>
+    </div>
 </section>
 {% endif %}
 

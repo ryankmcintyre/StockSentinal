@@ -1283,12 +1283,15 @@ class MarketDataService:
                     pos.refresh_error = None
                 refreshed += 1
 
-            # Heartbeat: advance refresh_started_at for positions still marked
-            # in-progress so a long-but-progressing refresh-all is not treated
-            # as stale (and cleared) by the periodic stale-flag sweep.
+            completed_group_ids = {id(pos) for pos in group}
             heartbeat = datetime.now(timezone.utc)
-            for pos in group:
-                if getattr(pos, "refresh_in_progress", False):
+            for pos in positions:
+                if not getattr(pos, "refresh_in_progress", False):
+                    continue
+                if id(pos) in completed_group_ids:
+                    pos.refresh_in_progress = False
+                    pos.refresh_started_at = None
+                else:
                     pos.refresh_started_at = heartbeat
 
             db.commit()

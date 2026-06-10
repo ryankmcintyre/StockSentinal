@@ -707,15 +707,30 @@ class TestRefreshAllPositions:
             "calculate_verdicts",
         ]
 
-    def test_advances_refresh_started_at_heartbeat_for_in_progress_positions(
+    def test_clears_refresh_state_for_each_completed_position_group(
         self, mocker
     ):
         old_started = datetime(2026, 4, 21, 9, 0, 0, tzinfo=timezone.utc)
         pos = FakePosition(ticker="AAPL", investment_type="long-term")
-        pos.refresh_in_progress = True
-        pos.refresh_started_at = old_started
+        later_pos = FakePosition(ticker="MSFT", investment_type="long-term")
+        for current in (pos, later_pos):
+            current.refresh_in_progress = True
+            current.refresh_started_at = old_started
         db = mocker.Mock()
-        db.query.return_value.all.return_value = [pos]
+        db.query.return_value.all.return_value = [pos, later_pos]
+        commits = []
+
+        def capture_commit():
+            commits.append(
+                (
+                    pos.refresh_in_progress,
+                    pos.refresh_started_at,
+                    later_pos.refresh_in_progress,
+                    later_pos.refresh_started_at,
+                )
+            )
+
+        db.commit.side_effect = capture_commit
 
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=True)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
@@ -723,8 +738,14 @@ class TestRefreshAllPositions:
 
         self.service.refresh_all_positions(db, force=False)
 
-        assert pos.refresh_started_at > old_started
-        assert pos.refresh_started_at.tzinfo == timezone.utc
+        assert commits[0][0] is False
+        assert commits[0][1] is None
+        assert commits[0][2] is True
+        assert commits[0][3] > old_started
+        assert pos.refresh_in_progress is False
+        assert pos.refresh_started_at is None
+        assert later_pos.refresh_in_progress is False
+        assert later_pos.refresh_started_at is None
 
     def test_user_id_scopes_refresh_all_query(self, mocker):
         positions = [FakePosition(ticker="AAPL", investment_type="long-term")]

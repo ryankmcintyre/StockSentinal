@@ -877,6 +877,7 @@ def _portfolio_response(request: Request, uow: UnitOfWork):
     _clear_stale_refresh_flags(uow)
     enriched, summary = _enrich_all_positions(uow, user_id)
     any_refresh_in_progress = any(p["refresh_in_progress"] for p in enriched)
+    refresh_in_progress_count = sum(1 for p in enriched if p["refresh_in_progress"])
 
     return templates.TemplateResponse(
         request,
@@ -887,6 +888,7 @@ def _portfolio_response(request: Request, uow: UnitOfWork):
             "api_configured": get_market_data_api_key() is not None,
             "market_data_provider_name": get_market_data_provider_display_name(),
             "any_refresh_in_progress": any_refresh_in_progress,
+            "refresh_in_progress_count": refresh_in_progress_count,
             "refresh_poll_timeout_ms": REFRESH_POLL_TIMEOUT_MS,
             "current_user": current_user,
             "flash": _flash_message(request),

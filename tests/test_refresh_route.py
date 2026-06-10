@@ -83,18 +83,31 @@ class TestRefreshLoadingCues:
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
         db = _setup_db()
         try:
-            db.add(
-                Position(
-                    ticker="AAPL",
-                    company_name="Apple Inc.",
-                    cost_basis=100.0,
-                    initial_purchase_date=date(2025, 1, 1),
-                    investment_type="long-term",
-                    current_price=115.0,
-                    notes=None,
-                    refresh_in_progress=True,
-                    refresh_started_at=datetime.now(timezone.utc),
-                )
+            db.add_all(
+                [
+                    Position(
+                        ticker="AAPL",
+                        company_name="Apple Inc.",
+                        cost_basis=100.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="long-term",
+                        current_price=115.0,
+                        notes=None,
+                        refresh_in_progress=True,
+                        refresh_started_at=datetime.now(timezone.utc),
+                    ),
+                    Position(
+                        ticker="MSFT",
+                        company_name="Microsoft Corp.",
+                        cost_basis=100.0,
+                        initial_purchase_date=date(2025, 1, 1),
+                        investment_type="short-term",
+                        current_price=115.0,
+                        notes=None,
+                        refresh_in_progress=True,
+                        refresh_started_at=datetime.now(timezone.utc),
+                    ),
+                ]
             )
             db.commit()
         finally:
@@ -106,11 +119,33 @@ class TestRefreshLoadingCues:
         # refresh icon is the only in-progress cue.
         assert "Refreshing..." not in resp.text
         assert "btn-refresh-spinning" in resp.text
-        assert "Updating market data — rows will update automatically when finished." in resp.text
+        assert "Updating market data — 0 of 2 positions refreshed." in resp.text
+        assert "0% complete" in resp.text
+        assert 'data-refresh-total="2"' in resp.text
+        assert 'role="progressbar"' in resp.text
+        assert 'aria-valuemax="2"' in resp.text
+        assert 'aria-valuenow="0"' in resp.text
+        assert 'data-refresh-all-button="true"' in resp.text
         assert 'data-any-refresh-in-progress="true"' in resp.text
         assert "data-poll-timeout-ms=" in resp.text
         assert "/static/refresh-status.js" in resp.text
         assert 'data-refresh-form="true"' in resp.text
+
+    def test_refresh_progress_assets_keep_completed_bar_visible(self):
+        js = open("app/static/refresh-status.js", encoding="utf-8").read()
+
+        assert "completeProgressWhenDone" in js
+        assert "progressCompleted = progressTotal" in js
+        assert "data-refresh-all-button" in js
+        assert "100% complete" not in js
+        assert "removeChild(banner)" not in js
+
+    def test_refresh_progress_styles_include_dark_theme(self):
+        css = open("app/static/styles.css", encoding="utf-8").read()
+
+        assert ".refresh-progress-track" in css
+        assert ".refresh-progress-fill" in css
+        assert 'html[data-theme="dark"] .refresh-progress-track' in css
 
     def test_refresh_all_form_warns_before_submit(self, client, _setup_db, mocker):
         mocker.patch("app.main.get_market_data_api_key", return_value="fake_key")
