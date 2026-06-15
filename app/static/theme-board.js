@@ -170,7 +170,7 @@
         var badge = document.createElement("span");
         badge.className = "verdict verdict-" + verdict + " verdict-xs";
         badge.setAttribute("aria-hidden", "true");
-        badge.textContent = verdict[0].toUpperCase();
+        badge.textContent = verdict.toUpperCase();
 
         var tickerSpan = document.createElement("span");
         tickerSpan.textContent = ticker;
@@ -263,12 +263,10 @@
         if (indicator) {
             indicator.style.setProperty("--heat", heat);
         }
-        // Update visible heat level text badge for color-blind users
-        var heatLabel = card.querySelector("[data-heat-label]");
-        if (heatLabel) {
-            var labelText = HEAT_LABELS[heat] || "";
-            heatLabel.textContent = labelText;
-            heatLabel.style.display = heat > 0 ? "" : "none";
+        // Update heat bar row aria-label for accessibility
+        var heatBarRow = card.querySelector(".heat-bar-row");
+        if (heatBarRow) {
+            heatBarRow.setAttribute("aria-label", "Heat level " + heat + " of 5");
         }
     }
 
@@ -555,7 +553,6 @@
               '<div class="theme-card-title-row">' +
                 '<span class="theme-card-name" data-theme-name-label>' + escapeHtml(themeName) + '</span>' +
                 '<span class="theme-count" data-position-count>0</span>' +
-                '<span class="heat-level-badge" data-heat-label style="display:none;"></span>' +
               '</div>' +
               '<div class="theme-card-header-actions">' +
                 '<button class="btn btn-small theme-rename-toggle-btn" data-rename-toggle title="Rename theme" aria-label="Rename ' + escapeHtml(themeName) + '" type="button">✎</button>' +
@@ -564,6 +561,16 @@
                   '<button type="submit" class="btn btn-small btn-danger" title="Delete theme">✕</button>' +
                 '</form>' +
               '</div>' +
+            '</div>' +
+            '<div class="heat-bar-row" aria-label="Heat level 0 of 5">' +
+              '<span class="heat-bar-label">Heat:</span>' +
+              '<span class="heat-blocks" aria-hidden="true">' +
+                '<span class="heat-block"></span>' +
+                '<span class="heat-block"></span>' +
+                '<span class="heat-block"></span>' +
+                '<span class="heat-block"></span>' +
+                '<span class="heat-block"></span>' +
+              '</span>' +
             '</div>' +
             '<form method="post" action="/themes/' + themeId + '/rename" class="theme-rename-inline" data-rename-form style="display:none;">' +
               '<input type="hidden" name="csrf_token" value="">' +

@@ -30,11 +30,18 @@
 <div class="theme-board-layout">
 
     {# Left panel: Position Tray #}
+    {% set ns = namespace(untagged_count=0) %}
+    {% for group in theme_groups %}{% if group.theme is none %}{% set ns.untagged_count = group.positions | length %}{% endif %}{% endfor %}
     <aside class="position-tray" id="position-tray" aria-label="Position tray">
         <h2 class="tray-heading">
-            Positions
+            Position Tray
             <span class="tray-count" id="tray-count">{{ all_positions | length }}</span>
         </h2>
+        {% if ns.untagged_count > 0 %}
+        <div class="tray-untagged-label">
+            Untagged <span class="tray-count tray-count-sm">{{ ns.untagged_count }}</span>
+        </div>
+        {% endif %}
         <div class="tray-list" id="tray-list">
             {% for pos in all_positions | sort(attribute='ticker') %}
             <div
@@ -47,7 +54,7 @@
                 data-themes="{% for t in pos.themes %}{{ t.id }}{% if not loop.last %},{% endif %}{% endfor %}"
                 title="{{ pos.ticker }} — {{ pos.company_name }}"
             >
-                <span class="verdict verdict-{{ pos.verdict.value | lower }} verdict-xs" aria-label="{{ pos.verdict.value }}">{{ pos.verdict.value[0] }}</span>
+                <span class="verdict verdict-{{ pos.verdict.value | lower }} verdict-xs" aria-label="{{ pos.verdict.value }}">{{ pos.verdict.value }}</span>
                 <span class="tray-chip-ticker">{{ pos.ticker }}</span>
                 <span class="tray-chip-name">{{ pos.company_name }}</span>
             </div>
@@ -84,11 +91,6 @@
                     <div class="theme-card-title-row">
                         <span class="theme-card-name" data-theme-name-label>{{ group.theme.name }}</span>
                         <span class="theme-count" data-position-count>{{ group.positions | length }}</span>
-                        {% if group.heat_level > 0 %}
-                        <span class="heat-level-badge" data-heat-label>{{ heat_label_list[group.heat_level] }}</span>
-                        {% else %}
-                        <span class="heat-level-badge" data-heat-label style="display:none;"></span>
-                        {% endif %}
                     </div>
                     <div class="theme-card-header-actions">
                         <button
@@ -108,6 +110,15 @@
                             <button type="submit" class="btn btn-small btn-danger" title="Delete theme" aria-label="Delete {{ group.theme.name }}">✕</button>
                         </form>
                     </div>
+                </div>
+
+                <div class="heat-bar-row" aria-label="Heat level {{ group.heat_level }} of 5">
+                    <span class="heat-bar-label">Heat:</span>
+                    <span class="heat-blocks" aria-hidden="true">
+                        {% for i in range(5) %}
+                        <span class="heat-block"></span>
+                        {% endfor %}
+                    </span>
                 </div>
 
                 <form
@@ -146,7 +157,7 @@
                         data-source-theme="{{ group.theme.id }}"
                         title="{{ pos.ticker }} — {{ pos.company_name }}"
                     >
-                        <span class="verdict verdict-{{ pos.verdict.value | lower }} verdict-xs" aria-hidden="true">{{ pos.verdict.value[0] }}</span>
+                        <span class="verdict verdict-{{ pos.verdict.value | lower }} verdict-xs" aria-hidden="true">{{ pos.verdict.value }}</span>
                         <span>{{ pos.ticker }}</span>
                         <button
                             type="button"
@@ -166,38 +177,6 @@
             {% endif %}
             {% endfor %}
         </div>
-
-        {% set untagged_list = [] %}
-        {% for group in theme_groups %}
-            {% if group.theme is none %}
-                {% set _ = untagged_list.extend(group.positions) %}
-            {% endif %}
-        {% endfor %}
-        {% if untagged_list %}
-        <section class="untagged-section" id="untagged-section">
-            <h2 class="untagged-heading">
-                Untagged
-                <span class="tray-count">{{ untagged_list | length }}</span>
-            </h2>
-            <div class="untagged-chips">
-                {% for pos in untagged_list %}
-                <div
-                    class="theme-position-chip tray-chip"
-                    draggable="true"
-                    data-position-id="{{ pos.id }}"
-                    data-ticker="{{ pos.ticker }}"
-                    data-company="{{ pos.company_name }}"
-                    data-verdict="{{ pos.verdict.value | lower }}"
-                    title="{{ pos.ticker }} — {{ pos.company_name }}"
-                >
-                    <span class="verdict verdict-{{ pos.verdict.value | lower }} verdict-xs" aria-hidden="true">{{ pos.verdict.value[0] }}</span>
-                    <span class="tray-chip-ticker">{{ pos.ticker }}</span>
-                    <span class="tray-chip-name">{{ pos.company_name }}</span>
-                </div>
-                {% endfor %}
-            </div>
-        </section>
-        {% endif %}
 
     </div>{# /theme-board-main #}
 </div>{# /theme-board-layout #}
