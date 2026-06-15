@@ -23,6 +23,10 @@
             <span class="theme-badge">{{ theme.name }}</span>
             {% endfor %}
         </div>
+        {% else %}
+        <div class="theme-badges">
+            <span class="theme-badge theme-badge-untagged">Untagged</span>
+        </div>
         {% endif %}
     </td>
     <td data-sort-value="{{ pos.investment_type }}">{{ pos.investment_type }}</td>

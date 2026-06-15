@@ -250,6 +250,28 @@ def _theme_conflict_json(uow: UnitOfWork, name: str) -> dict:
     return content
 
 
+def _compute_heat_level(positions: list[dict]) -> int:
+    """Return a 0–5 heat score for a theme card based on verdict distribution.
+
+    0 = empty  1 = all holds  2 = some trims  3 = mostly trims
+    4 = any sells  5 = mostly sells
+
+    NOTE: This algorithm is mirrored in updateHeatIndicator() in
+    app/static/theme-board.js (the HEAT_LABELS constant also maps to these
+    levels).  Keep both in sync whenever the thresholds change.
+    """
+    if not positions:
+        return 0
+    sell_count = sum(1 for p in positions if p.get("verdict") == Verdict.sell)
+    trim_count = sum(1 for p in positions if p.get("verdict") == Verdict.trim)
+    total = len(positions)
+    if sell_count > 0:
+        return 5 if sell_count / total >= 0.5 else 4
+    if trim_count > 0:
+        return 3 if trim_count / total >= 0.5 else 2
+    return 1
+
+
 def _group_enriched_positions_by_theme(
     enriched_positions: list[dict],
     themes: Sequence[Theme],
@@ -276,11 +298,15 @@ def _group_enriched_positions_by_theme(
             positions_by_theme_id[theme.id].append(position)
 
     grouped = [
-        {"theme": theme, "positions": positions_by_theme_id.get(theme.id, [])}
+        {
+            "theme": theme,
+            "positions": positions_by_theme_id.get(theme.id, []),
+            "heat_level": _compute_heat_level(positions_by_theme_id.get(theme.id, [])),
+        }
         for theme in themes
     ]
     if untagged:
-        grouped.append({"theme": None, "positions": untagged})
+        grouped.append({"theme": None, "positions": untagged, "heat_level": 0})
     return grouped
 
 
@@ -1027,6 +1053,7 @@ def portfolio_themes(request: Request, uow: UnitOfWork = Depends(get_authenticat
         {
             "theme_groups": grouped,
             "themes": themes,
+            "all_positions": enriched,
             "has_themes": any(group["theme"] is not None for group in grouped),
             "current_user": current_user,
             "flash": _flash_message(request),
@@ -1108,6 +1135,36 @@ async def delete_theme(
     if _wants_json_response(request):
         return {"deleted": deleted, "id": theme_id}
     return _redirect_to_themes_with_flash("theme_deleted")
+
+
+@app.post("/themes/{theme_id}/positions/{position_id}")
+def add_position_to_theme(
+    theme_id: int,
+    position_id: int,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Add a position to a theme (drag/drop); existing theme associations are preserved."""
+    success = uow.themes.add_position_to_theme(position_id, theme_id)
+    if not success:
+        raise HTTPException(status_code=404)
+    uow.commit()
+    return {"ok": True}
+
+
+@app.post("/themes/{theme_id}/positions/{position_id}/remove")
+def remove_position_from_theme(
+    theme_id: int,
+    position_id: int,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Remove a single position–theme association without affecting other tags."""
+    success = uow.themes.remove_position_from_theme(position_id, theme_id)
+    if not success:
+        raise HTTPException(status_code=404)
+    uow.commit()
+    return {"ok": True}
 
 
 @app.get("/rules")
