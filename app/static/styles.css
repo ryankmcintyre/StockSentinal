@@ -1446,6 +1446,7 @@ html[data-theme="dark"] .site-header,
 html[data-theme="dark"] .summary-card,
 html[data-theme="dark"] .positions-table,
 html[data-theme="dark"] .position-form,
+html[data-theme="dark"] .theme-card,
 html[data-theme="dark"] .empty-state,
 html[data-theme="dark"] .login-card,
 html[data-theme="dark"] .splash-feature,
@@ -1468,7 +1469,8 @@ html[data-theme="dark"] .privacy-page h2,
 html[data-theme="dark"] .splash-feature-title,
 html[data-theme="dark"] .ticker-lookup-picker-title,
 html[data-theme="dark"] .profile-menu-item,
-html[data-theme="dark"] .theme-menu-option {
+html[data-theme="dark"] .theme-menu-option,
+html[data-theme="dark"] .theme-position-copy {
     color: #f8fafc;
 }
 
@@ -1491,7 +1493,8 @@ html[data-theme="dark"] .privacy-page p,
 html[data-theme="dark"] .privacy-page li,
 html[data-theme="dark"] .privacy-updated,
 html[data-theme="dark"] .position-identity .company-name,
-html[data-theme="dark"] .ticker-lookup-option-meta {
+html[data-theme="dark"] .ticker-lookup-option-meta,
+html[data-theme="dark"] .theme-checkbox {
     color: #94a3b8;
 }
 
@@ -1597,8 +1600,20 @@ html[data-theme="dark"] .refresh-progress-fill {
 
 html[data-theme="dark"] .text-muted code,
 html[data-theme="dark"] .position-identity,
-html[data-theme="dark"] .form-group input[readonly] {
+html[data-theme="dark"] .form-group input[readonly],
+html[data-theme="dark"] .theme-badge,
+html[data-theme="dark"] .theme-count,
+html[data-theme="dark"] .theme-checkbox {
     background: #1e293b;
+}
+
+html[data-theme="dark"] .theme-badge,
+html[data-theme="dark"] .theme-count {
+    color: #cbd5e1;
+}
+
+html[data-theme="dark"] .theme-count {
+    border-color: #475569;
 }
 
 html[data-theme="dark"] .text-muted code {
@@ -1611,10 +1626,16 @@ html[data-theme="dark"] .form-group textarea,
 html[data-theme="dark"] .login-email-form input[type="email"],
 html[data-theme="dark"] .ma-add-form select,
 html[data-theme="dark"] .ma-add-form input[type="number"],
-html[data-theme="dark"] .ticker-lookup-option {
+html[data-theme="dark"] .ticker-lookup-option,
+html[data-theme="dark"] .theme-rename-form input {
     background: #0f172a;
     border-color: #475569;
     color: #e2e8f0;
+}
+
+html[data-theme="dark"] .theme-checkbox,
+html[data-theme="dark"] .theme-position-item {
+    border-color: #334155;
 }
 
 html[data-theme="dark"] .form-group input[readonly] {

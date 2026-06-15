@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Optional, Protocol, Sequence
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
@@ -223,6 +224,8 @@ class ThemeRepository(Protocol):
 
     def list_themes(self) -> Sequence[Theme]: ...
 
+    def find_by_name(self, name: str) -> Optional[Theme]: ...
+
     def get_by_id(self, theme_id: int) -> Optional[Theme]: ...
 
     def create_theme(self, name: str) -> Theme: ...
@@ -258,6 +261,9 @@ class SqlAlchemyThemeRepository:
             .first()
         )
 
+    def find_by_name(self, name: str) -> Optional[Theme]:
+        return self._find_by_name(name)
+
     def list_themes(self) -> Sequence[Theme]:
         return self._base_query().order_by(func.lower(Theme.name), Theme.name).all()
 
@@ -272,7 +278,11 @@ class SqlAlchemyThemeRepository:
             raise ThemeNameConflictError("Theme name already exists")
         theme = Theme(name=clean_name, user_id=self._user_id)
         self._session.add(theme)
-        self._session.flush()
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            self._session.rollback()
+            raise ThemeNameConflictError("Theme name already exists") from exc
         return theme
 
     def rename_theme(self, theme_id: int, name: str) -> Optional[Theme]:
@@ -286,7 +296,11 @@ class SqlAlchemyThemeRepository:
         if existing is not None and existing.id != theme.id:
             raise ThemeNameConflictError("Theme name already exists")
         theme.name = clean_name
-        self._session.flush()
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            self._session.rollback()
+            raise ThemeNameConflictError("Theme name already exists") from exc
         return theme
 
     def delete_theme(self, theme_id: int) -> bool:

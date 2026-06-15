@@ -130,6 +130,7 @@ def test_theme_json_create_returns_shape_and_conflict(client):
 
     assert response.status_code == 201
     assert response.json() == {"id": 1, "name": "AI"}
+    original_id = response.json()["id"]
 
     duplicate = client.post(
         "/themes",
@@ -137,7 +138,39 @@ def test_theme_json_create_returns_shape_and_conflict(client):
         headers=_json_csrf_headers(client),
     )
     assert duplicate.status_code == 409
-    assert duplicate.json() == {"error": "Theme name already exists"}
+    assert duplicate.json() == {
+        "error": "Theme name already exists",
+        "theme": {"id": original_id, "name": "AI"},
+    }
+
+
+def test_theme_json_rename_conflict_returns_existing_theme(client, _setup_db):
+    original_id = _seed_theme(_setup_db, "AI")
+    rename_id = _seed_theme(_setup_db, "Growth")
+
+    response = client.post(
+        f"/themes/{rename_id}/rename",
+        json={"name": " ai "},
+        headers=_json_csrf_headers(client),
+    )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "error": "Theme name already exists",
+        "theme": {"id": original_id, "name": "AI"},
+    }
+
+
+def test_theme_empty_name_redirect_uses_required_flash(client):
+    response = client.post(
+        "/themes",
+        data=csrf_form_data(client, {"name": "   "}),
+        follow_redirects=True,
+    )
+
+    assert response.status_code == 200
+    assert "Theme name is required." in response.text
+    assert "Theme name already exists." not in response.text
 
 
 def test_add_form_lists_theme_picker(client, _setup_db):
@@ -150,6 +183,7 @@ def test_add_form_lists_theme_picker(client, _setup_db):
     assert "Semiconductors" in response.text
     assert 'data-theme-create-button' in response.text
     assert "/static/theme-tags.js" in response.text
+    assert 'href="/portfolio/themes"' in response.text
 
 
 def test_add_position_assigns_existing_and_inline_new_themes(client, _setup_db):
@@ -201,12 +235,16 @@ def test_add_position_rejects_cross_user_theme(client, _setup_db):
 
 def test_edit_position_updates_theme_selection(client, _setup_db):
     old_theme_id = _seed_theme(_setup_db, "Growth")
+    second_old_theme_id = _seed_theme(_setup_db, "Software")
     new_theme_id = _seed_theme(_setup_db, "Energy")
     position_id = _seed_position(_setup_db)
     db = _setup_db()
     try:
         position = db.query(Position).filter(Position.id == position_id).one()
-        position.themes = [db.query(Theme).filter(Theme.id == old_theme_id).one()]
+        position.themes = [
+            db.query(Theme).filter(Theme.id == old_theme_id).one(),
+            db.query(Theme).filter(Theme.id == second_old_theme_id).one(),
+        ]
         db.commit()
     finally:
         db.close()
@@ -243,6 +281,90 @@ def test_edit_position_updates_theme_selection(client, _setup_db):
         db.close()
 
 
+def test_js_less_new_theme_parser_accepts_commas_and_newlines(client, _setup_db):
+    data = {
+        "ticker": "AMD",
+        "company_name": "Advanced Micro Devices",
+        "cost_basis": "100.00",
+        "initial_purchase_date": "2025-01-15",
+        "investment_type": "long-term",
+        "notes": "",
+        "new_theme_names": "AI, Semiconductors\nGrowth",
+    }
+
+    with patch("app.main.get_market_data_api_key", return_value=None):
+        response = client.post(
+            "/add",
+            data=csrf_form_data(client, data),
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    db = _setup_db()
+    try:
+        position = db.query(Position).filter(Position.ticker == "AMD").one()
+        assert sorted(theme.name for theme in position.themes) == [
+            "AI",
+            "Growth",
+            "Semiconductors",
+        ]
+    finally:
+        db.close()
+
+
+def test_free_tier_user_can_use_themes_under_position_limit(client, _setup_db):
+    theme_id = _seed_theme(_setup_db, "AI")
+    data = {
+        "ticker": "META",
+        "company_name": "Meta Platforms",
+        "cost_basis": "100.00",
+        "initial_purchase_date": "2025-01-15",
+        "investment_type": "long-term",
+        "notes": "",
+        "theme_ids": [str(theme_id)],
+    }
+
+    with patch("app.main.get_market_data_api_key", return_value=None):
+        response = client.post(
+            "/add",
+            data=csrf_form_data(client, data),
+            follow_redirects=False,
+        )
+
+    assert response.status_code == 303
+    db = _setup_db()
+    try:
+        position = db.query(Position).filter(Position.ticker == "META").one()
+        assert [theme.name for theme in position.themes] == ["AI"]
+        assert db.query(User).filter(User.id == "test-user-id").one().tier == "free"
+    finally:
+        db.close()
+
+
+def test_tier_limit_rerender_preserves_selected_themes(client, _setup_db):
+    theme_id = _seed_theme(_setup_db, "AI")
+    for idx in range(5):
+        _seed_position(_setup_db, ticker=f"T{idx}")
+    data = {
+        "ticker": "IBM",
+        "company_name": "IBM",
+        "cost_basis": "100.00",
+        "initial_purchase_date": "2025-01-15",
+        "investment_type": "long-term",
+        "notes": "",
+        "theme_ids": [str(theme_id)],
+        "new_theme_names": "Mainframes",
+    }
+
+    with patch("app.main.get_market_data_api_key", return_value=None):
+        response = client.post("/add", data=csrf_form_data(client, data))
+
+    assert response.status_code == 200
+    assert "5-ticker limit on the free tier" in response.text
+    assert f'value="{theme_id}"\n                checked' in response.text
+    assert 'value="Mainframes"' in response.text
+
+
 def test_portfolio_themes_page_is_user_scoped_and_shows_verdicts(client, _setup_db):
     theme_id = _seed_theme(_setup_db, "AI")
     other_theme_id = _seed_theme(_setup_db, "Other User Theme", user_id="other-user-id")
@@ -268,6 +390,16 @@ def test_portfolio_themes_page_is_user_scoped_and_shows_verdicts(client, _setup_
     assert "verdict-trim" in response.text
     assert "Other User Theme" not in response.text
     assert "TSLA" not in response.text
+
+
+def test_delete_unknown_theme_returns_404(client):
+    response = client.post(
+        "/themes/999/delete",
+        data=csrf_form_data(client),
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 404
 
 
 def test_theme_rename_and_delete_do_not_delete_positions(client, _setup_db):

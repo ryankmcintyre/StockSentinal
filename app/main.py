@@ -172,6 +172,7 @@ FLASH_MESSAGES = {
     "refresh_limit": "You've used 5 of 5 refreshes today. Your limit resets at midnight UTC.",
     "admin_updated": "Admin user settings updated.",
     "theme_conflict": "Theme name already exists.",
+    "theme_name_required": "Theme name is required.",
     "theme_saved": "Theme updated.",
     "theme_deleted": "Theme deleted.",
 }
@@ -234,6 +235,41 @@ def _redirect_to_themes_with_flash(code: str) -> RedirectResponse:
 
 def _selected_theme_ids(themes) -> list[int]:
     return [theme.id for theme in themes]
+
+
+def _theme_json(theme) -> dict:
+    return {"id": theme.id, "name": theme.name}
+
+
+def _theme_conflict_json(uow: UnitOfWork, name: str) -> dict:
+    content = {"error": "Theme name already exists"}
+    existing = uow.themes.find_by_name(name)
+    if existing is not None:
+        content["theme"] = _theme_json(existing)
+    return content
+
+
+def _group_enriched_positions_by_theme(enriched_positions: list[dict], themes) -> list[dict]:
+    positions_by_theme_id: dict[int, list[dict]] = {theme.id: [] for theme in themes}
+    untagged: list[dict] = []
+    for position in enriched_positions:
+        position_themes = [
+            theme for theme in position["themes"]
+            if theme.id in positions_by_theme_id
+        ]
+        if not position_themes:
+            untagged.append(position)
+            continue
+        for theme in position_themes:
+            positions_by_theme_id[theme.id].append(position)
+
+    grouped = [
+        {"theme": theme, "positions": positions_by_theme_id.get(theme.id, [])}
+        for theme in themes
+    ]
+    if untagged:
+        grouped.append({"theme": None, "positions": untagged})
+    return grouped
 
 
 def _parse_delimited_theme_names(raw_names: str) -> list[str]:
@@ -971,25 +1007,14 @@ def portfolio_themes(request: Request, uow: UnitOfWork = Depends(get_authenticat
     current_user = _get_current_user(request, uow)
     _clear_stale_refresh_flags(uow)
     enriched, _summary = _enrich_all_positions(uow, user_id)
-    enriched_by_id = {position["id"]: position for position in enriched}
-    grouped = []
-    for theme, positions in uow.themes.list_positions_grouped_by_theme():
-        grouped.append(
-            {
-                "theme": theme,
-                "positions": [
-                    enriched_by_id[position.id]
-                    for position in positions
-                    if position.id in enriched_by_id
-                ],
-            }
-        )
+    themes = uow.themes.list_themes()
+    grouped = _group_enriched_positions_by_theme(enriched, themes)
     return templates.TemplateResponse(
         request,
         "portfolio_themes.html",
         {
             "theme_groups": grouped,
-            "themes": uow.themes.list_themes(),
+            "themes": themes,
             "has_themes": any(group["theme"] is not None for group in grouped),
             "current_user": current_user,
             "flash": _flash_message(request),
@@ -1012,16 +1037,16 @@ async def create_theme(
     except ThemeNameConflictError:
         uow.rollback()
         if _wants_json_response(request):
-            return JSONResponse(status_code=409, content={"error": "Theme name already exists"})
+            return JSONResponse(status_code=409, content=_theme_conflict_json(uow, name))
         return _redirect_to_themes_with_flash("theme_conflict")
     except ValueError:
         uow.rollback()
         if _wants_json_response(request):
             return JSONResponse(status_code=400, content={"error": "Theme name is required"})
-        return _redirect_to_themes_with_flash("theme_conflict")
+        return _redirect_to_themes_with_flash("theme_name_required")
 
     if _wants_json_response(request):
-        return JSONResponse(status_code=201, content={"id": theme.id, "name": theme.name})
+        return JSONResponse(status_code=201, content=_theme_json(theme))
     return _redirect_to_themes_with_flash("theme_saved")
 
 
@@ -1043,16 +1068,16 @@ async def rename_theme(
     except ThemeNameConflictError:
         uow.rollback()
         if _wants_json_response(request):
-            return JSONResponse(status_code=409, content={"error": "Theme name already exists"})
+            return JSONResponse(status_code=409, content=_theme_conflict_json(uow, name))
         return _redirect_to_themes_with_flash("theme_conflict")
     except ValueError:
         uow.rollback()
         if _wants_json_response(request):
             return JSONResponse(status_code=400, content={"error": "Theme name is required"})
-        return _redirect_to_themes_with_flash("theme_conflict")
+        return _redirect_to_themes_with_flash("theme_name_required")
 
     if _wants_json_response(request):
-        return {"id": theme.id, "name": theme.name}
+        return _theme_json(theme)
     return _redirect_to_themes_with_flash("theme_saved")
 
 
@@ -1065,6 +1090,8 @@ async def delete_theme(
 ):
     """Delete a theme and remove its associations without deleting positions."""
     deleted = uow.themes.delete_theme(theme_id)
+    if not deleted:
+        raise HTTPException(status_code=404)
     uow.commit()
     if _wants_json_response(request):
         return {"deleted": deleted, "id": theme_id}
