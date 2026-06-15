@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from unittest.mock import patch
 
 import pytest
@@ -36,7 +36,7 @@ def _setup_db():
                 obj.user_id = "test-user-id"
 
     db = TestingSession()
-    db.add(User(id="test-user-id", email="test@example.com", display_name="Test User", created_at=datetime.now()))
+    db.add(User(id="test-user-id", email="test@example.com", display_name="Test User", created_at=datetime.now(timezone.utc)))
     db.commit()
     db.close()
 

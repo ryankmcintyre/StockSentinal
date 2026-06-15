@@ -236,6 +236,15 @@ def _selected_theme_ids(themes) -> list[int]:
     return [theme.id for theme in themes]
 
 
+def _parse_delimited_theme_names(raw_names: str) -> list[str]:
+    names = []
+    for raw_name in raw_names.replace("\n", ",").split(","):
+        clean_name = " ".join(raw_name.strip().split())
+        if clean_name:
+            names.append(clean_name)
+    return names
+
+
 def _theme_ids_from_form(
     uow: UnitOfWork,
     theme_ids: list[int] | None,
@@ -246,10 +255,7 @@ def _theme_ids_from_form(
         theme.name.lower(): theme
         for theme in uow.themes.list_themes()
     }
-    for raw_name in new_theme_names.replace("\n", ",").split(","):
-        clean_name = " ".join(raw_name.strip().split())
-        if not clean_name:
-            continue
+    for clean_name in _parse_delimited_theme_names(new_theme_names):
         existing = existing_by_name.get(clean_name.lower())
         if existing is None:
             existing = uow.themes.create_theme(clean_name)

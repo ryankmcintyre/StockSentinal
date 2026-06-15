@@ -55,7 +55,7 @@ async def validate_csrf(
 ) -> None:
     """Validate a signed double-submit CSRF token from a form POST or fetch header."""
     cookie_token = request.cookies.get(CSRF_COOKIE_NAME)
-    submitted_token = csrf_token or request.headers.get("x-csrf-token")
+    submitted_token = csrf_token if csrf_token is not None else request.headers.get("x-csrf-token")
     if not _is_valid_signed_token(cookie_token):
         raise HTTPException(status_code=403, detail="Invalid CSRF token")
     if not isinstance(submitted_token, str) or not compare_digest(cookie_token, submitted_token):

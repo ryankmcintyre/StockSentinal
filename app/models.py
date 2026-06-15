@@ -119,7 +119,7 @@ class Theme(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     name = Column(String, nullable=False)
-    created_at = Column(DateTime, nullable=False, default=datetime.now)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now())
 
     user = relationship("User", back_populates="themes")
     positions = relationship(

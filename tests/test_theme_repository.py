@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine
@@ -27,7 +27,7 @@ def session():
 
 
 def _add_user(session, user_id: str):
-    session.add(User(id=user_id, email=f"{user_id}@example.com", created_at=datetime.now()))
+    session.add(User(id=user_id, email=f"{user_id}@example.com", created_at=datetime.now(timezone.utc)))
     session.commit()
 
 

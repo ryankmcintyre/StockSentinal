@@ -1,5 +1,8 @@
 (function () {
     function getCsrfToken(form) {
+        if (!form) {
+            return "";
+        }
         var input = form.querySelector('input[name="csrf_token"]');
         return input ? input.value : "";
     }
