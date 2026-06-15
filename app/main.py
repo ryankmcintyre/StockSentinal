@@ -255,6 +255,10 @@ def _compute_heat_level(positions: list[dict]) -> int:
 
     0 = empty  1 = all holds  2 = some trims  3 = mostly trims
     4 = any sells  5 = mostly sells
+
+    NOTE: This algorithm is mirrored in updateHeatIndicator() in
+    app/static/theme-board.js (the HEAT_LABELS constant also maps to these
+    levels).  Keep both in sync whenever the thresholds change.
     """
     if not positions:
         return 0

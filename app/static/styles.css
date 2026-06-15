@@ -1001,6 +1001,26 @@ h3 {
     color: #fff;
 }
 
+/* Heat level text badge — for color-blind users and screen readers.
+   Background / color mirrors each heat level indicator color. */
+.heat-level-badge {
+    font-size: 0.65rem;
+    font-weight: 700;
+    letter-spacing: 0.03em;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    background: #f1f5f9;
+    color: #64748b;
+    flex-shrink: 0;
+    line-height: 1.4;
+}
+
+.theme-heat-card[data-heat="1"] .heat-level-badge { background: #dcfce7; color: #166534; }
+.theme-heat-card[data-heat="2"] .heat-level-badge { background: #ecfccb; color: #365314; }
+.theme-heat-card[data-heat="3"] .heat-level-badge { background: #fef3c7; color: #92400e; }
+.theme-heat-card[data-heat="4"] .heat-level-badge { background: #fed7aa; color: #9a3412; }
+.theme-heat-card[data-heat="5"] .heat-level-badge { background: #fee2e2; color: #991b1b; }
+
 /* xs verdict dot on chips */
 .verdict-xs {
     font-size: 0.68rem;
@@ -1089,6 +1109,50 @@ h3 {
     background: #f1f5f9;
     color: #94a3b8;
     font-style: italic;
+}
+
+/* Toast notifications for drag/drop errors */
+#theme-toast-container {
+    position: fixed;
+    bottom: 1.5rem;
+    right: 1.5rem;
+    z-index: 1000;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    pointer-events: none;
+}
+
+.theme-toast {
+    padding: 0.65rem 1rem;
+    border-radius: 8px;
+    font-size: 0.875rem;
+    font-weight: 500;
+    max-width: 22rem;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    animation: toastSlideIn 0.2s ease;
+    transition: opacity 0.4s ease;
+}
+
+.theme-toast-fade {
+    opacity: 0;
+}
+
+.theme-toast-error {
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #fca5a5;
+}
+
+.theme-toast-success {
+    background: #dcfce7;
+    color: #166534;
+    border: 1px solid #86efac;
+}
+
+@keyframes toastSlideIn {
+    from { transform: translateX(1rem); opacity: 0; }
+    to   { transform: translateX(0);    opacity: 1; }
 }
 
 /* Responsive: stack on small screens */
@@ -2258,4 +2322,55 @@ html[data-theme="dark"] .theme-dialog input[type="text"] {
 html[data-theme="dark"] .theme-badge-untagged {
     background: #1e293b;
     color: #475569;
+}
+
+/* --- Additional dark mode for theme board components --- */
+
+html[data-theme="dark"] .chip-remove-btn {
+    color: #94a3b8;
+}
+
+html[data-theme="dark"] .chip-remove-btn:hover {
+    background: #b91c1c;
+    color: #fff;
+}
+
+/* Heat level text badge — dark variants mirror the indicator colours */
+html[data-theme="dark"] .heat-level-badge {
+    background: #1e293b;
+    color: #94a3b8;
+}
+
+html[data-theme="dark"] .theme-heat-card[data-heat="1"] .heat-level-badge { background: #052e16; color: #86efac; }
+html[data-theme="dark"] .theme-heat-card[data-heat="2"] .heat-level-badge { background: #1a2e05; color: #bef264; }
+html[data-theme="dark"] .theme-heat-card[data-heat="3"] .heat-level-badge { background: #422006; color: #fcd34d; }
+html[data-theme="dark"] .theme-heat-card[data-heat="4"] .heat-level-badge { background: #431407; color: #fed7aa; }
+html[data-theme="dark"] .theme-heat-card[data-heat="5"] .heat-level-badge { background: #450a0a; color: #fca5a5; }
+
+/* Toast notifications */
+html[data-theme="dark"] .theme-toast-error {
+    background: #450a0a;
+    color: #fca5a5;
+    border-color: #7f1d1d;
+}
+
+html[data-theme="dark"] .theme-toast-success {
+    background: #052e16;
+    color: #bbf7d0;
+    border-color: #166534;
+}
+
+/* Theme board controls border in dark mode */
+html[data-theme="dark"] .theme-board-controls {
+    border-color: #334155;
+}
+
+/* Untagged heading explicit colour (overrides the .untagged-heading rule) */
+html[data-theme="dark"] .untagged-heading {
+    color: #94a3b8;
+}
+
+/* Rename inline separator */
+html[data-theme="dark"] .theme-rename-inline {
+    border-bottom-color: #334155;
 }

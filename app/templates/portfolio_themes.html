@@ -20,10 +20,10 @@
         aria-label="Search positions or themes"
     >
     <div class="verdict-filter-group" role="group" aria-label="Filter by verdict">
-        <button class="verdict-filter-btn active" data-filter="all" type="button">All</button>
-        <button class="verdict-filter-btn verdict-filter-sell" data-filter="sell" type="button">Sell</button>
-        <button class="verdict-filter-btn verdict-filter-trim" data-filter="trim" type="button">Trim</button>
-        <button class="verdict-filter-btn verdict-filter-hold" data-filter="hold" type="button">Hold</button>
+        <button class="verdict-filter-btn active" data-filter="all" type="button" aria-label="Show all positions" aria-pressed="true">All</button>
+        <button class="verdict-filter-btn verdict-filter-sell" data-filter="sell" type="button" aria-label="Filter by Sell verdict" aria-pressed="false">Sell</button>
+        <button class="verdict-filter-btn verdict-filter-trim" data-filter="trim" type="button" aria-label="Filter by Trim verdict" aria-pressed="false">Trim</button>
+        <button class="verdict-filter-btn verdict-filter-hold" data-filter="hold" type="button" aria-label="Filter by Hold verdict" aria-pressed="false">Hold</button>
     </div>
 </div>
 
@@ -69,6 +69,7 @@
         {% endif %}
 
         <div class="theme-heatmap-grid" id="theme-grid">
+            {% set heat_label_list = ["", "Low", "Moderate", "Elevated", "High", "Critical"] %}
             {% for group in theme_groups %}
             {% if group.theme is not none %}
             <article
@@ -83,6 +84,11 @@
                     <div class="theme-card-title-row">
                         <span class="theme-card-name" data-theme-name-label>{{ group.theme.name }}</span>
                         <span class="theme-count" data-position-count>{{ group.positions | length }}</span>
+                        {% if group.heat_level > 0 %}
+                        <span class="heat-level-badge" data-heat-label>{{ heat_label_list[group.heat_level] }}</span>
+                        {% else %}
+                        <span class="heat-level-badge" data-heat-label style="display:none;"></span>
+                        {% endif %}
                     </div>
                     <div class="theme-card-header-actions">
                         <button

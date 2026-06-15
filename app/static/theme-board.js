@@ -15,6 +15,17 @@
     "use strict";
 
     // -------------------------------------------------------------------------
+    // Constants
+    // -------------------------------------------------------------------------
+
+    /**
+     * Human-readable labels for heat levels 0–5.
+     * NOTE: This mapping mirrors _compute_heat_level() in app/main.py.
+     * If the heat-level algorithm changes in Python, update this array too.
+     */
+    var HEAT_LABELS = ["", "Low", "Moderate", "Elevated", "High", "Critical"];
+
+    // -------------------------------------------------------------------------
     // Helpers
     // -------------------------------------------------------------------------
 
@@ -46,6 +57,32 @@
             throw new Error((data && (data.detail || data.error)) || "Request failed");
         }
         return data;
+    }
+
+    /**
+     * Show a transient toast notification to the user.
+     * @param {string} message  Text to display.
+     * @param {"error"|"success"} type  Visual style.
+     */
+    function showToast(message, type) {
+        var container = document.getElementById("theme-toast-container");
+        if (!container) {
+            container = document.createElement("div");
+            container.id = "theme-toast-container";
+            container.setAttribute("role", "alert");
+            container.setAttribute("aria-live", "polite");
+            container.setAttribute("aria-atomic", "true");
+            document.body.appendChild(container);
+        }
+        var toast = document.createElement("div");
+        toast.className = "theme-toast theme-toast-" + (type || "error");
+        toast.textContent = message;
+        container.appendChild(toast);
+        // Fade out and remove after 4 s
+        setTimeout(function () {
+            toast.classList.add("theme-toast-fade");
+            setTimeout(function () { toast.remove(); }, 400);
+        }, 4000);
     }
 
     // -------------------------------------------------------------------------
@@ -112,6 +149,7 @@
             updateHeatIndicator(zone.closest(".theme-heat-card"));
         } catch (err) {
             console.error("Failed to add position to theme:", err.message);
+            showToast("Could not add position to theme: " + err.message);
         }
     }
 
@@ -209,6 +247,7 @@
         var sell = chips.filter(function (c) { return c.dataset.verdict === "sell"; }).length;
         var trim = chips.filter(function (c) { return c.dataset.verdict === "trim"; }).length;
         var total = chips.length;
+        // NOTE: This algorithm must stay in sync with _compute_heat_level() in app/main.py.
         var heat = 0;
         if (total > 0) {
             if (sell > 0) {
@@ -223,6 +262,13 @@
         var indicator = card.querySelector(".theme-heat-indicator");
         if (indicator) {
             indicator.style.setProperty("--heat", heat);
+        }
+        // Update visible heat level text badge for color-blind users
+        var heatLabel = card.querySelector("[data-heat-label]");
+        if (heatLabel) {
+            var labelText = HEAT_LABELS[heat] || "";
+            heatLabel.textContent = labelText;
+            heatLabel.style.display = heat > 0 ? "" : "none";
         }
     }
 
@@ -266,6 +312,7 @@
         } catch (err) {
             console.error("Failed to remove position from theme:", err.message);
             btn.disabled = false;
+            showToast("Could not remove position from theme: " + err.message);
         }
     }
 
@@ -508,17 +555,18 @@
               '<div class="theme-card-title-row">' +
                 '<span class="theme-card-name" data-theme-name-label>' + escapeHtml(themeName) + '</span>' +
                 '<span class="theme-count" data-position-count>0</span>' +
+                '<span class="heat-level-badge" data-heat-label style="display:none;"></span>' +
               '</div>' +
               '<div class="theme-card-header-actions">' +
                 '<button class="btn btn-small theme-rename-toggle-btn" data-rename-toggle title="Rename theme" aria-label="Rename ' + escapeHtml(themeName) + '" type="button">✎</button>' +
                 '<form method="post" action="/themes/' + themeId + '/delete" class="inline-form" onsubmit="return confirm(\'Delete theme &quot;' + escapeHtml(themeName) + '&quot;? Positions will remain.\');">' +
-                  '<input type="hidden" name="csrf_token" value="' + escapeHtml(getCsrfCookieToken()) + '">' +
+                  '<input type="hidden" name="csrf_token" value="">' +
                   '<button type="submit" class="btn btn-small btn-danger" title="Delete theme">✕</button>' +
                 '</form>' +
               '</div>' +
             '</div>' +
             '<form method="post" action="/themes/' + themeId + '/rename" class="theme-rename-inline" data-rename-form style="display:none;">' +
-              '<input type="hidden" name="csrf_token" value="' + escapeHtml(getCsrfCookieToken()) + '">' +
+              '<input type="hidden" name="csrf_token" value="">' +
               '<input type="text" name="name" value="' + escapeHtml(themeName) + '" maxlength="80" aria-label="New name for ' + escapeHtml(themeName) + '" data-rename-input>' +
               '<button type="submit" class="btn btn-small">Save</button>' +
               '<button type="button" class="btn btn-small" data-rename-cancel>Cancel</button>' +
@@ -528,6 +576,17 @@
             '</div>';
 
         grid.appendChild(card);
+
+        // Refresh CSRF token from the cookie at form submit time so the value
+        // is always current even after the card was created.
+        card.querySelectorAll("form").forEach(function (form) {
+            form.addEventListener("submit", function () {
+                var csrfInput = form.querySelector('[name="csrf_token"]');
+                if (csrfInput) {
+                    csrfInput.value = getCsrfCookieToken();
+                }
+            });
+        });
 
         // Wire the new card
         wireRenameToggle(card);
@@ -574,8 +633,10 @@
             btn.addEventListener("click", function () {
                 document.querySelectorAll(".verdict-filter-btn").forEach(function (b) {
                     b.classList.remove("active");
+                    b.setAttribute("aria-pressed", "false");
                 });
                 btn.classList.add("active");
+                btn.setAttribute("aria-pressed", "true");
                 currentFilter = btn.dataset.filter || "all";
                 applyFilters();
             });
