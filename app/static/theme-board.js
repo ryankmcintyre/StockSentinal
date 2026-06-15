@@ -562,7 +562,7 @@
                 '</form>' +
               '</div>' +
             '</div>' +
-            '<div class="heat-bar-row" aria-label="Heat level 0 of 5">' +
+            '<div class="heat-bar-row" aria-live="polite" aria-label="Heat level 0 of 5">' +
               '<span class="heat-bar-label">Heat:</span>' +
               '<span class="heat-blocks" aria-hidden="true">' +
                 '<span class="heat-block"></span>' +

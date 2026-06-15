@@ -1055,6 +1055,9 @@ def portfolio_themes(request: Request, uow: UnitOfWork = Depends(get_authenticat
             "themes": themes,
             "all_positions": enriched,
             "has_themes": any(group["theme"] is not None for group in grouped),
+            "untagged_count": next(
+                (len(g["positions"]) for g in grouped if g["theme"] is None), 0
+            ),
             "current_user": current_user,
             "flash": _flash_message(request),
         },

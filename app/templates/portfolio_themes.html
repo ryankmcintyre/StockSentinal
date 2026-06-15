@@ -30,16 +30,14 @@
 <div class="theme-board-layout">
 
     {# Left panel: Position Tray #}
-    {% set ns = namespace(untagged_count=0) %}
-    {% for group in theme_groups %}{% if group.theme is none %}{% set ns.untagged_count = group.positions | length %}{% endif %}{% endfor %}
     <aside class="position-tray" id="position-tray" aria-label="Position tray">
         <h2 class="tray-heading">
             Position Tray
             <span class="tray-count" id="tray-count">{{ all_positions | length }}</span>
         </h2>
-        {% if ns.untagged_count > 0 %}
+        {% if untagged_count > 0 %}
         <div class="tray-untagged-label">
-            Untagged <span class="tray-count tray-count-sm">{{ ns.untagged_count }}</span>
+            Untagged <span class="tray-count tray-count-sm">{{ untagged_count }}</span>
         </div>
         {% endif %}
         <div class="tray-list" id="tray-list">
@@ -112,7 +110,7 @@
                     </div>
                 </div>
 
-                <div class="heat-bar-row" aria-label="Heat level {{ group.heat_level }} of 5">
+                <div class="heat-bar-row" aria-live="polite" aria-label="Heat level {{ group.heat_level }} of 5">
                     <span class="heat-bar-label">Heat:</span>
                     <span class="heat-blocks" aria-hidden="true">
                         {% for i in range(5) %}
