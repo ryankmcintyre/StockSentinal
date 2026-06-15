@@ -250,6 +250,11 @@ def _theme_conflict_json(uow: UnitOfWork, name: str) -> dict:
 
 
 def _group_enriched_positions_by_theme(enriched_positions: list[dict], themes) -> list[dict]:
+    """Return theme cards from enriched positions without reloading positions.
+
+    Each returned item has a ``theme`` object (or ``None`` for the untagged
+    bucket) and the already-enriched position view models assigned to it.
+    """
     positions_by_theme_id: dict[int, list[dict]] = {theme.id: [] for theme in themes}
     untagged: list[dict] = []
     for position in enriched_positions:

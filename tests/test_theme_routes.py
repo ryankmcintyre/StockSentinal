@@ -161,7 +161,7 @@ def test_theme_json_rename_conflict_returns_existing_theme(client, _setup_db):
     }
 
 
-def test_theme_empty_name_redirect_uses_required_flash(client):
+def test_empty_theme_name_shows_required_flash_message(client):
     response = client.post(
         "/themes",
         data=csrf_form_data(client, {"name": "   "}),

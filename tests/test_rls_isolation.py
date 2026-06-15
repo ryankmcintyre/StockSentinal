@@ -186,7 +186,7 @@ def _load_migration(filename: str):
         / "versions"
         / filename
     )
-    spec = importlib.util.spec_from_file_location(filename.removesuffix(".py"), path)
+    spec = importlib.util.spec_from_file_location(Path(filename).stem, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
