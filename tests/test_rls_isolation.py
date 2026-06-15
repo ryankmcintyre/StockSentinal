@@ -11,7 +11,15 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from app.models import Base, Position, PositionKeyLevel, StrategyRuleConfig, User
+from app.models import (
+    Base,
+    Position,
+    PositionKeyLevel,
+    PositionTheme,
+    StrategyRuleConfig,
+    Theme,
+    User,
+)
 from app.unit_of_work import SqlAlchemyUnitOfWork
 
 
@@ -102,6 +110,16 @@ def test_user_scoped_repositories_hide_cross_user_rows():
             enabled=True,
         )
         session.add_all([level_a, level_b, rule_a, rule_b])
+        theme_a = Theme(user_id="user-a", name="AI")
+        theme_b = Theme(user_id="user-b", name="Energy")
+        session.add_all([theme_a, theme_b])
+        session.flush()
+        session.add_all(
+            [
+                PositionTheme(position_id=position_a.id, theme_id=theme_a.id),
+                PositionTheme(position_id=position_b.id, theme_id=theme_b.id),
+            ]
+        )
         session.commit()
 
         uow = SqlAlchemyUnitOfWork(session, user_id="user-a")
@@ -116,13 +134,20 @@ def test_user_scoped_repositories_hide_cross_user_rows():
             == level_a.id
         )
         assert uow.key_levels.get_by_position_and_id(position_b.id, level_b.id) is None
+        assert [theme.id for theme in uow.themes.list_themes()] == [theme_a.id]
+        assert uow.themes.get_by_id(theme_b.id) is None
+        grouped = uow.themes.list_positions_grouped_by_theme()
+        assert [
+            (theme.name if theme else None, [position.id for position in positions])
+            for theme, positions in grouped
+        ] == [("AI", [position_a.id])]
     finally:
         session.close()
         engine.dispose()
 
 
 def test_rls_policy_migration_creates_user_isolation_policies(monkeypatch):
-    migration = _load_policy_migration()
+    migration = _load_migration("b8f3a9c2d4e1_add_user_isolation_rls_policies.py")
     fake_op = _FakeMigrationOp("postgresql")
     monkeypatch.setattr(migration, "op", fake_op)
 
@@ -136,14 +161,32 @@ def test_rls_policy_migration_creates_user_isolation_policies(monkeypatch):
     assert "FROM positions WHERE positions.id = position_key_levels.position_id" in normalized_sql
 
 
-def _load_policy_migration():
+def test_theme_rls_policy_migration_creates_user_isolation_policies(monkeypatch):
+    migration = _load_migration("f5a6b7c8d9e0_add_themes.py")
+    fake_op = _FakeMigrationOp("postgresql")
+    monkeypatch.setattr(migration, "op", fake_op)
+
+    migration.upgrade()
+
+    normalized_sql = " ".join("\n".join(fake_op.executed).split())
+    assert "ALTER TABLE themes ENABLE ROW LEVEL SECURITY" in normalized_sql
+    assert "ALTER TABLE position_themes ENABLE ROW LEVEL SECURITY" in normalized_sql
+    assert "CREATE POLICY themes_isolation ON themes" in normalized_sql
+    assert "CREATE POLICY position_themes_isolation ON position_themes" in normalized_sql
+    assert "themes.user_id = NULLIF(current_setting('app.current_user_id', true), '')" in normalized_sql
+    assert "positions.user_id = NULLIF(current_setting('app.current_user_id', true), '')" in normalized_sql
+    assert "WHERE positions.id = position_themes.position_id" in normalized_sql
+    assert "WHERE themes.id = position_themes.theme_id" in normalized_sql
+
+
+def _load_migration(filename: str):
     path = (
         Path(__file__).resolve().parents[1]
         / "alembic"
         / "versions"
-        / "b8f3a9c2d4e1_add_user_isolation_rls_policies.py"
+        / filename
     )
-    spec = importlib.util.spec_from_file_location("rls_policy_migration", path)
+    spec = importlib.util.spec_from_file_location(Path(filename).stem, path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
@@ -160,3 +203,11 @@ class _FakeMigrationOp:
 
     def execute(self, sql: str):
         self.executed.append(sql)
+
+    def create_table(self, *args, **kwargs):
+        """No-op DDL stub; policy tests only inspect generated RLS SQL."""
+        return None
+
+    def create_index(self, *args, **kwargs):
+        """No-op DDL stub; policy tests only inspect generated RLS SQL."""
+        return None

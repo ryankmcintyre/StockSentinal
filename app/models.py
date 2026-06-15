@@ -1,6 +1,6 @@
 from datetime import date, datetime, timezone
 
-from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Column, Date, DateTime, Float, ForeignKey, Index, Integer, String, UniqueConstraint, func
 from sqlalchemy.orm import DeclarativeBase, relationship
 from sqlalchemy.types import TypeDecorator
 
@@ -50,6 +50,7 @@ class User(Base):
     refresh_count_date = Column(Date, nullable=True)
 
     positions = relationship("Position", back_populates="user", cascade="all, delete-orphan")
+    themes = relationship("Theme", back_populates="user", cascade="all, delete-orphan")
     strategy_rule_configs = relationship(
         "StrategyRuleConfig", back_populates="user", cascade="all, delete-orphan"
     )
@@ -93,6 +94,12 @@ class Position(Base):
 
     user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
     user = relationship("User", back_populates="positions")
+    themes = relationship(
+        "Theme",
+        secondary="position_themes",
+        back_populates="positions",
+        lazy="selectin",
+    )
 
     # Manually identified historical key levels (issue #23 — failed
     # breakout / reclaim failure rule).  Cascade on delete so removing
@@ -103,6 +110,47 @@ class Position(Base):
         cascade="all, delete-orphan",
         order_by="PositionKeyLevel.level_price",
     )
+
+
+class Theme(Base):
+    """A user-defined Theme/Sector/Industry tag for grouping positions."""
+    __tablename__ = "themes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(String, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(String, nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now())
+
+    user = relationship("User", back_populates="themes")
+    positions = relationship(
+        "Position",
+        secondary="position_themes",
+        back_populates="themes",
+        lazy="selectin",
+    )
+
+
+Index("ix_themes_user_id", Theme.user_id)
+Index("uq_themes_user_lower_name", Theme.user_id, func.lower(Theme.name), unique=True)
+
+
+class PositionTheme(Base):
+    """Association table linking positions to user-defined themes."""
+    __tablename__ = "position_themes"
+
+    position_id = Column(
+        Integer,
+        ForeignKey("positions.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    theme_id = Column(
+        Integer,
+        ForeignKey("themes.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+
+Index("ix_position_themes_theme_id", PositionTheme.theme_id)
 
 
 class PositionKeyLevel(Base):

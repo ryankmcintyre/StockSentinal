@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from math import isclose
@@ -57,7 +58,8 @@ from app.logging_utils import configure_refresh_logging, new_refresh_id, refresh
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 from app.market_data.service import MarketDataService
-from app.models import Position, PositionKeyLevel, User
+from app.models import Position, PositionKeyLevel, Theme, User
+from app.repositories import ThemeNameConflictError
 from app.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWork
 from app.rule_config import (
     add_ma_condition,
@@ -170,6 +172,10 @@ REFRESH_POLL_TIMEOUT_MS = (REFRESH_STALE_TIMEOUT_MINUTES + 2) * 60 * 1000
 FLASH_MESSAGES = {
     "refresh_limit": "You've used 5 of 5 refreshes today. Your limit resets at midnight UTC.",
     "admin_updated": "Admin user settings updated.",
+    "theme_conflict": "Theme name already exists.",
+    "theme_name_required": "Theme name is required.",
+    "theme_saved": "Theme updated.",
+    "theme_deleted": "Theme deleted.",
 }
 
 def _get_request_user_id(request: Request, uow: UnitOfWork | None = None) -> str | None:
@@ -214,6 +220,97 @@ def _wants_json_response(request: Request) -> bool:
         return True
     accept = request.headers.get("accept", "")
     return "application/json" in accept.lower()
+
+
+async def _request_payload(request: Request) -> dict:
+    if request.headers.get("content-type", "").lower().startswith("application/json"):
+        payload = await request.json()
+        return payload if isinstance(payload, dict) else {}
+    form = await request.form()
+    return dict(form)
+
+
+def _redirect_to_themes_with_flash(code: str) -> RedirectResponse:
+    return RedirectResponse(url=f"/portfolio/themes?flash={quote(code)}", status_code=303)
+
+
+def _selected_theme_ids(themes) -> list[int]:
+    return [theme.id for theme in themes]
+
+
+def _theme_json(theme: Theme) -> dict:
+    return {"id": theme.id, "name": theme.name}
+
+
+def _theme_conflict_json(uow: UnitOfWork, name: str) -> dict:
+    content = {"error": "Theme name already exists"}
+    existing = uow.themes.find_by_name(name)
+    if existing is not None:
+        content["theme"] = _theme_json(existing)
+    return content
+
+
+def _group_enriched_positions_by_theme(
+    enriched_positions: list[dict],
+    themes: Sequence[Theme],
+) -> list[dict]:
+    """Return theme cards from enriched positions without reloading positions.
+
+    Each returned item has a ``theme`` object (or ``None`` for the untagged
+    bucket) and the already-enriched position view models assigned to it. The
+    ``themes`` sequence is the user's complete theme list, so empty theme cards
+    still render while position assignment is derived from preloaded theme
+    objects on the enriched view models.
+    """
+    positions_by_theme_id: dict[int, list[dict]] = {theme.id: [] for theme in themes}
+    untagged: list[dict] = []
+    for position in enriched_positions:
+        position_themes = [
+            theme for theme in position["themes"]
+            if theme.id in positions_by_theme_id
+        ]
+        if not position_themes:
+            untagged.append(position)
+            continue
+        for theme in position_themes:
+            positions_by_theme_id[theme.id].append(position)
+
+    grouped = [
+        {"theme": theme, "positions": positions_by_theme_id.get(theme.id, [])}
+        for theme in themes
+    ]
+    if untagged:
+        grouped.append({"theme": None, "positions": untagged})
+    return grouped
+
+
+def _parse_delimited_theme_names(raw_names: str) -> list[str]:
+    names = []
+    for raw_name in raw_names.replace("\n", ",").split(","):
+        clean_name = " ".join(raw_name.strip().split())
+        if clean_name:
+            names.append(clean_name)
+    return names
+
+
+def _theme_ids_from_form(
+    uow: UnitOfWork,
+    theme_ids: list[int] | None,
+    new_theme_names: str = "",
+) -> list[int]:
+    selected_ids = list(dict.fromkeys(theme_ids or []))
+    existing_by_name = {
+        theme.name.lower(): theme
+        for theme in uow.themes.list_themes()
+    }
+    for clean_name in _parse_delimited_theme_names(new_theme_names):
+        existing = existing_by_name.get(clean_name.lower())
+        if existing is None:
+            existing = uow.themes.create_theme(clean_name)
+            existing_by_name[existing.name.lower()] = existing
+        if existing.id not in selected_ids:
+            selected_ids.append(existing.id)
+    return selected_ids
 
 
 def _admin_redirect_with_flash() -> RedirectResponse:
@@ -459,6 +556,7 @@ def _enrich_position(
         "initial_purchase_date": pos.initial_purchase_date,
         "notes": pos.notes,
         "sector_benchmark_ticker": pos.sector_benchmark_ticker,
+        "themes": sorted(pos.themes, key=lambda theme: theme.name.lower()),
         "percent_gain": compute_percent_gain(pos.cost_basis, effective_price),
         "hold_duration_days": compute_hold_duration_days(pos.initial_purchase_date),
         "verdict": verdict,
@@ -899,16 +997,117 @@ def _portfolio_response(request: Request, uow: UnitOfWork):
 @app.get("/add")
 def add_position_form(request: Request, uow: UnitOfWork = Depends(get_authenticated_uow)):
     """Show the add-position form."""
+    themes = uow.themes.list_themes()
     return templates.TemplateResponse(
         request,
         "add_position.html",
         {
             "investment_types": InvestmentType,
+            "themes": themes,
+            "selected_theme_ids": [],
             "current_user": _get_current_user(request, uow),
             "error": None,
             "form": None,
         },
     )
+
+
+@app.get("/portfolio/themes")
+def portfolio_themes(request: Request, uow: UnitOfWork = Depends(get_authenticated_uow)):
+    """Show positions grouped by user-defined Theme/Sector/Industry tags."""
+    user_id = _get_request_user_id(request, uow)
+    current_user = _get_current_user(request, uow)
+    _clear_stale_refresh_flags(uow)
+    enriched, _summary = _enrich_all_positions(uow, user_id)
+    themes = uow.themes.list_themes()
+    grouped = _group_enriched_positions_by_theme(enriched, themes)
+    return templates.TemplateResponse(
+        request,
+        "portfolio_themes.html",
+        {
+            "theme_groups": grouped,
+            "themes": themes,
+            "has_themes": any(group["theme"] is not None for group in grouped),
+            "current_user": current_user,
+            "flash": _flash_message(request),
+        },
+    )
+
+
+@app.post("/themes")
+async def create_theme(
+    request: Request,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Create a user-defined Theme/Sector/Industry tag."""
+    payload = await _request_payload(request)
+    name = str(payload.get("name", ""))
+    try:
+        theme = uow.themes.create_theme(name)
+        uow.commit()
+    except ThemeNameConflictError:
+        uow.rollback()
+        if _wants_json_response(request):
+            return JSONResponse(status_code=409, content=_theme_conflict_json(uow, name))
+        return _redirect_to_themes_with_flash("theme_conflict")
+    except ValueError:
+        uow.rollback()
+        if _wants_json_response(request):
+            return JSONResponse(status_code=400, content={"error": "Theme name is required"})
+        return _redirect_to_themes_with_flash("theme_name_required")
+
+    if _wants_json_response(request):
+        return JSONResponse(status_code=201, content=_theme_json(theme))
+    return _redirect_to_themes_with_flash("theme_saved")
+
+
+@app.post("/themes/{theme_id}/rename")
+async def rename_theme(
+    theme_id: int,
+    request: Request,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Rename a user-defined Theme/Sector/Industry tag."""
+    payload = await _request_payload(request)
+    name = str(payload.get("name", ""))
+    try:
+        theme = uow.themes.rename_theme(theme_id, name)
+        if theme is None:
+            raise HTTPException(status_code=404)
+        uow.commit()
+    except ThemeNameConflictError:
+        uow.rollback()
+        if _wants_json_response(request):
+            return JSONResponse(status_code=409, content=_theme_conflict_json(uow, name))
+        return _redirect_to_themes_with_flash("theme_conflict")
+    except ValueError:
+        uow.rollback()
+        if _wants_json_response(request):
+            return JSONResponse(status_code=400, content={"error": "Theme name is required"})
+        return _redirect_to_themes_with_flash("theme_name_required")
+
+    if _wants_json_response(request):
+        return _theme_json(theme)
+    return _redirect_to_themes_with_flash("theme_saved")
+
+
+@app.post("/themes/{theme_id}/delete")
+async def delete_theme(
+    theme_id: int,
+    request: Request,
+    _csrf: None = Depends(validate_csrf),
+    uow: UnitOfWork = Depends(get_authenticated_uow),
+):
+    """Delete a theme and remove its associations without deleting positions."""
+    deleted = uow.themes.delete_theme(theme_id)
+    if not deleted:
+        raise HTTPException(status_code=404)
+    uow.commit()
+    if _wants_json_response(request):
+        return {"deleted": deleted, "id": theme_id}
+    return _redirect_to_themes_with_flash("theme_deleted")
 
 
 @app.get("/rules")
@@ -1139,6 +1338,8 @@ def add_position(
     investment_type: str = Form(...),
     notes: str = Form(""),
     sector_benchmark_ticker: str = Form(""),
+    theme_ids: list[int] | None = Form(None),
+    new_theme_names: str = Form(""),
     _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
@@ -1161,6 +1362,8 @@ def add_position(
             "add_position.html",
             {
                 "investment_types": InvestmentType,
+                "themes": uow.themes.list_themes(),
+                "selected_theme_ids": theme_ids or [],
                 "current_user": current_user,
                 "error": exc.message,
                 "form": {
@@ -1171,6 +1374,7 @@ def add_position(
                     "investment_type": investment_type,
                     "notes": notes,
                     "sector_benchmark_ticker": sector_benchmark_ticker,
+                    "new_theme_names": new_theme_names,
                 },
             },
             status_code=200,
@@ -1213,8 +1417,15 @@ def add_position(
         sector_benchmark_ticker=clean_benchmark,
         user_id=user_id,
     )
-    uow.positions.add(pos)
-    uow.commit()
+    try:
+        selected_theme_ids = _theme_ids_from_form(uow, theme_ids, new_theme_names)
+        uow.positions.add(pos)
+        uow.session.flush()
+        uow.themes.set_position_themes(pos.id, selected_theme_ids)
+        uow.commit()
+    except ValueError as exc:
+        uow.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger.info("Created position %s (%s) — cost_basis=%.2f, type=%s", clean_ticker, company_name.strip(), cost_basis, investment_type)
 
     # Queue a background refresh to fetch SMA and weekly data
@@ -1243,6 +1454,8 @@ def edit_position_form(position_id: int, request: Request, uow: UnitOfWork = Dep
             "position": pos,
             "effective_current_price": effective_current_price,
             "investment_types": InvestmentType,
+            "themes": uow.themes.list_themes(),
+            "selected_theme_ids": _selected_theme_ids(pos.themes),
             "current_user": _get_current_user(request, uow),
         },
     )
@@ -1260,6 +1473,8 @@ def edit_position(
     current_price: float = Form(...),
     notes: str = Form(""),
     sector_benchmark_ticker: str = Form(""),
+    theme_ids: list[int] | None = Form(None),
+    new_theme_names: str = Form(""),
     _csrf: None = Depends(validate_csrf),
     uow: UnitOfWork = Depends(get_authenticated_uow),
 ):
@@ -1296,7 +1511,13 @@ def edit_position(
     pos.current_price = submitted_current_price
     pos.notes = notes.strip() or None
     pos.sector_benchmark_ticker = clean_benchmark
-    uow.commit()
+    try:
+        selected_theme_ids = _theme_ids_from_form(uow, theme_ids, new_theme_names)
+        uow.themes.set_position_themes(pos.id, selected_theme_ids)
+        uow.commit()
+    except ValueError as exc:
+        uow.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if ticker_changed and get_market_data_api_key():
         _mark_positions_refresh_state(uow, [pos.id], in_progress=True)
         refresh_id = new_refresh_id()

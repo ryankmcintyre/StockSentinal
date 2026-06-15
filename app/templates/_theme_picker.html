@@ -1,0 +1,34 @@
+<div class="form-group theme-picker" data-theme-picker>
+    {% set pending_new_theme_names = form.new_theme_names if form is defined and form and form.new_theme_names is defined else '' %}
+    <label>Theme/Sector/Industry tags (optional)</label>
+    <div class="theme-checkboxes" data-theme-options>
+        {% for theme in themes %}
+        <label class="theme-checkbox">
+            <input
+                type="checkbox"
+                name="theme_ids"
+                value="{{ theme.id }}"
+                {% if theme.id in selected_theme_ids %}checked{% endif %}
+            >
+            <span>{{ theme.name }}</span>
+        </label>
+        {% endfor %}
+    </div>
+    {% if not themes %}
+    <small class="form-hint" data-theme-empty-hint>No themes yet. Create one below while saving this position.</small>
+    {% endif %}
+    <div class="theme-create-inline">
+        <input
+            type="text"
+            name="new_theme_names"
+            data-theme-new-input
+            maxlength="80"
+            placeholder="Create new tag, e.g. AI"
+            value="{{ pending_new_theme_names }}"
+            aria-label="Create new Theme/Sector/Industry tag"
+        >
+        <button type="button" class="btn btn-small" data-theme-create-button>Create new</button>
+    </div>
+    <small class="form-hint">Select multiple tags, or type a new tag and press Enter.</small>
+    <small class="form-hint theme-create-status" data-theme-create-status aria-live="polite"></small>
+</div>

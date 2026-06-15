@@ -64,6 +64,8 @@
         <small class="form-hint">Used by the Relative Weakness vs. Sector rule.</small>
     </div>
 
+    {% include "_theme_picker.html" %}
+
     <div class="form-group">
         <label for="notes">Notes (optional)</label>
         <textarea id="notes" name="notes" rows="3">{{ position.notes or '' }}</textarea>
@@ -142,5 +144,6 @@
 </section>
 
 <script src="/static/ticker-lookup.js"></script>
+<script src="/static/theme-tags.js" defer></script>
 
 {% endblock %}

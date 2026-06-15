@@ -55,6 +55,7 @@ class PositionCreate(PositionBase):
     the configured market data provider when a position is added.
     """
     current_price: Optional[float] = Field(None, gt=0)
+    theme_ids: list[int] = Field(default_factory=list)
 
 
 class PositionUpdate(BaseModel):
@@ -67,6 +68,7 @@ class PositionUpdate(BaseModel):
     current_price: Optional[float] = Field(None, gt=0)
     notes: Optional[str] = None
     sector_benchmark_ticker: Optional[str] = Field(None, max_length=10)
+    theme_ids: Optional[list[int]] = None
 
     @field_validator("ticker")
     @classmethod
@@ -89,6 +91,26 @@ class PositionUpdate(BaseModel):
         if v is not None and v > date.today():
             raise ValueError("Purchase date cannot be in the future")
         return v
+
+
+class ThemeCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+
+    @field_validator("name")
+    @classmethod
+    def clean_name(cls, v: str) -> str:
+        return " ".join(v.strip().split())
+
+
+class ThemeRename(ThemeCreate):
+    pass
+
+
+class ThemeRead(BaseModel):
+    id: int
+    name: str
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class RuleResult(BaseModel):
