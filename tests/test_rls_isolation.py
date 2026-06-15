@@ -205,7 +205,9 @@ class _FakeMigrationOp:
         self.executed.append(sql)
 
     def create_table(self, *args, **kwargs):
+        """No-op DDL stub; policy tests only inspect generated RLS SQL."""
         return None
 
     def create_index(self, *args, **kwargs):
+        """No-op DDL stub; policy tests only inspect generated RLS SQL."""
         return None

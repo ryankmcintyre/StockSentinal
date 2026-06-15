@@ -161,7 +161,7 @@ def test_theme_json_rename_conflict_returns_existing_theme(client, _setup_db):
     }
 
 
-def test_empty_theme_name_shows_required_flash_message(client):
+def test_empty_theme_name_shows_required_flash_message(client, _setup_db):
     response = client.post(
         "/themes",
         data=csrf_form_data(client, {"name": "   "}),
@@ -171,6 +171,11 @@ def test_empty_theme_name_shows_required_flash_message(client):
     assert response.status_code == 200
     assert "Theme name is required." in response.text
     assert "Theme name already exists." not in response.text
+    db = _setup_db()
+    try:
+        assert db.query(Theme).count() == 0
+    finally:
+        db.close()
 
 
 def test_add_form_lists_theme_picker(client, _setup_db):
@@ -312,7 +317,7 @@ def test_js_less_new_theme_parser_accepts_commas_and_newlines(client, _setup_db)
         db.close()
 
 
-def test_free_tier_user_can_use_themes_under_position_limit(client, _setup_db):
+def test_free_tier_user_can_assign_theme_to_position_under_limit(client, _setup_db):
     theme_id = _seed_theme(_setup_db, "AI")
     data = {
         "ticker": "META",

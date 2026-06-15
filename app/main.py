@@ -257,7 +257,10 @@ def _group_enriched_positions_by_theme(
     """Return theme cards from enriched positions without reloading positions.
 
     Each returned item has a ``theme`` object (or ``None`` for the untagged
-    bucket) and the already-enriched position view models assigned to it.
+    bucket) and the already-enriched position view models assigned to it. The
+    ``themes`` sequence is the user's complete theme list, so empty theme cards
+    still render while position assignment is derived from preloaded theme
+    objects on the enriched view models.
     """
     positions_by_theme_id: dict[int, list[dict]] = {theme.id: [] for theme in themes}
     untagged: list[dict] = []
