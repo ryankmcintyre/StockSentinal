@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}Portfolio by Theme/Sector/Industry — Stock Sentinel{% endblock %}
+{% block content %}
+
+<section class="page-header">
+    <div>
+        <p class="page-eyebrow">Portfolio</p>
+        <h1>By Theme/Sector/Industry</h1>
+    </div>
+    <p class="page-subtitle">Scan your holdings by the custom tags you define for themes, sectors, industries, or strategies.</p>
+</section>
+
+{% if not has_themes %}
+<div class="empty-state">
+    <span class="empty-state-mark" aria-hidden="true">#</span>
+    <h2>No themes yet.</h2>
+    <p>Create Theme/Sector/Industry tags from the add or edit position forms, then return here to see positions grouped by tag.</p>
+    <a href="/add" class="btn btn-primary">Tag a position</a>
+</div>
+{% else %}
+<section class="theme-grid">
+    {% for group in theme_groups %}
+    <article class="theme-card">
+        <div class="theme-card-header">
+            <div>
+                <p class="page-eyebrow">{{ "Untagged" if group.theme is none else "Theme" }}</p>
+                <h2>{{ "Untagged positions" if group.theme is none else group.theme.name }}</h2>
+            </div>
+            <span class="theme-count">{{ group.positions | length }}</span>
+        </div>
+
+        {% if group.theme is not none %}
+        <div class="theme-card-actions">
+            <form method="post" action="/themes/{{ group.theme.id }}/rename" class="theme-rename-form">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <input type="text" name="name" value="{{ group.theme.name }}" maxlength="80" aria-label="Rename {{ group.theme.name }}">
+                <button type="submit" class="btn btn-small">Rename</button>
+            </form>
+            <form method="post" action="/themes/{{ group.theme.id }}/delete" class="inline-form" onsubmit="return confirm('Delete theme {{ group.theme.name }}? Positions will remain.');">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-small btn-danger">Delete</button>
+            </form>
+        </div>
+        {% endif %}
+
+        {% if group.positions %}
+        <ul class="theme-position-list">
+            {% for pos in group.positions %}
+            <li class="theme-position-item">
+                <span class="verdict verdict-{{ pos.verdict.value | lower }}">{{ pos.verdict.value }}</span>
+                <div class="theme-position-copy">
+                    <a href="/edit/{{ pos.id }}" class="ticker">{{ pos.ticker }}</a>
+                    <span>{{ pos.company_name }}</span>
+                </div>
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        <p class="text-muted">No positions tagged here yet.</p>
+        {% endif %}
+    </article>
+    {% endfor %}
+</section>
+{% endif %}
+
+{% endblock %}

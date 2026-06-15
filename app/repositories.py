@@ -17,16 +17,21 @@ from datetime import datetime
 from typing import Optional, Protocol, Sequence
 
 from sqlalchemy import func
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 from app.models import (
     Position,
     PositionKeyLevel,
     StrategyRuleConfig,
+    Theme,
     User,
 )
 
 logger = logging.getLogger(__name__)
+
+
+class ThemeNameConflictError(ValueError):
+    """Raised when a user attempts to create or rename a theme to a duplicate name."""
 
 
 def _require_user_id(user_id: str | None) -> str:
@@ -206,6 +211,143 @@ class SqlAlchemyKeyLevelRepository:
 
     def delete(self, key_level: PositionKeyLevel) -> None:
         self._session.delete(key_level)
+
+
+# ---------------------------------------------------------------------------
+# Theme repository
+# ---------------------------------------------------------------------------
+
+
+class ThemeRepository(Protocol):
+    """Data-access contract for user-defined Theme/Sector/Industry tags."""
+
+    def list_themes(self) -> Sequence[Theme]: ...
+
+    def get_by_id(self, theme_id: int) -> Optional[Theme]: ...
+
+    def create_theme(self, name: str) -> Theme: ...
+
+    def rename_theme(self, theme_id: int, name: str) -> Optional[Theme]: ...
+
+    def delete_theme(self, theme_id: int) -> bool: ...
+
+    def set_position_themes(self, position_id: int, theme_ids: Sequence[int]) -> None: ...
+
+    def list_positions_grouped_by_theme(self) -> list[tuple[Theme | None, list[Position]]]: ...
+
+
+class SqlAlchemyThemeRepository:
+    """SQLAlchemy-backed user-scoped Theme repository."""
+
+    def __init__(self, session: Session, user_id: str) -> None:
+        self._session = session
+        self._user_id = _require_user_id(user_id)
+
+    @staticmethod
+    def _clean_name(name: str) -> str:
+        return " ".join(name.strip().split())
+
+    def _base_query(self):
+        return self._session.query(Theme).filter(Theme.user_id == self._user_id)
+
+    def _find_by_name(self, name: str) -> Optional[Theme]:
+        clean_name = self._clean_name(name)
+        return (
+            self._base_query()
+            .filter(func.lower(Theme.name) == clean_name.lower())
+            .first()
+        )
+
+    def list_themes(self) -> Sequence[Theme]:
+        return self._base_query().order_by(func.lower(Theme.name), Theme.name).all()
+
+    def get_by_id(self, theme_id: int) -> Optional[Theme]:
+        return self._base_query().filter(Theme.id == theme_id).first()
+
+    def create_theme(self, name: str) -> Theme:
+        clean_name = self._clean_name(name)
+        if not clean_name:
+            raise ValueError("Theme name is required")
+        if self._find_by_name(clean_name) is not None:
+            raise ThemeNameConflictError("Theme name already exists")
+        theme = Theme(name=clean_name, user_id=self._user_id)
+        self._session.add(theme)
+        self._session.flush()
+        return theme
+
+    def rename_theme(self, theme_id: int, name: str) -> Optional[Theme]:
+        theme = self.get_by_id(theme_id)
+        if theme is None:
+            return None
+        clean_name = self._clean_name(name)
+        if not clean_name:
+            raise ValueError("Theme name is required")
+        existing = self._find_by_name(clean_name)
+        if existing is not None and existing.id != theme.id:
+            raise ThemeNameConflictError("Theme name already exists")
+        theme.name = clean_name
+        self._session.flush()
+        return theme
+
+    def delete_theme(self, theme_id: int) -> bool:
+        theme = self.get_by_id(theme_id)
+        if theme is None:
+            return False
+        self._session.delete(theme)
+        self._session.flush()
+        return True
+
+    def set_position_themes(self, position_id: int, theme_ids: Sequence[int]) -> None:
+        position = (
+            self._session.query(Position)
+            .options(selectinload(Position.themes))
+            .filter(Position.user_id == self._user_id, Position.id == position_id)
+            .first()
+        )
+        if position is None:
+            raise ValueError("Position not found")
+
+        unique_theme_ids = list(dict.fromkeys(int(theme_id) for theme_id in theme_ids))
+        if not unique_theme_ids:
+            position.themes = []
+            self._session.flush()
+            return
+
+        themes = (
+            self._base_query()
+            .filter(Theme.id.in_(unique_theme_ids))
+            .order_by(func.lower(Theme.name), Theme.name)
+            .all()
+        )
+        found_ids = {theme.id for theme in themes}
+        if found_ids != set(unique_theme_ids):
+            raise ValueError("One or more themes do not belong to this user")
+        position.themes = themes
+        self._session.flush()
+
+    def list_positions_grouped_by_theme(self) -> list[tuple[Theme | None, list[Position]]]:
+        themes = list(self.list_themes())
+        positions = (
+            self._session.query(Position)
+            .options(selectinload(Position.themes))
+            .filter(Position.user_id == self._user_id)
+            .order_by(Position.ticker, Position.company_name)
+            .all()
+        )
+        positions_by_theme_id: dict[int, list[Position]] = {theme.id: [] for theme in themes}
+        untagged: list[Position] = []
+        for position in positions:
+            user_themes = [theme for theme in position.themes if theme.user_id == self._user_id]
+            if not user_themes:
+                untagged.append(position)
+                continue
+            for theme in user_themes:
+                positions_by_theme_id.setdefault(theme.id, []).append(position)
+
+        grouped = [(theme, positions_by_theme_id.get(theme.id, [])) for theme in themes]
+        if untagged:
+            grouped.append((None, untagged))
+        return grouped
 
 
 # ---------------------------------------------------------------------------

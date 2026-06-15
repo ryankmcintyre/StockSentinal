@@ -15,7 +15,16 @@
         {% endif %}
     </td>
     <td class="ticker" data-sort-value="{{ pos.ticker }}">{{ pos.ticker }}</td>
-    <td data-sort-value="{{ pos.company_name }}">{{ pos.company_name }}</td>
+    <td data-sort-value="{{ pos.company_name }}">
+        {{ pos.company_name }}
+        {% if pos.themes %}
+        <div class="theme-badges">
+            {% for theme in pos.themes %}
+            <span class="theme-badge">{{ theme.name }}</span>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </td>
     <td data-sort-value="{{ pos.investment_type }}">{{ pos.investment_type }}</td>
     <td data-sort-value="{{ pos.cost_basis }}">${{ "%.2f" | format(pos.cost_basis) }}</td>
     <td data-sort-value="{{ pos.effective_price }}">

@@ -15,7 +15,9 @@ from app.repositories import (
     SqlAlchemyKeyLevelRepository,
     SqlAlchemyPositionRepository,
     SqlAlchemyRuleConfigRepository,
+    SqlAlchemyThemeRepository,
     SqlAlchemyUserRepository,
+    ThemeRepository,
     UserRepository,
 )
 
@@ -28,6 +30,7 @@ class UnitOfWork(Protocol):
     positions: PositionRepository
     key_levels: KeyLevelRepository
     rule_configs: RuleConfigRepository
+    themes: ThemeRepository
     users: UserRepository
     user_id: str | None
 
@@ -73,6 +76,11 @@ class SqlAlchemyUnitOfWork:
             if user_id is not None
             else None
         )
+        self._themes = (
+            SqlAlchemyThemeRepository(session, user_id)
+            if user_id is not None
+            else None
+        )
         self.users = SqlAlchemyUserRepository(session)
 
     @property
@@ -92,6 +100,15 @@ class SqlAlchemyUnitOfWork:
                 "Create UnitOfWork with user_id parameter to access user-scoped repositories"
             )
         return self._rule_configs
+
+    @property
+    def themes(self) -> ThemeRepository:
+        if self._themes is None:
+            raise ValueError(
+                "Cannot access themes without user_id. "
+                "Create UnitOfWork with user_id parameter to access user-scoped repositories"
+            )
+        return self._themes
 
     @property
     def session(self) -> Session:

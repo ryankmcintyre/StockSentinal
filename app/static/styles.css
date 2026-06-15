@@ -350,6 +350,36 @@ h3 {
     color: #94a3b8;
 }
 
+.theme-badges {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+    margin-top: 0.35rem;
+}
+
+.theme-badge,
+.theme-count {
+    display: inline-flex;
+    align-items: center;
+    border-radius: 999px;
+    background: #eef2ff;
+    color: #334155;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
+.theme-badge {
+    padding: 0.12rem 0.45rem;
+}
+
+.theme-count {
+    justify-content: center;
+    min-width: 2rem;
+    height: 2rem;
+    background: #e8f1fd;
+    color: #1a73e8;
+}
+
 /* --- Actions --- */
 
 .actions {
@@ -499,6 +529,112 @@ h3 {
     display: flex;
     gap: 0.75rem;
     margin-top: 1.25rem;
+}
+
+.theme-checkboxes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-bottom: 0.6rem;
+}
+
+.theme-checkbox {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.3rem 0.55rem;
+    border: 1px solid #d9e2ec;
+    border-radius: 999px;
+    background: #f8fafc;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.theme-checkbox input {
+    width: auto;
+}
+
+.theme-create-inline {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.theme-create-inline input {
+    flex: 1;
+}
+
+.theme-create-status {
+    display: block;
+    margin-top: 0.35rem;
+}
+
+.theme-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+    gap: 1rem;
+}
+
+.theme-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 1.1rem;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.theme-card-header,
+.theme-position-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.theme-card-header {
+    justify-content: space-between;
+    margin-bottom: 0.8rem;
+}
+
+.theme-card-header h2 {
+    font-size: 1.15rem;
+}
+
+.theme-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.9rem;
+}
+
+.theme-rename-form {
+    display: flex;
+    gap: 0.4rem;
+    flex: 1;
+    min-width: 14rem;
+}
+
+.theme-rename-form input {
+    min-width: 0;
+    flex: 1;
+    padding: 0.42rem 0.6rem;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    font: inherit;
+}
+
+.theme-position-list {
+    list-style: none;
+}
+
+.theme-position-item {
+    padding: 0.65rem 0;
+    border-top: 1px solid #eef2f7;
+}
+
+.theme-position-copy {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
 }
 
 /* --- Empty state --- */
