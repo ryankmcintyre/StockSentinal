@@ -264,6 +264,13 @@ class SqlAlchemyThemeRepository:
     def find_by_name(self, name: str) -> Optional[Theme]:
         return self._find_by_name(name)
 
+    def _flush_with_conflict_check(self) -> None:
+        try:
+            self._session.flush()
+        except IntegrityError as exc:
+            self._session.rollback()
+            raise ThemeNameConflictError("Theme name already exists") from exc
+
     def list_themes(self) -> Sequence[Theme]:
         return self._base_query().order_by(func.lower(Theme.name), Theme.name).all()
 
@@ -278,11 +285,7 @@ class SqlAlchemyThemeRepository:
             raise ThemeNameConflictError("Theme name already exists")
         theme = Theme(name=clean_name, user_id=self._user_id)
         self._session.add(theme)
-        try:
-            self._session.flush()
-        except IntegrityError as exc:
-            self._session.rollback()
-            raise ThemeNameConflictError("Theme name already exists") from exc
+        self._flush_with_conflict_check()
         return theme
 
     def rename_theme(self, theme_id: int, name: str) -> Optional[Theme]:
@@ -296,11 +299,7 @@ class SqlAlchemyThemeRepository:
         if existing is not None and existing.id != theme.id:
             raise ThemeNameConflictError("Theme name already exists")
         theme.name = clean_name
-        try:
-            self._session.flush()
-        except IntegrityError as exc:
-            self._session.rollback()
-            raise ThemeNameConflictError("Theme name already exists") from exc
+        self._flush_with_conflict_check()
         return theme
 
     def delete_theme(self, theme_id: int) -> bool:

@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Sequence
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from math import isclose
@@ -57,7 +58,7 @@ from app.logging_utils import configure_refresh_logging, new_refresh_id, refresh
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 from app.market_data.service import MarketDataService
-from app.models import Position, PositionKeyLevel, User
+from app.models import Position, PositionKeyLevel, Theme, User
 from app.repositories import ThemeNameConflictError
 from app.unit_of_work import SqlAlchemyUnitOfWork, UnitOfWork
 from app.rule_config import (
@@ -237,7 +238,7 @@ def _selected_theme_ids(themes) -> list[int]:
     return [theme.id for theme in themes]
 
 
-def _theme_json(theme) -> dict:
+def _theme_json(theme: Theme) -> dict:
     return {"id": theme.id, "name": theme.name}
 
 
@@ -249,7 +250,10 @@ def _theme_conflict_json(uow: UnitOfWork, name: str) -> dict:
     return content
 
 
-def _group_enriched_positions_by_theme(enriched_positions: list[dict], themes) -> list[dict]:
+def _group_enriched_positions_by_theme(
+    enriched_positions: list[dict],
+    themes: Sequence[Theme],
+) -> list[dict]:
     """Return theme cards from enriched positions without reloading positions.
 
     Each returned item has a ``theme`` object (or ``None`` for the untagged

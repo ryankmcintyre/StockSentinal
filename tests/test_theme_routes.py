@@ -361,7 +361,9 @@ def test_tier_limit_rerender_preserves_selected_themes(client, _setup_db):
 
     assert response.status_code == 200
     assert "5-ticker limit on the free tier" in response.text
-    assert f'value="{theme_id}"\n                checked' in response.text
+    theme_checkbox = f'value="{theme_id}"'
+    assert theme_checkbox in response.text
+    assert response.text.index(theme_checkbox) < response.text.index("checked")
     assert 'value="Mainframes"' in response.text
 
 
