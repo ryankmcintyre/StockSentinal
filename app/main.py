@@ -1008,10 +1008,10 @@ async def create_theme(
         if _wants_json_response(request):
             return JSONResponse(status_code=409, content={"error": "Theme name already exists"})
         return _redirect_to_themes_with_flash("theme_conflict")
-    except ValueError as exc:
+    except ValueError:
         uow.rollback()
         if _wants_json_response(request):
-            return JSONResponse(status_code=400, content={"error": str(exc)})
+            return JSONResponse(status_code=400, content={"error": "Theme name is required"})
         return _redirect_to_themes_with_flash("theme_conflict")
 
     if _wants_json_response(request):
@@ -1039,10 +1039,10 @@ async def rename_theme(
         if _wants_json_response(request):
             return JSONResponse(status_code=409, content={"error": "Theme name already exists"})
         return _redirect_to_themes_with_flash("theme_conflict")
-    except ValueError as exc:
+    except ValueError:
         uow.rollback()
         if _wants_json_response(request):
-            return JSONResponse(status_code=400, content={"error": str(exc)})
+            return JSONResponse(status_code=400, content={"error": "Theme name is required"})
         return _redirect_to_themes_with_flash("theme_conflict")
 
     if _wants_json_response(request):
