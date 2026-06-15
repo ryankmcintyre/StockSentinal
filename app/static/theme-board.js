@@ -149,7 +149,7 @@
             updateHeatIndicator(zone.closest(".theme-heat-card"));
         } catch (err) {
             console.error("Failed to add position to theme:", err.message);
-            showToast("Could not add position to theme: " + err.message);
+            showToast("Could not add position to theme: " + (err.message || "Please try again."));
         }
     }
 
@@ -312,7 +312,7 @@
         } catch (err) {
             console.error("Failed to remove position from theme:", err.message);
             btn.disabled = false;
-            showToast("Could not remove position from theme: " + err.message);
+            showToast("Could not remove position from theme: " + (err.message || "Please try again."));
         }
     }
 
