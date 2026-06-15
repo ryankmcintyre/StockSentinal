@@ -34,14 +34,9 @@
         return meta ? meta.value : "";
     }
 
-    function getCsrfCookieToken() {
-        var match = document.cookie.match(/(?:^|;\s*)ss_csrf=([^;]+)/);
-        return match ? decodeURIComponent(match[1]) : "";
-    }
-
     /** POST to a JSON endpoint with CSRF header; returns parsed JSON or throws. */
     async function postJson(url) {
-        var csrfToken = getCsrfCookieToken();
+        var csrfToken = getCsrfToken();
         var response = await fetch(url, {
             method: "POST",
             headers: {
@@ -328,6 +323,167 @@
                 handleRemoveClick(removeBtn);
             });
         }
+
+        wireAssignButton(chip);
+    }
+
+    // -------------------------------------------------------------------------
+    // Keyboard-accessible assign menu (tray chips)
+    // -------------------------------------------------------------------------
+
+    /** Close all open assign menus and reset their toggle buttons. */
+    function closeAssignMenus() {
+        document.querySelectorAll(".chip-assign-menu").forEach(function (menu) {
+            if (typeof menu._cleanup === "function") {
+                menu._cleanup();
+            }
+            var chip = menu.closest(".tray-chip");
+            var btn = chip && chip.querySelector(".chip-assign-btn");
+            if (btn) {
+                btn.setAttribute("aria-expanded", "false");
+            }
+            menu.remove();
+        });
+    }
+
+    /**
+     * Open a listbox dropdown anchored to `btn` that lets the keyboard user
+     * assign `chip` (a tray-chip) to any existing theme.
+     */
+    function showAssignMenu(btn, chip) {
+        closeAssignMenus();
+
+        var positionId = chip.dataset.positionId;
+        var ticker = chip.dataset.ticker;
+        var verdict = chip.dataset.verdict;
+        var assignedThemes = (chip.dataset.themes || "").split(",").filter(Boolean);
+
+        // Collect available themes from the DOM
+        var themes = [];
+        document.querySelectorAll(".theme-heat-card").forEach(function (card) {
+            var themeId = card.dataset.themeId;
+            var nameEl = card.querySelector("[data-theme-name-label]");
+            if (themeId && nameEl) {
+                themes.push({ id: themeId, name: nameEl.textContent.trim() });
+            }
+        });
+
+        if (themes.length === 0) {
+            showToast("No themes yet. Click + New Theme to create one first.", "error");
+            return;
+        }
+
+        var menu = document.createElement("ul");
+        menu.className = "chip-assign-menu";
+        menu.setAttribute("role", "listbox");
+        menu.setAttribute("aria-label", "Assign " + ticker + " to a theme");
+
+        themes.forEach(function (theme) {
+            var isAssigned = assignedThemes.includes(String(theme.id));
+            var item = document.createElement("li");
+            item.className = "chip-assign-menu-item" + (isAssigned ? " chip-assign-menu-item-assigned" : "");
+            item.setAttribute("role", "option");
+            item.setAttribute("aria-selected", isAssigned ? "true" : "false");
+            item.setAttribute("tabindex", "0");
+            item.textContent = theme.name + (isAssigned ? " \u2713" : "");
+            item.dataset.themeId = theme.id;
+
+            async function doAssign() {
+                if (isAssigned) {
+                    closeAssignMenus();
+                    btn.focus();
+                    return;
+                }
+                closeAssignMenus();
+                var zone = document.querySelector('.theme-chips-zone[data-theme-id="' + theme.id + '"]');
+                try {
+                    await postJson("/themes/" + theme.id + "/positions/" + positionId);
+                    if (zone) {
+                        addChipToZone(zone, positionId, ticker, verdict, theme.id);
+                        var card = zone.closest(".theme-heat-card");
+                        if (card) {
+                            updateHeatIndicator(card);
+                        }
+                    }
+                    updateTrayChipThemes(positionId, theme.id, true);
+                    btn.focus();
+                } catch (err) {
+                    console.error("Failed to assign position to theme:", err.message);
+                    showToast("Could not assign position to theme: " + (err.message || "Please try again."), "error");
+                    btn.focus();
+                }
+            }
+
+            item.addEventListener("click", doAssign);
+            item.addEventListener("keydown", function (e) {
+                if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();  // prevent Space-scroll and Enter-click duplication
+                    doAssign();
+                } else if (e.key === "Escape") {
+                    e.stopPropagation();
+                    closeAssignMenus();
+                    btn.focus();
+                } else if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    var next = item.nextElementSibling;
+                    if (next) { next.focus(); }
+                } else if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    var prev = item.previousElementSibling;
+                    if (prev) { prev.focus(); } else { btn.focus(); }
+                }
+            });
+
+            menu.appendChild(item);
+        });
+
+        btn.setAttribute("aria-expanded", "true");
+        chip.appendChild(menu);
+
+        // Focus the first menu item
+        var firstItem = menu.querySelector(".chip-assign-menu-item");
+        if (firstItem) {
+            firstItem.focus();
+        }
+
+        // Close when focus leaves the menu (handles Tab and any other focus loss)
+        menu.addEventListener("focusout", function (e) {
+            // relatedTarget is the element receiving focus; if it's outside the menu, close
+            setTimeout(function () {
+                if (!menu.contains(document.activeElement)) {
+                    closeAssignMenus();
+                }
+            }, 0);
+        });
+
+        // Close on click outside (bubble phase)
+        function onOutsideClick(e) {
+            if (!menu.contains(e.target) && e.target !== btn) {
+                closeAssignMenus();
+            }
+        }
+        document.addEventListener("click", onOutsideClick);
+        menu._cleanup = function () {
+            document.removeEventListener("click", onOutsideClick);
+        };
+    }
+
+    /** Wire the assign button on a tray chip (no-op if no button present). */
+    function wireAssignButton(chip) {
+        var btn = chip.querySelector(".chip-assign-btn");
+        if (!btn) {
+            return;
+        }
+        btn.addEventListener("click", function (e) {
+            e.stopPropagation();
+            var isExpanded = btn.getAttribute("aria-expanded") === "true";
+            if (isExpanded) {
+                closeAssignMenus();
+                btn.focus();
+            } else {
+                showAssignMenu(btn, chip);
+            }
+        });
     }
 
     // -------------------------------------------------------------------------
@@ -499,7 +655,7 @@
             }
 
             try {
-                var csrfToken = getCsrfCookieToken();
+                var csrfToken = getCsrfToken();
                 var response = await fetch("/themes", {
                     method: "POST",
                     headers: {
@@ -584,13 +740,13 @@
 
         grid.appendChild(card);
 
-        // Refresh CSRF token from the cookie at form submit time so the value
-        // is always current even after the card was created.
+        // Populate CSRF token from the page's first hidden csrf_token input so the
+        // value is always current even after the card was created dynamically.
         card.querySelectorAll("form").forEach(function (form) {
             form.addEventListener("submit", function () {
                 var csrfInput = form.querySelector('[name="csrf_token"]');
                 if (csrfInput) {
-                    csrfInput.value = getCsrfCookieToken();
+                    csrfInput.value = getCsrfToken();
                 }
             });
         });

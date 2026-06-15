@@ -55,6 +55,14 @@
                 <span class="verdict verdict-{{ pos.verdict.value | lower }} verdict-xs" aria-label="{{ pos.verdict.value }}">{{ pos.verdict.value }}</span>
                 <span class="tray-chip-ticker">{{ pos.ticker }}</span>
                 <span class="tray-chip-name">{{ pos.company_name }}</span>
+                <button
+                    type="button"
+                    class="chip-assign-btn"
+                    aria-label="Assign {{ pos.ticker }} to a theme"
+                    aria-haspopup="listbox"
+                    aria-expanded="false"
+                    title="Assign to theme"
+                >+</button>
             </div>
             {% else %}
             <p class="tray-empty">No positions yet. <a href="/add">Add one</a>.</p>
