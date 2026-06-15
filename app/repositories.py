@@ -236,6 +236,10 @@ class ThemeRepository(Protocol):
 
     def set_position_themes(self, position_id: int, theme_ids: Sequence[int]) -> None: ...
 
+    def add_position_to_theme(self, position_id: int, theme_id: int) -> bool: ...
+
+    def remove_position_from_theme(self, position_id: int, theme_id: int) -> bool: ...
+
     def list_positions_grouped_by_theme(self) -> list[tuple[Theme | None, list[Position]]]: ...
 
 
@@ -337,6 +341,43 @@ class SqlAlchemyThemeRepository:
             raise ValueError("One or more themes do not belong to this user")
         position.themes = themes
         self._session.flush()
+
+    def add_position_to_theme(self, position_id: int, theme_id: int) -> bool:
+        """Add a position to a theme without replacing its existing theme associations."""
+        theme = self.get_by_id(theme_id)
+        if theme is None:
+            return False
+        position = (
+            self._session.query(Position)
+            .options(selectinload(Position.themes))
+            .filter(Position.user_id == self._user_id, Position.id == position_id)
+            .first()
+        )
+        if position is None:
+            return False
+        if theme not in position.themes:
+            position.themes.append(theme)
+            self._session.flush()
+        return True
+
+    def remove_position_from_theme(self, position_id: int, theme_id: int) -> bool:
+        """Remove a single position–theme association without affecting other tags."""
+        theme = self.get_by_id(theme_id)
+        if theme is None:
+            return False
+        position = (
+            self._session.query(Position)
+            .options(selectinload(Position.themes))
+            .filter(Position.user_id == self._user_id, Position.id == position_id)
+            .first()
+        )
+        if position is None:
+            return False
+        if theme in position.themes:
+            position.themes.remove(theme)
+            self._session.flush()
+            return True
+        return False
 
     def list_positions_grouped_by_theme(self) -> list[tuple[Theme | None, list[Position]]]:
         themes = list(self.list_themes())

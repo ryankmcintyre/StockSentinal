@@ -442,3 +442,202 @@ def test_theme_rename_and_delete_do_not_delete_positions(client, _setup_db):
         assert db.query(Theme).filter(Theme.id == theme_id).first() is None
     finally:
         db.close()
+
+
+def test_add_position_to_theme_via_drag_drop(client, _setup_db):
+    theme_id = _seed_theme(_setup_db, "AI")
+    position_id = _seed_position(_setup_db, ticker="NVDA")
+
+    response = client.post(
+        f"/themes/{theme_id}/positions/{position_id}",
+        headers=_json_csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+    db = _setup_db()
+    try:
+        position = db.query(Position).filter(Position.id == position_id).one()
+        assert any(theme.id == theme_id for theme in position.themes)
+    finally:
+        db.close()
+
+
+def test_add_position_to_theme_is_idempotent(client, _setup_db):
+    """Adding the same position twice must not create a duplicate association."""
+    theme_id = _seed_theme(_setup_db, "AI")
+    position_id = _seed_position(_setup_db, ticker="NVDA")
+
+    client.post(
+        f"/themes/{theme_id}/positions/{position_id}",
+        headers=_json_csrf_headers(client),
+    )
+    response = client.post(
+        f"/themes/{theme_id}/positions/{position_id}",
+        headers=_json_csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    db = _setup_db()
+    try:
+        position = db.query(Position).filter(Position.id == position_id).one()
+        assert len([t for t in position.themes if t.id == theme_id]) == 1
+    finally:
+        db.close()
+
+
+def test_add_position_to_theme_preserves_other_tags(client, _setup_db):
+    """Adding a position to a second theme must keep the first tag intact."""
+    theme_a = _seed_theme(_setup_db, "AI")
+    theme_b = _seed_theme(_setup_db, "Semiconductors")
+    position_id = _seed_position(_setup_db, ticker="NVDA")
+
+    # Tag to first theme via the existing set_position_themes path
+    db = _setup_db()
+    try:
+        theme = db.query(Theme).filter(Theme.id == theme_a).one()
+        position = db.query(Position).filter(Position.id == position_id).one()
+        position.themes = [theme]
+        db.commit()
+    finally:
+        db.close()
+
+    # Drag/drop add to second theme
+    response = client.post(
+        f"/themes/{theme_b}/positions/{position_id}",
+        headers=_json_csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    db = _setup_db()
+    try:
+        position = db.query(Position).filter(Position.id == position_id).one()
+        theme_ids = {t.id for t in position.themes}
+        assert len(position.themes) == 2, "Expected exactly 2 theme associations (no duplicates)"
+        assert theme_ids == {theme_a, theme_b}
+    finally:
+        db.close()
+
+
+def test_add_position_to_unknown_theme_returns_404(client, _setup_db):
+    position_id = _seed_position(_setup_db)
+
+    response = client.post(
+        f"/themes/999/positions/{position_id}",
+        headers=_json_csrf_headers(client),
+    )
+
+    assert response.status_code == 404
+
+
+def test_add_unknown_position_to_theme_returns_404(client, _setup_db):
+    theme_id = _seed_theme(_setup_db, "AI")
+
+    response = client.post(
+        f"/themes/{theme_id}/positions/999",
+        headers=_json_csrf_headers(client),
+    )
+
+    assert response.status_code == 404
+
+
+def test_remove_position_from_theme(client, _setup_db):
+    theme_id = _seed_theme(_setup_db, "AI")
+    position_id = _seed_position(_setup_db, ticker="NVDA")
+    db = _setup_db()
+    try:
+        theme = db.query(Theme).filter(Theme.id == theme_id).one()
+        position = db.query(Position).filter(Position.id == position_id).one()
+        position.themes = [theme]
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/themes/{theme_id}/positions/{position_id}/remove",
+        headers=_json_csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    db = _setup_db()
+    try:
+        position = db.query(Position).filter(Position.id == position_id).one()
+        assert position.themes == []
+    finally:
+        db.close()
+
+
+def test_remove_position_from_theme_keeps_other_tags(client, _setup_db):
+    """Removing a position from one theme must not affect other theme tags."""
+    theme_a = _seed_theme(_setup_db, "AI")
+    theme_b = _seed_theme(_setup_db, "Semiconductors")
+    position_id = _seed_position(_setup_db, ticker="NVDA")
+    db = _setup_db()
+    try:
+        pos = db.query(Position).filter(Position.id == position_id).one()
+        pos.themes = [
+            db.query(Theme).filter(Theme.id == theme_a).one(),
+            db.query(Theme).filter(Theme.id == theme_b).one(),
+        ]
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.post(
+        f"/themes/{theme_a}/positions/{position_id}/remove",
+        headers=_json_csrf_headers(client),
+    )
+
+    assert response.status_code == 200
+    db = _setup_db()
+    try:
+        position = db.query(Position).filter(Position.id == position_id).one()
+        assert [t.id for t in position.themes] == [theme_b]
+    finally:
+        db.close()
+
+
+def test_remove_position_not_in_theme_returns_404(client, _setup_db):
+    theme_id = _seed_theme(_setup_db, "AI")
+    position_id = _seed_position(_setup_db)
+
+    response = client.post(
+        f"/themes/{theme_id}/positions/{position_id}/remove",
+        headers=_json_csrf_headers(client),
+    )
+
+    assert response.status_code == 404
+
+
+def test_add_remove_require_csrf(client, _setup_db):
+    theme_id = _seed_theme(_setup_db, "AI")
+    position_id = _seed_position(_setup_db)
+
+    for url in [
+        f"/themes/{theme_id}/positions/{position_id}",
+        f"/themes/{theme_id}/positions/{position_id}/remove",
+    ]:
+        response = client.post(
+            url,
+            headers={"accept": "application/json"},
+        )
+        assert response.status_code == 403
+
+
+def test_portfolio_themes_board_renders_all_positions(client, _setup_db):
+    """Board page must supply all_positions so the tray can render."""
+    theme_id = _seed_theme(_setup_db, "AI")
+    position_id = _seed_position(_setup_db, ticker="NVDA")
+
+    response = client.get("/portfolio/themes")
+
+    assert response.status_code == 200
+    # Board layout elements
+    assert "position-tray" in response.text
+    assert "theme-heatmap-grid" in response.text
+    # Position appears in tray
+    assert "NVDA" in response.text
+    # CSRF protection for drag/drop still present
+    assert "csrf_token" in response.text
