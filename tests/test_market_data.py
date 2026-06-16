@@ -595,6 +595,7 @@ class TestRefreshAllPositions:
         mocker.patch.object(
             MarketDataService, "load_daily_bar_cache_for_tickers", return_value={}
         )
+        mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
@@ -1185,10 +1186,12 @@ class TestLocalAtrComputation:
         mocker.patch.object(service, "_calculate_verdicts", return_value={})
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value={("daily", 14)})
         mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
         mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
+        mocker.patch("app.rule_config.get_enabled_rule_selections_by_investment_type", return_value={})
         positions = [
             FakePosition(ticker="AAPL", investment_type="short-term"),
             FakePosition(ticker="MSFT", investment_type="short-term"),
@@ -1239,10 +1242,12 @@ class TestLocalAtrComputation:
         mocker.patch.object(service, "_calculate_verdicts", return_value={})
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
+        mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
         mocker.patch("app.rule_config.get_required_indicators", return_value=set())
         mocker.patch("app.rule_config.get_required_atr_indicators", return_value={("daily", 14)})
         mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
         mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
+        mocker.patch("app.rule_config.get_enabled_rule_selections_by_investment_type", return_value={})
         positions = [
             FakePosition(ticker="AAPL", investment_type="short-term"),
             FakePosition(ticker="MSFT", investment_type="short-term"),

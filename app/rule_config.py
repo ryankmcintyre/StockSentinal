@@ -176,9 +176,12 @@ def ensure_strategy_rule_defaults(uow: UnitOfWork, user_id: str | None = None) -
 def get_enabled_rule_selections_by_investment_type(
     uow: UnitOfWork,
     user_id: str | None = None,
+    *,
+    _skip_defaults: bool = False,
 ) -> dict[str, list[StrategyRuleSelection]]:
     """Return enabled rule selections keyed by investment type value."""
-    ensure_strategy_rule_defaults(uow, user_id=user_id)
+    if not _skip_defaults:
+        ensure_strategy_rule_defaults(uow, user_id=user_id)
 
     selections: dict[str, list[StrategyRuleSelection]] = {}
     for investment_type in _supported_investment_types():
