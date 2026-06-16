@@ -408,7 +408,7 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
     # the running background refresh. Profiling helps verify how often this
     # fires in production.
     logger.info(
-        "Cleared %d stale refresh flag(s) (write issued by /api/refresh-status path)",
+        "Cleared %d stale refresh flag(s) (write issued by _clear_stale_refresh_flags)",
         cleared_count,
     )
     return cleared_count
