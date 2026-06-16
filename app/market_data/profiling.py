@@ -82,9 +82,18 @@ def refresh_profiling_scope(engine, *, tag: str):
     """Activate per-thread query counting + block timing for a refresh.
 
     Attaches SQLAlchemy ``before_cursor_execute`` / ``after_cursor_execute``
-    listeners for the duration of the ``with`` block. On exit, logs a single
-    summary line with total queries, total SQL time, wall time, and per-block
-    breakdowns.
+    listeners for the duration of the ``with`` block. The listeners are bound
+    to the thread that opened the scope and ignore queries from any other
+    thread — this matters because the SQLAlchemy ``engine`` is a process-global
+    object shared by every request thread and the background refresh worker,
+    so without the thread filter one scope would count every concurrent
+    poll's queries as well, and ``scope.query_count += 1`` would also race
+    across threads. ``_state.scope`` is already thread-local for the
+    ``time_block`` / ``record_seed_invocation`` helpers; this filter brings
+    the engine-level listeners in line with that model.
+
+    On exit, logs a single summary line with total queries, total SQL time,
+    wall time, and per-block breakdowns.
 
     Yields the active ``_ProfileScope`` (or ``None`` when the feature flag is
     off) so callers can read counts before the scope closes if useful.
@@ -94,13 +103,18 @@ def refresh_profiling_scope(engine, *, tag: str):
         return
 
     scope = _ProfileScope()
+    owner_thread_id = threading.get_ident()
     prev = getattr(_state, "scope", None)
     _state.scope = scope
 
     def _before_cursor(conn, cursor, statement, parameters, context, executemany):
+        if threading.get_ident() != owner_thread_id:
+            return
         context._refresh_profile_started_at = time.monotonic()
 
     def _after_cursor(conn, cursor, statement, parameters, context, executemany):
+        if threading.get_ident() != owner_thread_id:
+            return
         scope.query_count += 1
         started_at = getattr(context, "_refresh_profile_started_at", None)
         if started_at is not None:

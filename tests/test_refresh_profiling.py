@@ -71,3 +71,39 @@ def test_listeners_removed_after_scope_exits(monkeypatch, in_memory_engine):
         with in_memory_engine.connect() as conn:
             conn.execute(text("SELECT 2"))
         assert second.query_count == 1
+
+
+def test_scope_ignores_queries_from_other_threads(monkeypatch, in_memory_engine):
+    """Engine-level listeners must filter by owner thread.
+
+    The engine is process-global, so without a thread filter a scope opened
+    on the background refresh thread would also count queries issued by the
+    request thread handling a concurrent /api/refresh-status poll.
+    """
+    import threading
+
+    monkeypatch.setattr(profiling, "is_refresh_profiling_enabled", lambda: True)
+
+    started = threading.Event()
+    other_done = threading.Event()
+
+    def _other_thread():
+        started.wait()
+        with in_memory_engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+            conn.execute(text("SELECT 2"))
+        other_done.set()
+
+    worker = threading.Thread(target=_other_thread)
+    worker.start()
+
+    with profiling.refresh_profiling_scope(in_memory_engine, tag="owner") as scope:
+        started.set()
+        other_done.wait(timeout=5)
+        with in_memory_engine.connect() as conn:
+            conn.execute(text("SELECT 3"))
+
+    worker.join(timeout=5)
+    # Only the single query issued by the owner thread should be counted —
+    # the two queries from the other thread must be ignored.
+    assert scope.query_count == 1
