@@ -265,11 +265,10 @@
         }
     }
 
-    /** Update the data-themes attribute on a tray chip after a tag change. */
+    /** Update the data-themes attribute on a tray chip after a tag change, then move it to the correct section. */
     function updateTrayChipThemes(positionId, themeId, added) {
         var trayChips = document.querySelectorAll(
-            '#tray-list [data-position-id="' + positionId + '"], ' +
-            '#untagged-section [data-position-id="' + positionId + '"]'
+            '#tray-list [data-position-id="' + positionId + '"]'
         );
         trayChips.forEach(function (chip) {
             var themes = (chip.dataset.themes || "").split(",").filter(Boolean);
@@ -281,6 +280,51 @@
                 themes = themes.filter(function (id) { return id !== String(themeId); });
             }
             chip.dataset.themes = themes.join(",");
+            moveTrayChipToSection(chip, themes.length > 0);
+        });
+    }
+
+    /**
+     * Move a tray chip into the Untagged or Tagged section based on whether
+     * it currently has any theme associations.
+     */
+    function moveTrayChipToSection(chip, isTagged) {
+        var targetId = isTagged ? "tray-tagged-section" : "tray-untagged-section";
+        var currentSection = chip.closest(".tray-section");
+        if (currentSection && currentSection.id === targetId) {
+            return;
+        }
+        var targetSection = document.getElementById(targetId);
+        if (!targetSection) {
+            return;
+        }
+        var targetChips = targetSection.querySelector(".tray-section-chips");
+        if (!targetChips) {
+            return;
+        }
+        var emptyMsg = targetChips.querySelector(".tray-section-empty");
+        if (emptyMsg) {
+            emptyMsg.remove();
+        }
+        targetChips.appendChild(chip);
+        // Update counts for both sections after the move
+        document.querySelectorAll(".tray-section").forEach(function (section) {
+            var chipsEl = section.querySelector(".tray-section-chips");
+            var countEl = section.querySelector(".tray-section-count");
+            if (!chipsEl || !countEl) {
+                return;
+            }
+            var chipCount = chipsEl.querySelectorAll(".tray-chip").length;
+            countEl.textContent = chipCount;
+            var existing = chipsEl.querySelector(".tray-section-empty");
+            if (chipCount === 0 && !existing) {
+                var p = document.createElement("p");
+                p.className = "tray-section-empty";
+                p.textContent = section.dataset.emptyMessage || "No positions.";
+                chipsEl.appendChild(p);
+            } else if (chipCount > 0 && existing) {
+                existing.remove();
+            }
         });
     }
 
@@ -549,6 +593,15 @@
             var visible = document.querySelectorAll("#tray-list .tray-chip:not([style*='display: none'])").length;
             trayCount.textContent = visible;
         }
+
+        // Update per-section counts
+        document.querySelectorAll(".tray-section").forEach(function (section) {
+            var countEl = section.querySelector(".tray-section-count");
+            if (countEl) {
+                var sectionVisible = section.querySelectorAll(".tray-chip:not([style*='display: none'])").length;
+                countEl.textContent = sectionVisible;
+            }
+        });
     }
 
     // -------------------------------------------------------------------------

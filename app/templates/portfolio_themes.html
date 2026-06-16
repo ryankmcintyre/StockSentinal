@@ -30,43 +30,93 @@
 <div class="theme-board-layout">
 
     {# Left panel: Position Tray #}
+    {% set untagged_positions = all_positions | rejectattr('themes') | list %}
+    {% set tagged_positions = all_positions | selectattr('themes') | list %}
     <aside class="position-tray" id="position-tray" aria-label="Position tray">
         <h2 class="tray-heading">
             Position Tray
             <span class="tray-count" id="tray-count">{{ all_positions | length }}</span>
         </h2>
-        {% if untagged_count > 0 %}
-        <div class="tray-untagged-label">
-            Untagged <span class="tray-count tray-count-sm">{{ untagged_count }}</span>
-        </div>
-        {% endif %}
-        <div class="tray-list" id="tray-list">
-            {% for pos in all_positions | sort(attribute='ticker') %}
-            <div
-                class="tray-chip"
-                draggable="true"
-                data-position-id="{{ pos.id }}"
-                data-ticker="{{ pos.ticker }}"
-                data-company="{{ pos.company_name }}"
-                data-verdict="{{ pos.verdict.value | lower }}"
-                data-themes="{% for t in pos.themes %}{{ t.id }}{% if not loop.last %},{% endif %}{% endfor %}"
-                title="{{ pos.ticker }} — {{ pos.company_name }}"
-            >
-                <span class="verdict verdict-{{ pos.verdict.value | lower }} verdict-xs" aria-label="{{ pos.verdict.value }}">{{ pos.verdict.value }}</span>
-                <span class="tray-chip-ticker">{{ pos.ticker }}</span>
-                <span class="tray-chip-name">{{ pos.company_name }}</span>
-                <button
-                    type="button"
-                    class="chip-assign-btn"
-                    aria-label="Assign {{ pos.ticker }} to a theme"
-                    aria-haspopup="listbox"
-                    aria-expanded="false"
-                    title="Assign to theme"
-                >+</button>
+        <div id="tray-list">
+
+            {# Untagged section #}
+            <div class="tray-section" id="tray-untagged-section" data-empty-message="All positions are tagged.">
+                <div class="tray-section-label">
+                    <span class="tray-section-icon" aria-hidden="true">○</span>
+                    Untagged
+                    <span class="tray-count tray-count-sm tray-section-count">{{ untagged_positions | length }}</span>
+                </div>
+                <div class="tray-section-chips">
+                    {% for pos in untagged_positions | sort(attribute='ticker') %}
+                    <div
+                        class="tray-chip"
+                        draggable="true"
+                        data-position-id="{{ pos.id }}"
+                        data-ticker="{{ pos.ticker }}"
+                        data-company="{{ pos.company_name }}"
+                        data-verdict="{{ pos.verdict.value | lower }}"
+                        data-themes="{% for t in pos.themes %}{{ t.id }}{% if not loop.last %},{% endif %}{% endfor %}"
+                        title="{{ pos.ticker }} — {{ pos.company_name }}"
+                    >
+                        <span class="verdict verdict-{{ pos.verdict.value | lower }} verdict-xs" aria-label="{{ pos.verdict.value }}">{{ pos.verdict.value }}</span>
+                        <span class="tray-chip-ticker">{{ pos.ticker }}</span>
+                        <span class="tray-chip-name">{{ pos.company_name }}</span>
+                        <button
+                            type="button"
+                            class="chip-assign-btn"
+                            aria-label="Assign {{ pos.ticker }} to a theme"
+                            aria-haspopup="listbox"
+                            aria-expanded="false"
+                            title="Assign to theme"
+                        >+</button>
+                    </div>
+                    {% else %}
+                    {% if all_positions %}
+                    <p class="tray-section-empty">All positions are tagged.</p>
+                    {% else %}
+                    <p class="tray-empty">No positions yet. <a href="/add">Add one</a>.</p>
+                    {% endif %}
+                    {% endfor %}
+                </div>
             </div>
-            {% else %}
-            <p class="tray-empty">No positions yet. <a href="/add">Add one</a>.</p>
-            {% endfor %}
+
+            {# Tagged section #}
+            <div class="tray-section" id="tray-tagged-section" data-empty-message="No tagged positions.">
+                <div class="tray-section-label tray-section-label-tagged">
+                    <span class="tray-section-icon" aria-hidden="true">●</span>
+                    Tagged
+                    <span class="tray-count tray-count-sm tray-section-count">{{ tagged_positions | length }}</span>
+                </div>
+                <div class="tray-section-chips">
+                    {% for pos in tagged_positions | sort(attribute='ticker') %}
+                    <div
+                        class="tray-chip"
+                        draggable="true"
+                        data-position-id="{{ pos.id }}"
+                        data-ticker="{{ pos.ticker }}"
+                        data-company="{{ pos.company_name }}"
+                        data-verdict="{{ pos.verdict.value | lower }}"
+                        data-themes="{% for t in pos.themes %}{{ t.id }}{% if not loop.last %},{% endif %}{% endfor %}"
+                        title="{{ pos.ticker }} — {{ pos.company_name }}"
+                    >
+                        <span class="verdict verdict-{{ pos.verdict.value | lower }} verdict-xs" aria-label="{{ pos.verdict.value }}">{{ pos.verdict.value }}</span>
+                        <span class="tray-chip-ticker">{{ pos.ticker }}</span>
+                        <span class="tray-chip-name">{{ pos.company_name }}</span>
+                        <button
+                            type="button"
+                            class="chip-assign-btn"
+                            aria-label="Assign {{ pos.ticker }} to a theme"
+                            aria-haspopup="listbox"
+                            aria-expanded="false"
+                            title="Assign to theme"
+                        >+</button>
+                    </div>
+                    {% else %}
+                    <p class="tray-section-empty">No tagged positions.</p>
+                    {% endfor %}
+                </div>
+            </div>
+
         </div>
     </aside>
 
