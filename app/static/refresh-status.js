@@ -25,6 +25,36 @@
     // Shared poller so both the on-load (any-in-progress) path and the
     // client-initiated single-row refresh path feed the same polling loop.
     var poller = (function () {
+        // Diagnostic timeline logger — flip on via ?refresh_debug=1 (one-off)
+        // or localStorage.setItem('refreshDebug','1') (persistent) to see when
+        // each poll fires, what the backend reported, and when the row patch
+        // resolves. Off by default so production users get no console noise.
+        var debugEnabled = (function () {
+            try {
+                if (window.location.search.indexOf("refresh_debug=1") !== -1) {
+                    return true;
+                }
+                return window.localStorage &&
+                    window.localStorage.getItem("refreshDebug") === "1";
+            } catch (e) {
+                return false;
+            }
+        })();
+        var debugT0 = null;
+        function debugLog() {
+            if (!debugEnabled) {
+                return;
+            }
+            if (debugT0 === null) {
+                debugT0 = performance.now();
+            }
+            var elapsed = (performance.now() - debugT0).toFixed(0);
+            var args = Array.prototype.slice.call(arguments);
+            args.unshift("[refresh-debug t+" + elapsed + "ms]");
+            // eslint-disable-next-line no-console
+            console.log.apply(console, args);
+        }
+
         var DEFAULT_TIMEOUT_MS = 420000; // 7 minutes
         var FAST_INTERVAL_MS = 500;
         var FAST_POLL_COUNT = 4;
@@ -246,6 +276,8 @@
                 return;
             }
             pollInFlight = true;
+            debugLog("poll fire ids=" + ids.join(",") + " interval=" + intervalMs + "ms");
+            var pollSentAt = performance.now();
             fetch("/api/refresh-status?ids=" + encodeURIComponent(ids.join(",")), {
                 method: "GET",
                 headers: { Accept: "application/json" },
@@ -258,6 +290,11 @@
                     return response.json();
                 })
                 .then(function (payload) {
+                    debugLog(
+                        "poll response in " +
+                            (performance.now() - pollSentAt).toFixed(0) +
+                            "ms any_in_progress=" + payload.any_in_progress
+                    );
                     var statusById = {};
                     (payload.positions || []).forEach(function (item) {
                         statusById[String(item.id)] = item.in_progress;
@@ -273,12 +310,23 @@
                     if (completed.length > 0) {
                         progressCompleted += completed.length;
                         updateProgress();
+                        debugLog("detected completed ids=" + completed.join(","));
                     }
                     // Patch all completed rows with one batch request so the
                     // server runs a single enrich-all (not one per row) and we
                     // apply a single authoritative summary. Patching re-renders
                     // the row, which clears the spinning refresh icon.
+                    var patchStartedAt = performance.now();
                     return patchRows(completed)
+                        .then(function () {
+                            if (completed.length > 0) {
+                                debugLog(
+                                    "patchRows resolved in " +
+                                        (performance.now() - patchStartedAt).toFixed(0) +
+                                        "ms"
+                                );
+                            }
+                        })
                         .catch(function () {
                             // If the batch patch fails, stop spinning the rows
                             // we marked done so the cue does not get stuck.
@@ -320,6 +368,8 @@
             stopAt = Date.now() + timeoutMs();
             pollCount = 0;
             intervalMs = FAST_INTERVAL_MS;
+            debugT0 = performance.now();
+            debugLog("start ids=" + pendingIds().join(","));
             if (running) {
                 return;
             }

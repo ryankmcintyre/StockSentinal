@@ -34,6 +34,7 @@ from .cache_repos import (
     IndicatorCacheRepository,
     WeeklyBarCacheRepository,
 )
+from .profiling import refresh_profiling_scope, time_block
 from .provider import MarketDataProvider
 from .staleness import (
     atr_cache_is_stale,
@@ -338,19 +339,24 @@ class MarketDataService:
             for position in positions
             if getattr(position, "sector_benchmark_ticker", None)
         }
-        indicator_cache = self.load_indicator_cache_for_tickers(db, all_tickers)
-        atr_cache = self.load_atr_cache_for_tickers(db, all_tickers)
-        weekly_bars = self.load_weekly_bar_cache_for_tickers(db, all_tickers)
-        daily_bars = self.load_daily_bar_cache_for_tickers(
-            db, all_tickers | benchmark_tickers
-        )
-        enabled_rules_by_user = {
-            user_id: rule_config.get_enabled_rule_selections_by_investment_type(
-                as_uow(db, user_id=user_id),
-                user_id=user_id,
+        with time_block("verdicts.load_indicator_cache"):
+            indicator_cache = self.load_indicator_cache_for_tickers(db, all_tickers)
+        with time_block("verdicts.load_atr_cache"):
+            atr_cache = self.load_atr_cache_for_tickers(db, all_tickers)
+        with time_block("verdicts.load_weekly_bars"):
+            weekly_bars = self.load_weekly_bar_cache_for_tickers(db, all_tickers)
+        with time_block("verdicts.load_daily_bars"):
+            daily_bars = self.load_daily_bar_cache_for_tickers(
+                db, all_tickers | benchmark_tickers
             )
-            for user_id in {position.user_id for position in positions if position.user_id}
-        }
+        with time_block("verdicts.get_enabled_rules"):
+            enabled_rules_by_user = {
+                user_id: rule_config.get_enabled_rule_selections_by_investment_type(
+                    as_uow(db, user_id=user_id),
+                    user_id=user_id,
+                )
+                for user_id in {position.user_id for position in positions if position.user_id}
+            }
 
         verdicts: dict[int, str] = {}
         for position in positions:
@@ -881,20 +887,25 @@ class MarketDataService:
         )
         phase_started_at = time.monotonic()
         rule_uow = as_uow(db, user_id=position.user_id)
-        rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
+        with time_block("rule_config.ensure_defaults"):
+            rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
         investment_type = position.investment_type
-        required = rule_config.get_required_indicators(
-            rule_uow, investment_type, _skip_defaults=True
-        )
-        required_atr = rule_config.get_required_atr_indicators(
-            rule_uow, investment_type, _skip_defaults=True
-        )
-        weekly_lookback = rule_config.get_required_weekly_bar_lookback(
-            rule_uow, investment_type, _skip_defaults=True
-        )
-        daily_lookback = rule_config.get_required_daily_bar_lookback(
-            rule_uow, investment_type, _skip_defaults=True
-        )
+        with time_block("rule_config.get_required_indicators"):
+            required = rule_config.get_required_indicators(
+                rule_uow, investment_type, _skip_defaults=True
+            )
+        with time_block("rule_config.get_required_atr_indicators"):
+            required_atr = rule_config.get_required_atr_indicators(
+                rule_uow, investment_type, _skip_defaults=True
+            )
+        with time_block("rule_config.get_required_weekly_bar_lookback"):
+            weekly_lookback = rule_config.get_required_weekly_bar_lookback(
+                rule_uow, investment_type, _skip_defaults=True
+            )
+        with time_block("rule_config.get_required_daily_bar_lookback"):
+            daily_lookback = rule_config.get_required_daily_bar_lookback(
+                rule_uow, investment_type, _skip_defaults=True
+            )
         benchmark = getattr(position, "sector_benchmark_ticker", None)
         rule_inputs_may_refresh = bool(
             required
@@ -902,11 +913,12 @@ class MarketDataService:
             or weekly_lookback > 0
             or (daily_lookback > 0 and benchmark)
         )
-        previous_verdicts = (
-            self._calculate_verdicts(db, [position])
-            if should_refresh_daily or should_refresh_weekly or rule_inputs_may_refresh
-            else {}
-        )
+        with time_block("rule_config.previous_verdicts"):
+            previous_verdicts = (
+                self._calculate_verdicts(db, [position])
+                if should_refresh_daily or should_refresh_weekly or rule_inputs_may_refresh
+                else {}
+            )
         phase_timings["rule_config"] = time.monotonic() - phase_started_at
 
         # Warm the per-operation fetch cache by firing independent API calls
@@ -1013,10 +1025,12 @@ class MarketDataService:
         position.refresh_error = "; ".join(errors) if errors else None
         phase_started_at = time.monotonic()
         if previous_verdicts:
-            self._update_previous_verdicts(db, [position], previous_verdicts)
+            with time_block("verdicts.update_previous"):
+                self._update_previous_verdicts(db, [position], previous_verdicts)
         phase_timings["verdicts"] = time.monotonic() - phase_started_at
         phase_started_at = time.monotonic()
-        db.commit()
+        with time_block("commit"):
+            db.commit()
         phase_timings["commit"] = time.monotonic() - phase_started_at
         logger.info(
             (

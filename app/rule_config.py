@@ -84,6 +84,10 @@ def ensure_strategy_rule_defaults(uow: UnitOfWork, user_id: str | None = None) -
     default unless they are part of the strategy defaults. Deprecated sell
     rule keys are cleaned up.
     """
+    # Per-refresh diagnostic counter — no-op unless REFRESH_PROFILING_ENABLED.
+    from app.market_data.profiling import record_seed_invocation
+    record_seed_invocation()
+
     if user_id is None:
         logger.debug("ensure_strategy_rule_defaults called without user_id — skipping seed")
         return
