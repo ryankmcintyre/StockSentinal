@@ -951,12 +951,20 @@ def index(request: Request, uow: UnitOfWork | None = Depends(get_optional_uow)):
     return _portfolio_response(request, uow)
 
 
-def _enrich_all_positions(uow: UnitOfWork, user_id):
-    """Enrich all of the user's positions and compute the verdict summary.
+def _enrich_all_positions(uow: UnitOfWork, user_id, only_render_ids: set[int] | None = None):
+    """Enrich the user's positions and compute the verdict summary.
 
     Returns ``(enriched, summary)`` where *enriched* is sorted by verdict
     priority. Shared by the full dashboard render and the single-row fragment
     endpoint so both produce identical view models.
+
+    When *only_render_ids* is provided, only positions whose id is in the
+    set get a full enrichment dict (including row HTML inputs). Positions
+    outside the set get a lightweight summary-only dict containing just the
+    fields needed by callers — ``id``, ``verdict``, and
+    ``refresh_in_progress`` — so the verdict summary stays accurate across
+    the whole portfolio without paying the per-row formatting cost (themes
+    sort, relative timestamps, etc.) for rows the client isn't rendering.
     """
     positions = uow.positions.list_all()
     enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(uow, user_id=user_id)
@@ -981,17 +989,28 @@ def _enrich_all_positions(uow: UnitOfWork, user_id):
         uow.session, all_tickers | benchmark_tickers
     )
 
-    enriched = [
-        _enrich_position(
-            p,
-            enabled_rules_by_type,
-            all_indicator_cache.get(p.ticker),
-            all_atr_cache.get(p.ticker),
-            all_weekly_bars.get(p.ticker),
-            _daily_bars_for_position(p, all_daily_bars),
-        )
-        for p in positions
-    ]
+    enriched = []
+    for p in positions:
+        if only_render_ids is None or p.id in only_render_ids:
+            enriched.append(
+                _enrich_position(
+                    p,
+                    enabled_rules_by_type,
+                    all_indicator_cache.get(p.ticker),
+                    all_atr_cache.get(p.ticker),
+                    all_weekly_bars.get(p.ticker),
+                    _daily_bars_for_position(p, all_daily_bars),
+                )
+            )
+        else:
+            enriched.append(_summarize_position(
+                p,
+                enabled_rules_by_type,
+                all_indicator_cache.get(p.ticker),
+                all_atr_cache.get(p.ticker),
+                all_weekly_bars.get(p.ticker),
+                _daily_bars_for_position(p, all_daily_bars),
+            ))
     enriched.sort(key=lambda p: VERDICT_PRIORITY.get(p["verdict"], 99))
 
     summary = {
@@ -1001,6 +1020,79 @@ def _enrich_all_positions(uow: UnitOfWork, user_id):
         "total": len(enriched),
     }
     return enriched, summary
+
+
+def _summarize_position(
+    pos: Position,
+    enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None,
+    indicator_cache,
+    atr_cache,
+    weekly_bars,
+    daily_bars_by_ticker,
+) -> dict:
+    """Verdict-only enrichment used for portfolio summary counts.
+
+    Skips the dict-assembly, theme sorting and relative-time formatting that
+    ``_enrich_position`` performs — useful when the caller only needs the
+    final verdict to update aggregate counts (e.g. an
+    ``/api/positions/rows`` response that re-renders just a subset of rows).
+    """
+    signals = MarketSignals(
+        daily_close=pos.daily_close,
+        daily_sma_21=pos.daily_sma_21,
+        weekly_close=pos.weekly_close,
+        weekly_sma_20=pos.weekly_sma_20,
+    )
+    if indicator_cache:
+        signals.ma_signals = dict(indicator_cache)
+    if atr_cache:
+        signals.atr_signals = dict(atr_cache)
+    if weekly_bars:
+        signals.weekly_ohlc_history = [
+            WeeklyOhlcBar(
+                bar_date=bar.bar_date,
+                open=bar.open,
+                high=bar.high,
+                low=bar.low,
+                close=bar.close,
+                volume=bar.volume,
+            )
+            for bar in weekly_bars
+        ]
+    if daily_bars_by_ticker:
+        signals.daily_close_history = {
+            ticker.upper(): [
+                DailyClosePoint(bar_date=bar.bar_date, close=bar.close)
+                for bar in bars
+            ]
+            for ticker, bars in daily_bars_by_ticker.items()
+        }
+
+    effective_price = pos.daily_close if pos.daily_close is not None else pos.current_price
+
+    class _PositionPriceProxy:
+        def __init__(self, original_pos: Position, current_price: float):
+            self._original_pos = original_pos
+            self.current_price = current_price
+
+        def __getattr__(self, name):
+            return getattr(self._original_pos, name)
+
+    eval_pos = _PositionPriceProxy(pos, effective_price)
+    configured_rules = None
+    if enabled_rules_by_type is not None:
+        configured_rules = enabled_rules_by_type.get(pos.investment_type)
+    triggered = evaluate_position(eval_pos, signals=signals, configured_rules=configured_rules)
+    computed_verdict = get_verdict(triggered)
+    trim_acknowledged = bool(getattr(pos, "trim_acknowledged", False))
+    verdict = computed_verdict
+    if trim_acknowledged and computed_verdict == Verdict.trim:
+        verdict = Verdict.hold
+    return {
+        "id": pos.id,
+        "verdict": verdict,
+        "refresh_in_progress": bool(getattr(pos, "refresh_in_progress", False)),
+    }
 
 
 def _portfolio_response(request: Request, uow: UnitOfWork):
@@ -1963,14 +2055,19 @@ def position_rows(
 
         user_id = _get_request_user_id(request, uow)
         with time_block("enrich_all_positions"):
-            enriched, summary = _enrich_all_positions(uow, user_id)
+            enriched, summary = _enrich_all_positions(
+                uow, user_id, only_render_ids=set(requested_ids) or None
+            )
         by_id = {p["id"]: p for p in enriched}
 
         rows = []
         with time_block("render_rows"):
             for position_id in requested_ids:
                 row = by_id.get(position_id)
-                if row is None:
+                # Lightweight summary-only dicts (returned for non-requested
+                # positions when only_render_ids is set) lack row_html inputs;
+                # skip them defensively.
+                if row is None or "ticker" not in row:
                     continue
                 rows.append(
                     {
