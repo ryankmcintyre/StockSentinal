@@ -1860,8 +1860,6 @@ def refresh_status(
     cheap when the portfolio has many positions.
     """
     with refresh_profiling_scope(engine, tag="api.refresh-status"):
-        with time_block("clear_stale_refresh_flags"):
-            _clear_stale_refresh_flags(uow)
         with time_block("list_refresh_statuses"):
             positions = uow.positions.list_refresh_statuses()
 

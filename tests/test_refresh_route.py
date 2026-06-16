@@ -245,10 +245,16 @@ class TestRefreshLoadingCues:
         assert any(item["started_at"] is not None for item in payload["positions"])
         list_all.assert_not_called()
 
-    def test_refresh_status_endpoint_clears_stale_flags(self, client, _setup_db, mocker):
+    def test_refresh_status_endpoint_does_not_clear_stale_flags(self, client, _setup_db, mocker):
         list_stale = mocker.patch(
             "app.repositories.SqlAlchemyPositionRepository.list_stale_refreshing",
             side_effect=AssertionError("stale refresh cleanup must not load full positions"),
+        )
+        clear_stale = mocker.patch(
+            "app.repositories.SqlAlchemyPositionRepository.clear_stale_refreshing",
+            side_effect=AssertionError(
+                "polling refresh-status must not clear stale flags — cleanup runs at startup and on POST"
+            ),
         )
 
         db = _setup_db()
@@ -273,15 +279,18 @@ class TestRefreshLoadingCues:
         resp = client.get("/api/refresh-status")
         assert resp.status_code == 200
         payload = resp.json()
-        assert payload["any_in_progress"] is False
+        # The poll itself doesn't clear stale flags any more, so the
+        # stale-but-still-in-progress position is reported as in-progress
+        # until startup or a POST refresh handler cleans it up.
+        assert payload["any_in_progress"] is True
         list_stale.assert_not_called()
+        clear_stale.assert_not_called()
 
         verify_db = _setup_db()
         try:
             refreshed = verify_db.query(Position).filter(Position.id == position_id).first()
             assert refreshed is not None
-            assert refreshed.refresh_in_progress is False
-            assert refreshed.refresh_started_at is None
+            assert refreshed.refresh_in_progress is True
         finally:
             verify_db.close()
 
