@@ -39,6 +39,19 @@ def is_postgres(url: str | None = None) -> bool:
     return make_url(url).get_backend_name() == "postgresql"
 
 
+def is_refresh_profiling_enabled() -> bool:
+    """Return True when verbose refresh profiling/instrumentation is enabled.
+
+    Controlled by ``REFRESH_PROFILING_ENABLED``. Accepts ``1``/``true``/``yes``/``on``
+    (case-insensitive). Defaults to disabled so production performance is not
+    affected by the extra timers, SQL-event listeners, and log lines.
+    """
+    raw = _get_env_var("REFRESH_PROFILING_ENABLED")
+    if raw is None:
+        return False
+    return raw.lower() in {"1", "true", "yes", "on"}
+
+
 def get_log_level() -> str:
     """Return the configured log level from the LOG_LEVEL environment variable.
 

@@ -56,6 +56,7 @@ from app.database import (
 )
 from app.logging_utils import configure_refresh_logging, new_refresh_id, refresh_logging_context
 from app.market_data.exceptions import MarketDataError, MarketDataSymbolNotFound
+from app.market_data.profiling import refresh_profiling_scope, time_block
 from app.market_data.provider import AlphaVantageProvider, TwelveDataProvider
 from app.market_data.service import MarketDataService
 from app.models import Position, PositionKeyLevel, Theme, User
@@ -402,6 +403,14 @@ def _clear_stale_refresh_flags(uow: UnitOfWork) -> int:
         return 0
 
     uow.commit()
+    # Visible signal that the polling path actually issued a write — every
+    # such write is a Supabase round-trip and a lock-prone interaction with
+    # the running background refresh. Profiling helps verify how often this
+    # fires in production.
+    logger.info(
+        "Cleared %d stale refresh flag(s) (write issued by _clear_stale_refresh_flags)",
+        cleared_count,
+    )
     return cleared_count
 
 
@@ -1731,31 +1740,35 @@ def _refresh_single_position_task(
 ):
     """Run a single-position market data refresh in the background with its own DB session."""
     with refresh_logging_context(refresh_id):
-        uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
-        pos = None
-        try:
-            logger.info("Starting refresh for position id=%d", position_id)
-            # The in-progress flag is set by the /refresh/{position_id} route
-            # handler before scheduling this task, so we skip the redundant write
-            # here.
+        with refresh_profiling_scope(engine, tag=f"refresh.single id={position_id}"):
+            with time_block("task.SessionLocal"):
+                uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
+            pos = None
             try:
-                pos = uow.positions.get_by_id(position_id)
-                if pos:
-                    _market_service.refresh_position(pos, uow.session)
-            except Exception as exc:
-                logger.warning(
-                    "Background refresh failed for position id=%d", position_id, exc_info=True
-                )
-                if pos is not None:
-                    detail = str(exc).strip() or exc.__class__.__name__
-                    uow.rollback()
-                    pos = uow.positions.get_by_id(position_id)
+                logger.info("Starting refresh for position id=%d", position_id)
+                # The in-progress flag is set by the /refresh/{position_id} route
+                # handler before scheduling this task, so we skip the redundant write
+                # here.
+                try:
+                    with time_block("task.get_by_id"):
+                        pos = uow.positions.get_by_id(position_id)
+                    if pos:
+                        _market_service.refresh_position(pos, uow.session)
+                except Exception as exc:
+                    logger.warning(
+                        "Background refresh failed for position id=%d", position_id, exc_info=True
+                    )
                     if pos is not None:
-                        pos.refresh_error = f"Refresh failed: {detail}"
-                        uow.commit()
-        finally:
-            _mark_positions_refresh_state(uow, [position_id], in_progress=False)
-            uow.session.close()
+                        detail = str(exc).strip() or exc.__class__.__name__
+                        uow.rollback()
+                        pos = uow.positions.get_by_id(position_id)
+                        if pos is not None:
+                            pos.refresh_error = f"Refresh failed: {detail}"
+                            uow.commit()
+            finally:
+                with time_block("task.mark_complete"):
+                    _mark_positions_refresh_state(uow, [position_id], in_progress=False)
+                uow.session.close()
 
 
 @app.post("/refresh")
@@ -1846,35 +1859,38 @@ def refresh_status(
     status for those positions is returned. This keeps single-position polling
     cheap when the portfolio has many positions.
     """
-    _clear_stale_refresh_flags(uow)
-    positions = uow.positions.list_refresh_statuses()
+    with refresh_profiling_scope(engine, tag="api.refresh-status"):
+        with time_block("clear_stale_refresh_flags"):
+            _clear_stale_refresh_flags(uow)
+        with time_block("list_refresh_statuses"):
+            positions = uow.positions.list_refresh_statuses()
 
-    id_filter: set[int] | None = None
-    if ids is not None:
-        id_filter = set()
-        for raw in ids.split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                id_filter.add(int(raw))
-            except ValueError:
-                continue
-        positions = [row for row in positions if row[0] in id_filter]
+        id_filter: set[int] | None = None
+        if ids is not None:
+            id_filter = set()
+            for raw in ids.split(","):
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    id_filter.add(int(raw))
+                except ValueError:
+                    continue
+            positions = [row for row in positions if row[0] in id_filter]
 
-    return {
-        "any_in_progress": any(bool(in_progress) for _, in_progress, _ in positions),
-        "positions": [
-            {
-                "id": position_id,
-                "in_progress": bool(in_progress),
-                "started_at": (
-                    started_at.isoformat() if started_at else None
-                ),
-            }
-            for position_id, in_progress, started_at in positions
-        ],
-    }
+        return {
+            "any_in_progress": any(bool(in_progress) for _, in_progress, _ in positions),
+            "positions": [
+                {
+                    "id": position_id,
+                    "in_progress": bool(in_progress),
+                    "started_at": (
+                        started_at.isoformat() if started_at else None
+                    ),
+                }
+                for position_id, in_progress, started_at in positions
+            ],
+        }
 
 
 def _render_position_row(request: Request, row) -> str:
@@ -1931,36 +1947,39 @@ def position_rows(
     regardless of how many rows completed, and returning a single authoritative
     *summary* avoids stale counters from out-of-order per-row responses.
     """
-    requested_ids: list[int] = []
-    seen: set[int] = set()
-    if ids is not None:
-        for raw in ids.split(","):
-            raw = raw.strip()
-            if not raw:
-                continue
-            try:
-                value = int(raw)
-            except ValueError:
-                continue
-            if value not in seen:
-                seen.add(value)
-                requested_ids.append(value)
+    with refresh_profiling_scope(engine, tag="api.positions.rows"):
+        requested_ids: list[int] = []
+        seen: set[int] = set()
+        if ids is not None:
+            for raw in ids.split(","):
+                raw = raw.strip()
+                if not raw:
+                    continue
+                try:
+                    value = int(raw)
+                except ValueError:
+                    continue
+                if value not in seen:
+                    seen.add(value)
+                    requested_ids.append(value)
 
-    user_id = _get_request_user_id(request, uow)
-    enriched, summary = _enrich_all_positions(uow, user_id)
-    by_id = {p["id"]: p for p in enriched}
+        user_id = _get_request_user_id(request, uow)
+        with time_block("enrich_all_positions"):
+            enriched, summary = _enrich_all_positions(uow, user_id)
+        by_id = {p["id"]: p for p in enriched}
 
-    rows = []
-    for position_id in requested_ids:
-        row = by_id.get(position_id)
-        if row is None:
-            continue
-        rows.append(
-            {
-                "id": position_id,
-                "in_progress": bool(row["refresh_in_progress"]),
-                "row_html": _render_position_row(request, row),
-            }
-        )
+        rows = []
+        with time_block("render_rows"):
+            for position_id in requested_ids:
+                row = by_id.get(position_id)
+                if row is None:
+                    continue
+                rows.append(
+                    {
+                        "id": position_id,
+                        "in_progress": bool(row["refresh_in_progress"]),
+                        "row_html": _render_position_row(request, row),
+                    }
+                )
 
-    return {"rows": rows, "summary": summary}
+        return {"rows": rows, "summary": summary}
