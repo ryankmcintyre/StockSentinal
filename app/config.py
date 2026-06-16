@@ -42,7 +42,7 @@ def is_postgres(url: str | None = None) -> bool:
 def is_refresh_profiling_enabled() -> bool:
     """Return True when verbose refresh profiling/instrumentation is enabled.
 
-    Controlled by ``REFRESH_PROFILING_ENABLED``. Accepts ``1``/``true``/``yes``
+    Controlled by ``REFRESH_PROFILING_ENABLED``. Accepts ``1``/``true``/``yes``/``on``
     (case-insensitive). Defaults to disabled so production performance is not
     affected by the extra timers, SQL-event listeners, and log lines.
     """
