@@ -7,6 +7,7 @@ from unittest.mock import ANY, Mock
 import pytest
 
 from app.logging_utils import refresh_logging_context
+from app.rule_config import RuleRequirements
 from app.schemas import Verdict
 from app.market_data.staleness import (
     atr_cache_is_stale,
@@ -278,10 +279,10 @@ class TestRefreshPosition:
         )
         # Mock rule_config to avoid DB dependency
         mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
-        mocker.patch("app.rule_config.get_required_indicators", return_value=set())
-        mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
-        mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
-        mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
+        mocker.patch(
+            "app.rule_config.get_rule_requirements",
+            return_value=RuleRequirements(set(), set(), 0, 0),
+        )
         mocker.patch(
             "app.rule_config.get_enabled_rule_selections_by_investment_type",
             return_value={},
@@ -352,22 +353,15 @@ class TestRefreshPosition:
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
         ensure_defaults = mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
-        get_required = mocker.patch("app.rule_config.get_required_indicators", return_value=set())
-        get_required_atr = mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
-        get_weekly_lookback = mocker.patch(
-            "app.rule_config.get_required_weekly_bar_lookback", return_value=0
-        )
-        get_daily_lookback = mocker.patch(
-            "app.rule_config.get_required_daily_bar_lookback", return_value=0
+        get_requirements = mocker.patch(
+            "app.rule_config.get_rule_requirements",
+            return_value=RuleRequirements(set(), set(), 0, 0),
         )
 
         self.service.refresh_position(position, db, force=False)
 
         ensure_defaults.assert_called_once_with(ANY, user_id=position.user_id)
-        get_required.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
-        get_required_atr.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
-        get_weekly_lookback.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
-        get_daily_lookback.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
+        get_requirements.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
 
     def test_persists_combined_daily_and_weekly_errors(self, mocker):
         position = FakePosition(investment_type="long-term")
@@ -445,8 +439,8 @@ class TestRefreshPosition:
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
         mocker.patch(
-            "app.rule_config.get_required_indicators",
-            return_value={("daily", 21)},
+            "app.rule_config.get_rule_requirements",
+            return_value=RuleRequirements({("daily", 21)}, set(), 0, 0),
         )
         refresh_indicator_cache = mocker.patch.object(
             self.service, "refresh_indicator_cache", return_value=[]
@@ -596,10 +590,10 @@ class TestRefreshAllPositions:
             MarketDataService, "load_daily_bar_cache_for_tickers", return_value={}
         )
         mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
-        mocker.patch("app.rule_config.get_required_indicators", return_value=set())
-        mocker.patch("app.rule_config.get_required_atr_indicators", return_value=set())
-        mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
-        mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
+        mocker.patch(
+            "app.rule_config.get_rule_requirements",
+            return_value=RuleRequirements(set(), set(), 0, 0),
+        )
         mocker.patch(
             "app.rule_config.get_enabled_rule_selections_by_investment_type",
             return_value={},
@@ -674,8 +668,8 @@ class TestRefreshAllPositions:
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
         mocker.patch(
-            "app.rule_config.get_required_indicators",
-            return_value={("daily", 21)},
+            "app.rule_config.get_rule_requirements",
+            return_value=RuleRequirements({("daily", 21)}, set(), 0, 0),
         )
         parent = Mock()
         parent.attach_mock(
@@ -884,9 +878,10 @@ class TestRefreshAllPositions:
         db.query.return_value.all.return_value = positions
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
-        mocker.patch("app.rule_config.get_required_indicators", return_value={("daily", 50), ("weekly", 20)})
-        mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=26)
-        mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=63)
+        mocker.patch(
+            "app.rule_config.get_rule_requirements",
+            return_value=RuleRequirements({("daily", 50), ("weekly", 20)}, set(), 26, 63),
+        )
         indicator_refresh = mocker.patch.object(service, "refresh_indicator_cache", return_value=[])
         weekly_cache_refresh = mocker.patch.object(service, "refresh_weekly_bar_cache", return_value=[])
         daily_cache_refresh = mocker.patch.object(service, "refresh_daily_bar_cache", return_value=[])
@@ -1187,10 +1182,10 @@ class TestLocalAtrComputation:
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
         mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
-        mocker.patch("app.rule_config.get_required_indicators", return_value=set())
-        mocker.patch("app.rule_config.get_required_atr_indicators", return_value={("daily", 14)})
-        mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
-        mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
+        mocker.patch(
+            "app.rule_config.get_rule_requirements",
+            return_value=RuleRequirements(set(), {("daily", 14)}, 0, 0),
+        )
         mocker.patch("app.rule_config.get_enabled_rule_selections_by_investment_type", return_value={})
         positions = [
             FakePosition(ticker="AAPL", investment_type="short-term"),
@@ -1243,10 +1238,10 @@ class TestLocalAtrComputation:
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
         mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
-        mocker.patch("app.rule_config.get_required_indicators", return_value=set())
-        mocker.patch("app.rule_config.get_required_atr_indicators", return_value={("daily", 14)})
-        mocker.patch("app.rule_config.get_required_weekly_bar_lookback", return_value=0)
-        mocker.patch("app.rule_config.get_required_daily_bar_lookback", return_value=0)
+        mocker.patch(
+            "app.rule_config.get_rule_requirements",
+            return_value=RuleRequirements(set(), {("daily", 14)}, 0, 0),
+        )
         mocker.patch("app.rule_config.get_enabled_rule_selections_by_investment_type", return_value={})
         positions = [
             FakePosition(ticker="AAPL", investment_type="short-term"),

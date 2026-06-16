@@ -915,22 +915,14 @@ class MarketDataService:
                         rule_uow, user_id=position.user_id, _skip_defaults=True
                     )
                 )
-        with time_block("rule_config.get_required_indicators"):
-            required = rule_config.get_required_indicators(
+        with time_block("rule_config.get_rule_requirements"):
+            requirements = rule_config.get_rule_requirements(
                 rule_uow, investment_type, _skip_defaults=True
             )
-        with time_block("rule_config.get_required_atr_indicators"):
-            required_atr = rule_config.get_required_atr_indicators(
-                rule_uow, investment_type, _skip_defaults=True
-            )
-        with time_block("rule_config.get_required_weekly_bar_lookback"):
-            weekly_lookback = rule_config.get_required_weekly_bar_lookback(
-                rule_uow, investment_type, _skip_defaults=True
-            )
-        with time_block("rule_config.get_required_daily_bar_lookback"):
-            daily_lookback = rule_config.get_required_daily_bar_lookback(
-                rule_uow, investment_type, _skip_defaults=True
-            )
+        required = requirements.indicators
+        required_atr = requirements.atr_indicators
+        weekly_lookback = requirements.weekly_bar_lookback
+        daily_lookback = requirements.daily_bar_lookback
         benchmark = getattr(position, "sector_benchmark_ticker", None)
         rule_inputs_may_refresh = bool(
             required
@@ -1194,20 +1186,11 @@ class MarketDataService:
         for current_user_id in user_ids:
             rule_uow = as_uow(db, user_id=current_user_id)
             rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=current_user_id)
-            required.update(
-                rule_config.get_required_indicators(rule_uow, _skip_defaults=True)
-            )
-            required_atr.update(
-                rule_config.get_required_atr_indicators(rule_uow, _skip_defaults=True)
-            )
-            weekly_lookback = max(
-                weekly_lookback,
-                rule_config.get_required_weekly_bar_lookback(rule_uow, _skip_defaults=True),
-            )
-            daily_lookback = max(
-                daily_lookback,
-                rule_config.get_required_daily_bar_lookback(rule_uow, _skip_defaults=True),
-            )
+            requirements = rule_config.get_rule_requirements(rule_uow, _skip_defaults=True)
+            required.update(requirements.indicators)
+            required_atr.update(requirements.atr_indicators)
+            weekly_lookback = max(weekly_lookback, requirements.weekly_bar_lookback)
+            daily_lookback = max(daily_lookback, requirements.daily_bar_lookback)
             if current_user_id:
                 enabled_rules_by_user[current_user_id] = (
                     rule_config.get_enabled_rule_selections_by_investment_type(
