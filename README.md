@@ -168,6 +168,7 @@ The repo ships with a `render.yaml` for one-click deploys to [Render](https://re
 - Build command runs `alembic upgrade head`, so migrations apply on every deploy.
 - Set `DATABASE_URL` in the Render dashboard to your Supabase pooled connection string (`postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres`).
 - Set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SESSION_SECRET_KEY`, and a market data API key in the dashboard as well.
+- **For best refresh performance with Twelve Data**, set `TWELVE_DATA_CREDITS_PER_MINUTE` to a value safely under your plan's hard cap (e.g. `50` for the Grow plan). This enables concurrent fetches within a single refresh, reducing per-position refresh time from ~10s to ~1–2s. See the [rate-limit section](#twelve_data_credits_per_minute-twelve-data-concurrency) above for details.
 
 Custom domains work out of the box — the app uses `request.base_url` for OAuth callbacks, so no extra config is needed once the domain is added in both Render and Supabase's redirect URL list.
 

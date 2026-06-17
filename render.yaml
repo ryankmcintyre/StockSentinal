@@ -13,8 +13,21 @@ services:
         value: INFO
       - key: ALPHA_VANTAGE_API_KEY
         scope: run
+        # Set this in the Render dashboard. Leave unset if using Twelve Data instead.
+      - key: TWELVE_DATA_API_KEY
+        scope: run
+        # Alternative to ALPHA_VANTAGE_API_KEY. Takes precedence when both are set.
+        # Set this in the Render dashboard.
+      - key: TWELVE_DATA_CREDITS_PER_MINUTE
+        scope: run
+        # Recommended when using Twelve Data: set to a value safely under your
+        # plan's hard cap (e.g. 50 for the Grow plan, which allows 55/min).
+        # Enables concurrent daily+weekly fetches within one refresh, cutting
+        # single-position refresh time from ~10s to ~1-2s. Leave unset to fall
+        # back to strict per-call spacing (TWELVE_DATA_MIN_INTERVAL_SECONDS).
+        # See the README "TWELVE_DATA_CREDITS_PER_MINUTE" section for details.
       - key: DATABASE_URL
         scope: run
-        # Set this in Render dashboard to your Supabase pooled connection
+        # Set this in Render dashboard to your Supabase pooled connection string:
         # postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
 

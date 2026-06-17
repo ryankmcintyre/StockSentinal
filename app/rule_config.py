@@ -218,19 +218,27 @@ def get_enabled_rule_selections_by_investment_type(
     *,
     _skip_defaults: bool = False,
 ) -> dict[str, list[StrategyRuleSelection]]:
-    """Return enabled rule selections keyed by investment type value."""
+    """Return enabled rule selections keyed by investment type value.
+
+    Uses a single database query to fetch all enabled rules across both
+    investment types, then groups them in Python — avoiding two round-trips.
+    """
     if not _skip_defaults:
         ensure_strategy_rule_defaults(uow, user_id=user_id)
 
+    all_rows = uow.rule_configs.list_all_enabled()
+    rows_by_type: dict[str, list] = {}
+    for row in all_rows:
+        rows_by_type.setdefault(row.investment_type, []).append(row)
+
     selections: dict[str, list[StrategyRuleSelection]] = {}
     for investment_type in _supported_investment_types():
-        rows = uow.rule_configs.list_enabled_by_investment_type(investment_type.value)
         selections[investment_type.value] = [
             StrategyRuleSelection(
                 rule_key=row.rule_key,
                 params=parse_params_json(row.params_json),
             )
-            for row in rows
+            for row in rows_by_type.get(investment_type.value, [])
         ]
     return selections
 
