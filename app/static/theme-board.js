@@ -307,15 +307,15 @@
             emptyMsg.remove();
         }
         targetChips.appendChild(chip);
-        // Update counts for both sections after the move
+        // Update empty-state placeholders for both sections (based on total chip
+        // count, not filtered count — a section is only truly empty when no chips
+        // live in it at all).
         document.querySelectorAll(".tray-section").forEach(function (section) {
             var chipsEl = section.querySelector(".tray-section-chips");
-            var countEl = section.querySelector(".tray-section-count");
-            if (!chipsEl || !countEl) {
+            if (!chipsEl) {
                 return;
             }
             var chipCount = chipsEl.querySelectorAll(".tray-chip").length;
-            countEl.textContent = chipCount;
             var existing = chipsEl.querySelector(".tray-section-empty");
             if (chipCount === 0 && !existing) {
                 var p = document.createElement("p");
@@ -326,6 +326,10 @@
                 existing.remove();
             }
         });
+        // Re-run the active filters so section badge counts and #tray-count
+        // reflect only visible (non-filtered-out) chips, keeping them consistent
+        // with what applyFilters produces when the search or verdict filter changes.
+        applyFilters();
     }
 
     // -------------------------------------------------------------------------
