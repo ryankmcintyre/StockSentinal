@@ -11,23 +11,22 @@ services:
         value: "3.13"
       - key: LOG_LEVEL
         value: INFO
+      - key: PG_POOL_MODE
+        value: session
+        # Must be paired with Supavisor session-mode port :5432 in DATABASE_URL.
+        # Enables a per-connection GUC latch so app.current_user_id is only sent
+        # once per physical Postgres connection rather than on every transaction,
+        # cutting per-request DB overhead. Set to session only when DATABASE_URL
+        # uses :5432 (Supavisor session mode). Remove or leave blank when using
+        # :6543 (transaction mode), which multiplexes connections between requests
+        # and would leak the cached GUC across users.
       - key: ALPHA_VANTAGE_API_KEY
         scope: run
-        # Set this in the Render dashboard. Leave unset if using Twelve Data instead.
-      - key: TWELVE_DATA_API_KEY
-        scope: run
-        # Alternative to ALPHA_VANTAGE_API_KEY. Takes precedence when both are set.
-        # Set this in the Render dashboard.
-      - key: TWELVE_DATA_CREDITS_PER_MINUTE
-        scope: run
-        # Recommended when using Twelve Data: set to a value safely under your
-        # plan's hard cap (e.g. 50 for the Grow plan, which allows 55/min).
-        # Enables concurrent daily+weekly fetches within one refresh, cutting
-        # single-position refresh time from ~10s to ~1-2s. Leave unset to fall
-        # back to strict per-call spacing (TWELVE_DATA_MIN_INTERVAL_SECONDS).
-        # See the README "TWELVE_DATA_CREDITS_PER_MINUTE" section for details.
       - key: DATABASE_URL
         scope: run
-        # Set this in Render dashboard to your Supabase pooled connection string:
-        # postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
+        # Set this in Render dashboard to your Supabase pooled connection string.
+        # Use the SESSION-mode port :5432 (not :6543) when PG_POOL_MODE=session:
+        #   postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres
+        # Use :6543 only when PG_POOL_MODE is unset (transaction-mode pooler):
+        #   postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
 

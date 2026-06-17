@@ -134,6 +134,78 @@ In Supabase Dashboard → **Authentication → Email Templates → Magic Link**,
 
 In Supabase Dashboard → **Authentication → Providers → Email → Email OTP Expiration**, set the OTP lifetime. The default is 60 seconds; a value of 300–600 seconds (5–10 minutes) is recommended for this app.
 
+### Performance & observability
+
+These variables tune the Postgres connection pool, RLS GUC latching, and refresh-time diagnostics. None are required for SQLite / local dev.
+
+| Variable | Default | Notes |
+|---|---|---|
+| `PG_POOL_MODE` | unset | Set to `session` to enable the GUC latch (see below). **Must be paired with Supavisor port `:5432`.** |
+| `REFRESH_PROFILING_ENABLED` | `0` | Set to `1` to emit `[profile refresh.single …]` log lines. |
+
+#### `PG_POOL_MODE` and Supavisor port choice ⚠️
+
+**This is the #1 performance win and the most dangerous footgun in this config.**
+
+Supabase exposes two Supavisor pooler ports:
+
+| Port | Mode | Behavior |
+|---|---|---|
+| `:5432` | **Session** | One client connection = one persistent Postgres backend for its lifetime. A session-scoped GUC written at the start of connection stays present for all subsequent transactions. |
+| `:6543` | **Transaction** | The same DBAPI connection can be routed to a *different* physical Postgres backend between transactions. A GUC written in transaction N may be gone by transaction N+1. |
+
+The app writes `app.current_user_id` via `set_config('app.current_user_id', …, false)` at the start of each connection to enforce row-level security. In transaction mode this must be re-sent on every transaction (safe but slower). In session mode it only needs to be sent once per physical connection — subsequent transactions on the same connection skip the `SELECT set_config(…)` call entirely.
+
+**Setting `PG_POOL_MODE=session` enables the latch that skips redundant `set_config` calls. It is only safe when `DATABASE_URL` uses port `:5432` (session-mode Supavisor).** If you set `PG_POOL_MODE=session` but keep `:6543` in `DATABASE_URL`, the latch will incorrectly skip sending the GUC on connections that have been recycled to a new backend, which silently leaks one user's RLS context to another user's queries.
+
+**Connection string examples:**
+
+```
+# Session mode (use with PG_POOL_MODE=session) — recommended:
+postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres
+
+# Transaction mode (PG_POOL_MODE unset or any value other than "session"):
+postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
+```
+
+#### QueuePool sizing
+
+The SQLAlchemy `QueuePool` is configured with `pool_size=5`, `max_overflow=5`, and `pool_recycle=1800`. A single Render instance therefore holds at most 10 Postgres sessions open at any time. Scale by instance count: two instances = up to 20 sessions, etc. Supabase free-tier Supavisor caps concurrent sessions, so keep this in mind when scaling horizontally.
+
+#### `REFRESH_PROFILING_ENABLED`
+
+Set to `1` (or `true`/`yes`/`on`) to enable detailed per-phase timing on each single-position refresh. When enabled, every completed `refresh_position` call emits a structured log line at `INFO` level:
+
+```
+[profile refresh.single] ticker=AAPL phases: rule_config=4ms prewarm=120ms daily_refresh=380ms weekly_refresh=0ms indicator_cache=55ms atr_cache=0ms weekly_bar_cache=0ms daily_bar_cache=0ms verdicts=2ms commit=8ms total=570ms
+```
+
+Each `key=Nms` block is a phase:
+
+| Phase | What it measures |
+|---|---|
+| `rule_config` | Ensure rule defaults seeded + fetch enabled rules + compute requirements |
+| `prewarm` | Concurrent pre-warm API calls (daily/weekly/benchmark) |
+| `daily_refresh` | Fetch and cache daily close/SMA snapshot |
+| `weekly_refresh` | Fetch and cache weekly close/SMA snapshot (long-term only) |
+| `indicator_cache` | Refresh SMA indicator caches for configured rules |
+| `atr_cache` | Refresh ATR indicator caches for configured rules |
+| `weekly_bar_cache` | Refresh weekly OHLCV bar cache |
+| `daily_bar_cache` | Refresh daily OHLCV bar cache |
+| `verdicts` | Run rule engine and compute/store `computed_verdict` |
+| `commit` | Final DB commit |
+
+Defaults to disabled in production — the extra timers and SQL-event listeners have a measurable overhead.
+
+#### Frontend debug flags
+
+To surface poll-timing logs in the browser console without modifying code:
+
+- **One-off**: append `?refresh_debug=1` to the portfolio URL.
+- **Persistent**: run `localStorage.setItem('refreshDebug', '1')` in the browser console. Clear with `localStorage.removeItem('refreshDebug')`.
+
+When active, the JS polling loop logs how long each poll cycle takes and when the UI transitions between "refreshing" and "idle" states.
+
 ## Docker
 
 A production-oriented `Dockerfile` and a `docker-compose.yml` are included.
@@ -166,9 +238,8 @@ The repo ships with a `render.yaml` for one-click deploys to [Render](https://re
 
 - Service runs `uvicorn app.main:app` on the Render-assigned `$PORT`.
 - Build command runs `alembic upgrade head`, so migrations apply on every deploy.
-- Set `DATABASE_URL` in the Render dashboard to your Supabase pooled connection string (`postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres`).
+- Set `DATABASE_URL` in the Render dashboard to your Supabase pooled connection string — **use port `:5432` (session mode) when `PG_POOL_MODE=session`** (see [Performance & observability](#performance--observability) below for the port choice explanation).
 - Set `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, `SESSION_SECRET_KEY`, and a market data API key in the dashboard as well.
-- **For best refresh performance with Twelve Data**, set `TWELVE_DATA_CREDITS_PER_MINUTE` to a value safely under your plan's hard cap (e.g. `50` for the Grow plan). This enables concurrent fetches within a single refresh, reducing per-position refresh time from ~10s to ~1–2s. See the [rate-limit section](#twelve_data_credits_per_minute-twelve-data-concurrency) above for details.
 
 Custom domains work out of the box — the app uses `request.base_url` for OAuth callbacks, so no extra config is needed once the domain is added in both Render and Supabase's redirect URL list.
 
