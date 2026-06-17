@@ -8,6 +8,7 @@ from typing import Protocol
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
+from app.config import is_pg_session_mode
 from app.repositories import (
     KeyLevelRepository,
     PositionRepository,
@@ -22,6 +23,10 @@ from app.repositories import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Sentinel used to distinguish "GUC not yet set on this connection" from
+# "GUC was set to None (anonymous)" in connection.info['rls_user_id'].
+_RLS_UNSET = object()
 
 
 class UnitOfWork(Protocol):
@@ -115,16 +120,16 @@ class SqlAlchemyUnitOfWork:
         return self._session
 
     def _set_current_user_id(self) -> None:
-        if self.user_id is None or not self._is_postgresql:
+        if not self._is_postgresql:
             return
 
         self._session.execute(
-            text("SELECT set_config('app.current_user_id', :user_id, true)"),
-            {"user_id": self.user_id},
+            text("SELECT set_config('app.current_user_id', :user_id, false)"),
+            {"user_id": self.user_id or "__anonymous__"},
         )
 
     def _install_current_user_id_hook(self) -> None:
-        if self.user_id is None or not self._is_postgresql:
+        if not self._is_postgresql:
             return
         if not hasattr(self._session, "dispatch"):
             logger.debug(
@@ -132,15 +137,28 @@ class SqlAlchemyUnitOfWork:
             )
             return
 
-        user_id = self.user_id
-        assert user_id is not None
+        user_id = self.user_id  # may be None for anonymous sessions
+        _session_mode = is_pg_session_mode()
 
         @event.listens_for(self._session, "after_begin")
         def _set_current_user_id_on_begin(_session, _transaction, connection):
+            # Use session-scoped GUC (is_local=False) so the value persists
+            # across transactions on the same physical connection (required for
+            # Supavisor session-mode on port 5432).
+            #
+            # The latch (connection.info) is only safe to use in session-mode:
+            # in transaction-mode (Supavisor port 6543) the same DBAPI
+            # connection can be routed to a different physical PG backend
+            # between transactions, so set_config must fire every time.
+            # Enable the latch by setting PG_POOL_MODE=session.
+            cached = connection.info.get("rls_user_id", _RLS_UNSET)
+            if _session_mode and cached == user_id:
+                return
             connection.execute(
-                text("SELECT set_config('app.current_user_id', :user_id, true)"),
-                {"user_id": user_id},
+                text("SELECT set_config('app.current_user_id', :uid, false)"),
+                {"uid": user_id or "__anonymous__"},
             )
+            connection.info["rls_user_id"] = user_id
 
         self._uses_transaction_hook = True
 

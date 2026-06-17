@@ -45,6 +45,9 @@ class _FakePostgresSession:
         self.rollback_count += 1
 
 
+_SET_CONFIG_SQL = "SELECT set_config('app.current_user_id', :user_id, false)"
+
+
 def test_authenticated_uow_sets_rls_user_id_for_postgres_sessions():
     session = _FakePostgresSession()
 
@@ -54,11 +57,31 @@ def test_authenticated_uow_sets_rls_user_id_for_postgres_sessions():
 
     assert session.commit_count == 1
     assert session.rollback_count == 1
+    # session-scoped (is_local=False) so the GUC persists on the physical
+    # connection across transactions.
     assert session.executed == [
-        ("SELECT set_config('app.current_user_id', :user_id, true)", {"user_id": "user-a"}),
-        ("SELECT set_config('app.current_user_id', :user_id, true)", {"user_id": "user-a"}),
-        ("SELECT set_config('app.current_user_id', :user_id, true)", {"user_id": "user-a"}),
+        (_SET_CONFIG_SQL, {"user_id": "user-a"}),
+        (_SET_CONFIG_SQL, {"user_id": "user-a"}),
+        (_SET_CONFIG_SQL, {"user_id": "user-a"}),
     ]
+
+
+def test_anonymous_uow_resets_rls_guc_to_sentinel():
+    """Anonymous UoWs must explicitly reset the GUC to prevent RLS leakage.
+
+    When a pooled connection previously served user-a and is then reused for
+    an anonymous request, the session-scoped GUC would still carry user-a's
+    identity unless we actively reset it.
+    """
+    session = _FakePostgresSession()
+
+    uow = SqlAlchemyUnitOfWork(session, user_id=None)
+    uow.commit()
+
+    assert any(
+        stmt == _SET_CONFIG_SQL and params == {"user_id": "__anonymous__"}
+        for stmt, params in session.executed
+    ), "Expected __anonymous__ sentinel to be set for anonymous sessions"
 
 
 def test_user_scoped_repositories_hide_cross_user_rows():

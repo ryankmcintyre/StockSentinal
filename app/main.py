@@ -513,8 +513,7 @@ def _compute_verdict_for_position(
 
     Returns ``(verdict, computed_verdict, triggered_rules, trim_acknowledged,
     effective_price)``. Shared by ``_enrich_position`` (full display dict)
-    and ``_summarize_position`` (verdict-only dict) so the signal-construction
-    rules + override logic live in exactly one place.
+    so the signal-construction rules and override logic live in exactly one place.
     """
     signals = MarketSignals(
         daily_close=pos.daily_close,
@@ -971,6 +970,31 @@ def index(request: Request, uow: UnitOfWork | None = Depends(get_optional_uow)):
     return _portfolio_response(request, uow)
 
 
+def _summary_from_computed_verdicts(positions: list) -> dict | None:
+    """Compute the verdict summary directly from persisted computed_verdict values.
+
+    Returns None if any position lacks a computed_verdict (e.g. never refreshed),
+    signalling that the caller must fall back to full rule-engine evaluation.
+    """
+    sell = trim = hold = 0
+    for p in positions:
+        cv = p.computed_verdict
+        if cv is None:
+            return None
+        # Apply trim_acknowledged override: Trim → Hold when user confirmed.
+        if p.trim_acknowledged and cv == Verdict.trim.value:
+            verdict_val = Verdict.hold.value
+        else:
+            verdict_val = cv
+        if verdict_val == Verdict.sell.value:
+            sell += 1
+        elif verdict_val == Verdict.trim.value:
+            trim += 1
+        else:
+            hold += 1
+    return {"sell": sell, "trim": trim, "hold": hold, "total": sell + trim + hold}
+
+
 def _enrich_all_positions(uow: UnitOfWork, user_id, only_render_ids: set[int] | None = None):
     """Enrich the user's positions and compute the verdict summary.
 
@@ -979,17 +1003,73 @@ def _enrich_all_positions(uow: UnitOfWork, user_id, only_render_ids: set[int] | 
     endpoint so both produce identical view models.
 
     When *only_render_ids* is provided, only positions whose id is in the
-    set get a full enrichment dict (including row HTML inputs). Positions
-    outside the set get a lightweight summary-only dict containing just the
-    fields needed by callers — ``id``, ``verdict``, and
-    ``refresh_in_progress`` — so the verdict summary stays accurate across
-    the whole portfolio without paying the per-row formatting cost (themes
-    sort, relative timestamps, etc.) for rows the client isn't rendering.
+    set get a full enrichment dict (including row HTML inputs). The verdict
+    summary is computed from the persisted ``computed_verdict`` column
+    (a cheap GROUP BY equivalent) and cache loads are scoped to only the
+    requested tickers, avoiding expensive cache loads for the entire portfolio
+    on every poll cycle.
     """
     positions = uow.positions.list_all()
     enabled_rules_by_type = get_enabled_rule_selections_by_investment_type(uow, user_id=user_id)
 
-    # Preload indicator cache for all tickers to avoid N+1 queries
+    if only_render_ids is not None:
+        # Fast path: use persisted computed_verdict for summary and only load
+        # caches for the tickers being rendered.
+        summary = _summary_from_computed_verdicts(positions)
+        if summary is None:
+            # Some positions haven't been refreshed yet — fall through to the
+            # full rule-engine path for an accurate summary.
+            only_render_ids = None
+        else:
+            render_positions = [p for p in positions if p.id in only_render_ids]
+            render_tickers = {p.ticker for p in render_positions}
+            render_benchmark_tickers = {
+                p.sector_benchmark_ticker.upper()
+                for p in render_positions
+                if p.sector_benchmark_ticker
+            }
+            indicator_cache = _market_service.load_indicator_cache_for_tickers(
+                uow.session, render_tickers
+            )
+            atr_cache = _market_service.load_atr_cache_for_tickers(
+                uow.session, render_tickers
+            )
+            weekly_bars = _market_service.load_weekly_bar_cache_for_tickers(
+                uow.session, render_tickers
+            )
+            daily_bars = _market_service.load_daily_bar_cache_for_tickers(
+                uow.session, render_tickers | render_benchmark_tickers
+            )
+            enriched = []
+            for p in positions:
+                if p.id in only_render_ids:
+                    enriched.append(
+                        _enrich_position(
+                            p,
+                            enabled_rules_by_type,
+                            indicator_cache.get(p.ticker),
+                            atr_cache.get(p.ticker),
+                            weekly_bars.get(p.ticker),
+                            _daily_bars_for_position(p, daily_bars),
+                        )
+                    )
+                else:
+                    # Lightweight dict from persisted verdict — no rule engine.
+                    cv = p.computed_verdict or Verdict.hold.value
+                    displayed = (
+                        Verdict.hold
+                        if p.trim_acknowledged and cv == Verdict.trim.value
+                        else Verdict(cv)
+                    )
+                    enriched.append({
+                        "id": p.id,
+                        "verdict": displayed,
+                        "refresh_in_progress": bool(getattr(p, "refresh_in_progress", False)),
+                    })
+            enriched.sort(key=lambda p: VERDICT_PRIORITY.get(p["verdict"], 99))
+            return enriched, summary
+
+    # Full path: load caches for all tickers and run rule engine on every position.
     all_tickers = {p.ticker for p in positions}
     benchmark_tickers = {
         p.sector_benchmark_ticker.upper()
@@ -1011,26 +1091,16 @@ def _enrich_all_positions(uow: UnitOfWork, user_id, only_render_ids: set[int] | 
 
     enriched = []
     for p in positions:
-        if only_render_ids is None or p.id in only_render_ids:
-            enriched.append(
-                _enrich_position(
-                    p,
-                    enabled_rules_by_type,
-                    all_indicator_cache.get(p.ticker),
-                    all_atr_cache.get(p.ticker),
-                    all_weekly_bars.get(p.ticker),
-                    _daily_bars_for_position(p, all_daily_bars),
-                )
-            )
-        else:
-            enriched.append(_summarize_position(
+        enriched.append(
+            _enrich_position(
                 p,
                 enabled_rules_by_type,
                 all_indicator_cache.get(p.ticker),
                 all_atr_cache.get(p.ticker),
                 all_weekly_bars.get(p.ticker),
                 _daily_bars_for_position(p, all_daily_bars),
-            ))
+            )
+        )
     enriched.sort(key=lambda p: VERDICT_PRIORITY.get(p["verdict"], 99))
 
     summary = {
@@ -1040,38 +1110,6 @@ def _enrich_all_positions(uow: UnitOfWork, user_id, only_render_ids: set[int] | 
         "total": len(enriched),
     }
     return enriched, summary
-
-
-def _summarize_position(
-    pos: Position,
-    enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None,
-    indicator_cache,
-    atr_cache,
-    weekly_bars,
-    daily_bars_by_ticker,
-) -> dict:
-    """Verdict-only enrichment used for portfolio summary counts.
-
-    Skips the dict-assembly, theme sorting and relative-time formatting that
-    ``_enrich_position`` performs — useful when the caller only needs the
-    final verdict to update aggregate counts (e.g. an
-    ``/api/positions/rows`` response that re-renders just a subset of rows).
-    """
-    verdict, _computed_verdict, _triggered, _trim_acknowledged, _effective_price = (
-        _compute_verdict_for_position(
-            pos,
-            enabled_rules_by_type,
-            indicator_cache,
-            atr_cache,
-            weekly_bars,
-            daily_bars_by_ticker,
-        )
-    )
-    return {
-        "id": pos.id,
-        "verdict": verdict,
-        "refresh_in_progress": bool(getattr(pos, "refresh_in_progress", False)),
-    }
 
 
 def _portfolio_response(request: Request, uow: UnitOfWork):
@@ -1815,6 +1853,7 @@ def _refresh_single_position_task(
             with time_block("task.SessionLocal"):
                 uow = SqlAlchemyUnitOfWork(SessionLocal(), user_id=user_id)
             pos = None
+            refresh_succeeded = False
             try:
                 logger.info("Starting refresh for position id=%d", position_id)
                 # The in-progress flag is set by the /refresh/{position_id} route
@@ -1825,6 +1864,9 @@ def _refresh_single_position_task(
                         pos = uow.positions.get_by_id(position_id)
                     if pos:
                         _market_service.refresh_position(pos, uow.session)
+                        # refresh_position already cleared refresh_in_progress
+                        # and committed, so we don't need the extra write below.
+                        refresh_succeeded = True
                 except Exception as exc:
                     logger.warning(
                         "Background refresh failed for position id=%d", position_id, exc_info=True
@@ -1837,8 +1879,11 @@ def _refresh_single_position_task(
                             pos.refresh_error = f"Refresh failed: {detail}"
                             uow.commit()
             finally:
-                with time_block("task.mark_complete"):
-                    _mark_positions_refresh_state(uow, [position_id], in_progress=False)
+                if not refresh_succeeded:
+                    # Failure path: refresh_position never committed, so the
+                    # in-progress flag must be cleared here.
+                    with time_block("task.mark_complete"):
+                        _mark_positions_refresh_state(uow, [position_id], in_progress=False)
                 uow.session.close()
 
 

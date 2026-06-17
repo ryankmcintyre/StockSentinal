@@ -85,6 +85,10 @@ class Position(Base):
     refresh_error = Column(String, nullable=True)
     refresh_in_progress = Column(Boolean, nullable=True, default=False)
     refresh_started_at = Column(UTCDateTime(), nullable=True)
+    # Raw rule-engine verdict (pre-trim_acknowledged override), written during
+    # each refresh so /api/positions/rows can compute the summary with a cheap
+    # GROUP BY instead of re-running the rule engine on every position.
+    computed_verdict = Column(String, nullable=True)
     previous_verdict = Column(String, nullable=True)
     trim_acknowledged = Column(Boolean, nullable=False, default=False)
 

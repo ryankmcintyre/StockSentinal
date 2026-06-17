@@ -429,29 +429,6 @@ class MarketDataService:
 
         return verdicts
 
-    def _update_previous_verdicts(
-        self,
-        db: Session,
-        positions: list[Position],
-        previous_verdicts: dict[int, str],
-        enabled_rules_by_user: dict[str, dict[str, list]] | None = None,
-    ) -> None:
-        """Persist prior verdicts using ``id(position)`` keys from ``previous_verdicts``.
-
-        When a position's verdict changes after refresh, ``previous_verdict`` is
-        set to the prior verdict string. Matching verdicts clear the field so
-        the dashboard does not keep showing stale "Previously ..." text.
-        """
-        current_verdicts = self._calculate_verdicts(
-            db, positions, enabled_rules_by_user=enabled_rules_by_user
-        )
-        for position in positions:
-            prior_verdict = previous_verdicts.get(id(position))
-            current_verdict = current_verdicts.get(id(position))
-            position.previous_verdict = (
-                prior_verdict if prior_verdict and prior_verdict != current_verdict else None
-            )
-
     # -- Indicator cache refresh --------------------------------------------
 
     def _refresh_indicator_cache_entry(
@@ -905,8 +882,8 @@ class MarketDataService:
         with time_block("rule_config.ensure_defaults"):
             rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
         investment_type = position.investment_type
-        # Load enabled rule selections once and reuse across the two
-        # verdict-calculation passes below. ensure_defaults already ran.
+        # Load enabled rule selections once and reuse for the post-refresh
+        # verdict calculation. ensure_defaults already ran.
         with time_block("rule_config.get_enabled_rules"):
             enabled_rules_by_user = {}
             if position.user_id:
@@ -924,20 +901,10 @@ class MarketDataService:
         weekly_lookback = requirements.weekly_bar_lookback
         daily_lookback = requirements.daily_bar_lookback
         benchmark = getattr(position, "sector_benchmark_ticker", None)
-        rule_inputs_may_refresh = bool(
-            required
-            or required_atr
-            or weekly_lookback > 0
-            or (daily_lookback > 0 and benchmark)
-        )
-        with time_block("rule_config.previous_verdicts"):
-            previous_verdicts = (
-                self._calculate_verdicts(
-                    db, [position], enabled_rules_by_user=enabled_rules_by_user
-                )
-                if should_refresh_daily or should_refresh_weekly or rule_inputs_may_refresh
-                else {}
-            )
+        # Capture the persisted computed_verdict BEFORE any data refresh so we
+        # can detect changes and update previous_verdict without a pre-pass
+        # _calculate_verdicts call.
+        old_computed_verdict = position.computed_verdict
         phase_timings["rule_config"] = time.monotonic() - phase_started_at
 
         # Warm the per-operation fetch cache by firing independent API calls
@@ -1043,15 +1010,24 @@ class MarketDataService:
 
         position.refresh_error = "; ".join(errors) if errors else None
         phase_started_at = time.monotonic()
-        if previous_verdicts:
-            with time_block("verdicts.update_previous"):
-                self._update_previous_verdicts(
-                    db,
-                    [position],
-                    previous_verdicts,
-                    enabled_rules_by_user=enabled_rules_by_user,
-                )
+        with time_block("verdicts.compute"):
+            new_verdicts = self._calculate_verdicts(
+                db, [position], enabled_rules_by_user=enabled_rules_by_user
+            )
+            new_computed_verdict = new_verdicts.get(id(position))
+            position.computed_verdict = new_computed_verdict
+            # Store the prior verdict only when it actually changed so the UI
+            # doesn't keep showing stale "Previously ..." text.
+            position.previous_verdict = (
+                old_computed_verdict
+                if old_computed_verdict and old_computed_verdict != new_computed_verdict
+                else None
+            )
         phase_timings["verdicts"] = time.monotonic() - phase_started_at
+        # Mark refresh complete inside the same commit so the background task
+        # does not need a separate write (Step 4).
+        position.refresh_in_progress = False
+        position.refresh_started_at = None
         phase_started_at = time.monotonic()
         with time_block("commit"):
             db.commit()
@@ -1268,9 +1244,9 @@ class MarketDataService:
             or refresh_plan[ticker]["group_needs_weekly"]
             for pos in group
         ]
-        previous_verdicts = self._calculate_verdicts(
-            db, tracked_positions, enabled_rules_by_user=enabled_rules_by_user
-        )
+        # Snapshot persisted computed_verdict before any data changes so we can
+        # detect verdict flips without a pre-pass _calculate_verdicts call.
+        old_computed_verdicts = {id(pos): pos.computed_verdict for pos in tracked_positions}
 
         refreshed = 0
         for ticker, group in ticker_groups.items():
@@ -1375,13 +1351,17 @@ class MarketDataService:
                 if daily_errors:
                     logger.warning("Daily bar cache refresh errors: %s", daily_errors)
 
-        if previous_verdicts:
-            self._update_previous_verdicts(
-                db,
-                tracked_positions,
-                previous_verdicts,
-                enabled_rules_by_user=enabled_rules_by_user,
+        if tracked_positions:
+            new_verdicts = self._calculate_verdicts(
+                db, tracked_positions, enabled_rules_by_user=enabled_rules_by_user
             )
+            for pos in tracked_positions:
+                new_cv = new_verdicts.get(id(pos))
+                pos.computed_verdict = new_cv
+                old_cv = old_computed_verdicts.get(id(pos))
+                pos.previous_verdict = (
+                    old_cv if old_cv and old_cv != new_cv else None
+                )
             db.commit()
 
         logger.info(

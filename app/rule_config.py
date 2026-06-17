@@ -2,9 +2,17 @@
 
 import json
 import logging
+import threading
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
+
+# In-process cache of user IDs that have already had their rule defaults seeded.
+# Eliminates the 4 SELECT queries that ensure_strategy_rule_defaults fires on
+# every refresh for users whose rows already exist (i.e. essentially everyone
+# after the first run).
+_SEEDED_USERS: set[str] = set()
+_SEEDED_USERS_LOCK = threading.Lock()
 
 from app.models import StrategyRuleConfig
 from app.unit_of_work import UnitOfWork
@@ -73,6 +81,18 @@ def _migrate_deprecated_sell_rules(uow: UnitOfWork) -> bool:
     return changed
 
 
+def clear_seeded_users_cache() -> None:
+    """Clear the in-process seeded-users cache.
+
+    Intended for use in tests where each test runs against a fresh in-memory
+    database. Clearing the cache ensures ensure_strategy_rule_defaults re-seeds
+    after a database reset, rather than skipping because the prior run's user_id
+    is still present.
+    """
+    with _SEEDED_USERS_LOCK:
+        _SEEDED_USERS.clear()
+
+
 def ensure_strategy_rule_defaults(uow: UnitOfWork, user_id: str | None = None) -> None:
     """Seed missing rule configuration rows for each investment type.
 
@@ -83,6 +103,11 @@ def ensure_strategy_rule_defaults(uow: UnitOfWork, user_id: str | None = None) -
     Existing rows are preserved. New catalog rules are added as disabled by
     default unless they are part of the strategy defaults. Deprecated sell
     rule keys are cleaned up.
+
+    An in-process ``_SEEDED_USERS`` cache short-circuits the 4 SELECT queries
+    that this function fires on every refresh for users whose rows already
+    exist. The lock prevents two concurrent threads from racing to seed the
+    same brand-new user simultaneously.
     """
     # Per-refresh diagnostic counter — no-op unless REFRESH_PROFILING_ENABLED.
     from app.market_data.profiling import record_seed_invocation
@@ -91,86 +116,100 @@ def ensure_strategy_rule_defaults(uow: UnitOfWork, user_id: str | None = None) -
     if user_id is None:
         logger.debug("ensure_strategy_rule_defaults called without user_id — skipping seed")
         return
-    changed = _migrate_deprecated_sell_rules(uow)
 
-    for investment_type in _supported_investment_types():
-        existing_rows = uow.rule_configs.list_by_investment_type(investment_type.value)
-        existing_by_key = {row.rule_key: row for row in existing_rows}
+    # Fast path: already seeded in this process — no DB round-trips needed.
+    if user_id in _SEEDED_USERS:
+        return
 
-        # Derive defaults from the rule engine's single source of truth.
-        default_selections = default_rule_selections_for_investment_type(investment_type)
-        default_by_key = {s.rule_key: s for s in default_selections}
-        default_enabled_keys = set(default_by_key.keys())
-        spec_by_key = {spec.key: spec for spec in list_rule_specs_for_investment_type(investment_type)}
+    with _SEEDED_USERS_LOCK:
+        # Re-check after acquiring the lock (handles concurrent fresh-user race).
+        if user_id in _SEEDED_USERS:
+            return
 
-        for rule_key, row in existing_by_key.items():
-            spec = spec_by_key.get(rule_key)
-            if spec is None:
-                continue
-            if row.sort_order != spec.default_sort_order:
-                row.sort_order = spec.default_sort_order
+        changed = _migrate_deprecated_sell_rules(uow)
+
+        for investment_type in _supported_investment_types():
+            existing_rows = uow.rule_configs.list_by_investment_type(investment_type.value)
+            existing_by_key = {row.rule_key: row for row in existing_rows}
+
+            # Derive defaults from the rule engine's single source of truth.
+            default_selections = default_rule_selections_for_investment_type(investment_type)
+            default_by_key = {s.rule_key: s for s in default_selections}
+            default_enabled_keys = set(default_by_key.keys())
+            spec_by_key = {spec.key: spec for spec in list_rule_specs_for_investment_type(investment_type)}
+
+            for rule_key, row in existing_by_key.items():
+                spec = spec_by_key.get(rule_key)
+                if spec is None:
+                    continue
+                if row.sort_order != spec.default_sort_order:
+                    row.sort_order = spec.default_sort_order
+                    changed = True
+
+            for spec in spec_by_key.values():
+                if spec.key in existing_by_key:
+                    continue
+
+                default_sel = default_by_key.get(spec.key)
+                params_json = None
+                if default_sel and default_sel.params:
+                    params_json = json.dumps(default_sel.params)
+                elif spec.key in (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR):
+                    # Seed sensible defaults for the ATR-extension rules even
+                    # when they are disabled by default so the UI/refresh
+                    # pipeline can reason about their thresholds and indicator
+                    # requirements without first requiring user configuration.
+                    params_json = json.dumps(default_extension_atr_params())
+                elif spec.key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK:
+                    # Seed defaults for the upper-wick rule so the rules UI
+                    # and weekly-bar lookback calculation know its parameters
+                    # immediately on first run.
+                    params_json = json.dumps(default_upper_wick_params())
+                elif spec.key in (
+                    RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+                    RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+                ):
+                    # Seed defaults for the distribution-cluster rules so the
+                    # rules UI and weekly-bar lookback calculation know their
+                    # baseline + cluster window parameters immediately.
+                    params_json = json.dumps(default_distribution_cluster_params())
+                elif spec.key in (
+                    RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+                    RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
+                ):
+                    # Seed defaults for the lower-high / lower-low rules so the
+                    # rules UI and weekly-bar lookback calculation know their
+                    # pivot + lookback parameters immediately.
+                    params_json = json.dumps(default_lh_ll_params())
+                elif spec.key == RULE_KEY_TRIM_RELATIVE_WEAKNESS:
+                    # Seed defaults for the relative-weakness rule so the rules
+                    # UI and daily-bar lookback calculation know its parameters
+                    # immediately on first run.
+                    params_json = json.dumps(default_relative_weakness_params())
+                elif spec.key == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM:
+                    # Seed defaults for the failed-breakout rule so the rules
+                    # UI and weekly-bar lookback know its parameters
+                    # immediately on first run.
+                    params_json = json.dumps(default_failed_breakout_params())
+
+                uow.rule_configs.add(
+                    StrategyRuleConfig(
+                        user_id=user_id,
+                        investment_type=investment_type.value,
+                        rule_key=spec.key,
+                        enabled=spec.key in default_enabled_keys,
+                        sort_order=spec.default_sort_order,
+                        params_json=params_json,
+                    )
+                )
                 changed = True
 
-        for spec in spec_by_key.values():
-            if spec.key in existing_by_key:
-                continue
+        if changed:
+            uow.commit()
 
-            default_sel = default_by_key.get(spec.key)
-            params_json = None
-            if default_sel and default_sel.params:
-                params_json = json.dumps(default_sel.params)
-            elif spec.key in (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR):
-                # Seed sensible defaults for the ATR-extension rules even
-                # when they are disabled by default so the UI/refresh
-                # pipeline can reason about their thresholds and indicator
-                # requirements without first requiring user configuration.
-                params_json = json.dumps(default_extension_atr_params())
-            elif spec.key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK:
-                # Seed defaults for the upper-wick rule so the rules UI
-                # and weekly-bar lookback calculation know its parameters
-                # immediately on first run.
-                params_json = json.dumps(default_upper_wick_params())
-            elif spec.key in (
-                RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
-                RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
-            ):
-                # Seed defaults for the distribution-cluster rules so the
-                # rules UI and weekly-bar lookback calculation know their
-                # baseline + cluster window parameters immediately.
-                params_json = json.dumps(default_distribution_cluster_params())
-            elif spec.key in (
-                RULE_KEY_TRIM_FIRST_LOWER_HIGH,
-                RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
-            ):
-                # Seed defaults for the lower-high / lower-low rules so the
-                # rules UI and weekly-bar lookback calculation know their
-                # pivot + lookback parameters immediately.
-                params_json = json.dumps(default_lh_ll_params())
-            elif spec.key == RULE_KEY_TRIM_RELATIVE_WEAKNESS:
-                # Seed defaults for the relative-weakness rule so the rules
-                # UI and daily-bar lookback calculation know its parameters
-                # immediately on first run.
-                params_json = json.dumps(default_relative_weakness_params())
-            elif spec.key == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM:
-                # Seed defaults for the failed-breakout rule so the rules
-                # UI and weekly-bar lookback know its parameters
-                # immediately on first run.
-                params_json = json.dumps(default_failed_breakout_params())
-
-            uow.rule_configs.add(
-                StrategyRuleConfig(
-                    user_id=user_id,
-                    investment_type=investment_type.value,
-                    rule_key=spec.key,
-                    enabled=spec.key in default_enabled_keys,
-                    sort_order=spec.default_sort_order,
-                    params_json=params_json,
-                )
-            )
-            changed = True
-
-    if changed:
-        uow.commit()
+        # Add to cache only after a successful commit so a failed seed
+        # attempt doesn't permanently skip re-seeding on the next call.
+        _SEEDED_USERS.add(user_id)
 
 
 def get_enabled_rule_selections_by_investment_type(
