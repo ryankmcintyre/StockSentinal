@@ -785,12 +785,59 @@ h3 {
 .tray-list {
     display: flex;
     flex-direction: column;
-    gap: 0.3rem;
+    gap: 0.5rem;
 }
 
 .tray-empty {
     font-size: 0.85rem;
     color: #52606d;
+}
+
+/* Tagged / Untagged sections inside the tray */
+.tray-section {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.tray-section + .tray-section {
+    margin-top: 0.4rem;
+    padding-top: 0.4rem;
+    border-top: 1px solid #e5e7eb;
+}
+
+.tray-section-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #64748b;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.2rem;
+}
+
+.tray-section-icon {
+    font-size: 0.65rem;
+    line-height: 1;
+}
+
+.tray-section-label-tagged {
+    color: #0f766e;
+}
+
+.tray-section-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 0.3rem;
+}
+
+.tray-section-empty {
+    font-size: 0.78rem;
+    color: #94a3b8;
+    font-style: italic;
+    padding: 0.15rem 0.25rem;
 }
 
 .tray-chip {
@@ -2408,6 +2455,22 @@ html[data-theme="dark"] .tray-count {
 
 html[data-theme="dark"] .tray-untagged-label {
     color: #94a3b8;
+}
+
+html[data-theme="dark"] .tray-section + .tray-section {
+    border-top-color: #334155;
+}
+
+html[data-theme="dark"] .tray-section-label {
+    color: #94a3b8;
+}
+
+html[data-theme="dark"] .tray-section-label-tagged {
+    color: #2dd4bf;
+}
+
+html[data-theme="dark"] .tray-section-empty {
+    color: #475569;
 }
 
 html[data-theme="dark"] .heat-bar-row {
