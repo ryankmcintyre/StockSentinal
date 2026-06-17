@@ -513,8 +513,7 @@ def _compute_verdict_for_position(
 
     Returns ``(verdict, computed_verdict, triggered_rules, trim_acknowledged,
     effective_price)``. Shared by ``_enrich_position`` (full display dict)
-    and ``_summarize_position`` (verdict-only dict) so the signal-construction
-    rules + override logic live in exactly one place.
+    so the signal-construction rules and override logic live in exactly one place.
     """
     signals = MarketSignals(
         daily_close=pos.daily_close,
@@ -1111,38 +1110,6 @@ def _enrich_all_positions(uow: UnitOfWork, user_id, only_render_ids: set[int] | 
         "total": len(enriched),
     }
     return enriched, summary
-
-
-def _summarize_position(
-    pos: Position,
-    enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None,
-    indicator_cache,
-    atr_cache,
-    weekly_bars,
-    daily_bars_by_ticker,
-) -> dict:
-    """Verdict-only enrichment used for portfolio summary counts.
-
-    Skips the dict-assembly, theme sorting and relative-time formatting that
-    ``_enrich_position`` performs — useful when the caller only needs the
-    final verdict to update aggregate counts (e.g. an
-    ``/api/positions/rows`` response that re-renders just a subset of rows).
-    """
-    verdict, _computed_verdict, _triggered, _trim_acknowledged, _effective_price = (
-        _compute_verdict_for_position(
-            pos,
-            enabled_rules_by_type,
-            indicator_cache,
-            atr_cache,
-            weekly_bars,
-            daily_bars_by_ticker,
-        )
-    )
-    return {
-        "id": pos.id,
-        "verdict": verdict,
-        "refresh_in_progress": bool(getattr(pos, "refresh_in_progress", False)),
-    }
 
 
 def _portfolio_response(request: Request, uow: UnitOfWork):

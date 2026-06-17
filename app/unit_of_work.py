@@ -8,6 +8,7 @@ from typing import Protocol
 from sqlalchemy import event, text
 from sqlalchemy.orm import Session
 
+from app.config import is_pg_session_mode
 from app.repositories import (
     KeyLevelRepository,
     PositionRepository,
@@ -137,17 +138,21 @@ class SqlAlchemyUnitOfWork:
             return
 
         user_id = self.user_id  # may be None for anonymous sessions
+        _session_mode = is_pg_session_mode()
 
         @event.listens_for(self._session, "after_begin")
         def _set_current_user_id_on_begin(_session, _transaction, connection):
             # Use session-scoped GUC (is_local=False) so the value persists
             # across transactions on the same physical connection (required for
-            # Supavisor session-mode on port 5432). Latch via
-            # connection.info so we only send the query when the user context
-            # actually changes — eliminates one set_config round-trip per
-            # transaction for steady-state requests.
+            # Supavisor session-mode on port 5432).
+            #
+            # The latch (connection.info) is only safe to use in session-mode:
+            # in transaction-mode (Supavisor port 6543) the same DBAPI
+            # connection can be routed to a different physical PG backend
+            # between transactions, so set_config must fire every time.
+            # Enable the latch by setting PG_POOL_MODE=session.
             cached = connection.info.get("rls_user_id", _RLS_UNSET)
-            if cached == user_id:
+            if _session_mode and cached == user_id:
                 return
             connection.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),

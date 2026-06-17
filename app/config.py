@@ -39,6 +39,28 @@ def is_postgres(url: str | None = None) -> bool:
     return make_url(url).get_backend_name() == "postgresql"
 
 
+def is_pg_session_mode() -> bool:
+    """Return True when the Postgres connection pool runs in session mode.
+
+    In session mode (Supavisor port 5432), each DBAPI connection maps to
+    exactly one physical Postgres connection for its lifetime, so a
+    session-scoped GUC written on one transaction is guaranteed to still be
+    present on the next.  The GUC-latching optimisation in ``unit_of_work.py``
+    is only safe to activate in this mode.
+
+    In transaction mode (Supavisor port 6543, the default), the same DBAPI
+    connection can land on a different physical Postgres backend between
+    transactions, so ``set_config`` must be sent on every transaction
+    regardless of the cached value.
+
+    Controlled by ``PG_POOL_MODE``.  Set to ``session`` to enable the latch;
+    any other value (or unset) treats the pool as transaction-mode (safe
+    default).
+    """
+    raw = _get_env_var("PG_POOL_MODE")
+    return (raw or "").lower() == "session"
+
+
 def is_refresh_profiling_enabled() -> bool:
     """Return True when verbose refresh profiling/instrumentation is enabled.
 

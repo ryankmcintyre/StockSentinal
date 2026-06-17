@@ -325,8 +325,8 @@ class _FakeConnectionWithInfo:
 
 
 class TestGUCLatching:
-    def test_guc_not_resent_when_same_user_already_latched(self):
-        """after_begin hook skips set_config when connection.info already has the user."""
+    def test_guc_not_resent_when_same_user_already_latched_in_session_mode(self):
+        """Latch skips set_config in session-mode when connection.info already has the user."""
         from app.unit_of_work import _RLS_UNSET
         from sqlalchemy import text
 
@@ -334,21 +334,44 @@ class TestGUCLatching:
         conn.info["rls_user_id"] = "user-a"  # already latched
 
         executions_before = list(conn.executions)
-        # Replicate the after_begin closure logic: if cached == user_id, skip.
+        # Replicate the after_begin closure logic with _session_mode=True.
         user_id = "user-a"
+        _session_mode = True  # PG_POOL_MODE=session
         cached = conn.info.get("rls_user_id", _RLS_UNSET)
-        if cached != user_id:
+        if not (_session_mode and cached == user_id):
             conn.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),
                 {"uid": user_id},
             )
             conn.info["rls_user_id"] = user_id
 
-        # No new executions should have been added (cached == user_id).
+        # No new executions — latch hit.
         assert conn.executions == executions_before
 
+    def test_guc_always_sent_in_transaction_mode_even_when_same_user(self):
+        """Latch is bypassed in transaction-mode: set_config fires on every transaction."""
+        from app.unit_of_work import _RLS_UNSET
+        from sqlalchemy import text
+
+        conn = _FakeConnectionWithInfo()
+        conn.info["rls_user_id"] = "user-a"  # would normally match
+
+        user_id = "user-a"
+        _session_mode = False  # PG_POOL_MODE not set (default transaction-mode)
+        cached = conn.info.get("rls_user_id", _RLS_UNSET)
+        if not (_session_mode and cached == user_id):
+            conn.execute(
+                text("SELECT set_config('app.current_user_id', :uid, false)"),
+                {"uid": user_id},
+            )
+            conn.info["rls_user_id"] = user_id
+
+        # set_config must have fired despite the cached value matching.
+        assert len(conn.executions) == 1
+        assert conn.executions[0][1] == {"uid": "user-a"}
+
     def test_guc_resent_when_user_changes_on_connection(self):
-        """after_begin hook fires set_config when the user changes on the same connection."""
+        """After_begin hook fires set_config when the user changes on the same connection."""
         from app.unit_of_work import _RLS_UNSET
         from sqlalchemy import text
 
@@ -356,8 +379,9 @@ class TestGUCLatching:
         conn.info["rls_user_id"] = "user-a"  # connection previously served user-a
 
         user_id = "user-b"
+        _session_mode = True
         cached = conn.info.get("rls_user_id", _RLS_UNSET)
-        if cached != user_id:
+        if not (_session_mode and cached == user_id):
             conn.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),
                 {"uid": user_id},
@@ -377,8 +401,9 @@ class TestGUCLatching:
         conn.info["rls_user_id"] = "user-a"
 
         user_id = None  # anonymous request
+        _session_mode = True
         cached = conn.info.get("rls_user_id", _RLS_UNSET)
-        if cached != user_id:
+        if not (_session_mode and cached == user_id):
             conn.execute(
                 text("SELECT set_config('app.current_user_id', :uid, false)"),
                 {"uid": user_id or "__anonymous__"},
