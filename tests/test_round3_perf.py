@@ -328,62 +328,13 @@ class TestGUCLatching:
     def test_guc_not_resent_when_same_user_already_latched(self):
         """after_begin hook skips set_config when connection.info already has the user."""
         from app.unit_of_work import _RLS_UNSET
+        from sqlalchemy import text
 
-        class _FakeSession:
-            _listeners: list = []
-
-            def get_bind(self):
-                return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
-
-            def execute(self, stmt, params):
-                pass  # initial fallback call
-
-        class _FakePgSession:
-            _dispatch_calls: list
-
-            def __init__(self):
-                self._dispatch_calls = []
-                self._bind = SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
-
-            def get_bind(self):
-                return self._bind
-
-            def execute(self, stmt, params):
-                self._dispatch_calls.append((str(stmt), params))
-
-        # Build a session that supports the 'dispatch' attribute (has the event interface)
-        # so the after_begin hook is installed.
-        session = _FakePgSession()
-        # Attach a fake dispatch by adding hasattr support
-        session.dispatch = True  # just needs to exist
-
-        # We can't easily simulate the after_begin firing, so test via the
-        # _set_current_user_id fallback path: two UoWs for the same user on the
-        # same session should produce the same SQL (latching is per-connection, not
-        # per-UoW in the fallback path — but the core latching logic is tested here
-        # via the connection.info sentinel check).
         conn = _FakeConnectionWithInfo()
         conn.info["rls_user_id"] = "user-a"  # already latched
 
-        # Simulate the after_begin callback directly
-        from app.unit_of_work import SqlAlchemyUnitOfWork
-        from sqlalchemy import text
-
-        # Build a minimal UoW just to get the closure, then invoke it manually
-        class _MinimalPgSession:
-            def get_bind(self):
-                return SimpleNamespace(dialect=SimpleNamespace(name="postgresql"))
-
-            def execute(self, stmt, params):
-                pass
-
-        session_obj = _MinimalPgSession()
-        session_obj.dispatch = SimpleNamespace()
-
-        # Directly test the latching logic: if connection.info already has
-        # rls_user_id == user_id, the set_config should not fire.
         executions_before = list(conn.executions)
-        # Manually replicate what the after_begin closure does:
+        # Replicate the after_begin closure logic: if cached == user_id, skip.
         user_id = "user-a"
         cached = conn.info.get("rls_user_id", _RLS_UNSET)
         if cached != user_id:

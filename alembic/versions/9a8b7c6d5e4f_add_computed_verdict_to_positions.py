@@ -1,6 +1,6 @@
 """add computed_verdict to positions
 
-Revision ID: a1b2c3d4e5f6
+Revision ID: 9a8b7c6d5e4f
 Revises: f5a6b7c8d9e0
 Create Date: 2026-06-17 10:00:00.000000
 
@@ -11,7 +11,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision: str = "a1b2c3d4e5f6"
+revision: str = "9a8b7c6d5e4f"
 down_revision: Union[str, Sequence[str], None] = "f5a6b7c8d9e0"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None

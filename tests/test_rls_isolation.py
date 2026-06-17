@@ -45,8 +45,7 @@ class _FakePostgresSession:
         self.rollback_count += 1
 
 
-_SET_CONFIG_SESSION_SCOPED = "SELECT set_config('app.current_user_id', :user_id, false)"
-_SET_CONFIG_ANON = "SELECT set_config('app.current_user_id', :user_id, false)"
+_SET_CONFIG_SQL = "SELECT set_config('app.current_user_id', :user_id, false)"
 
 
 def test_authenticated_uow_sets_rls_user_id_for_postgres_sessions():
@@ -61,9 +60,9 @@ def test_authenticated_uow_sets_rls_user_id_for_postgres_sessions():
     # session-scoped (is_local=False) so the GUC persists on the physical
     # connection across transactions.
     assert session.executed == [
-        (_SET_CONFIG_SESSION_SCOPED, {"user_id": "user-a"}),
-        (_SET_CONFIG_SESSION_SCOPED, {"user_id": "user-a"}),
-        (_SET_CONFIG_SESSION_SCOPED, {"user_id": "user-a"}),
+        (_SET_CONFIG_SQL, {"user_id": "user-a"}),
+        (_SET_CONFIG_SQL, {"user_id": "user-a"}),
+        (_SET_CONFIG_SQL, {"user_id": "user-a"}),
     ]
 
 
@@ -80,7 +79,7 @@ def test_anonymous_uow_resets_rls_guc_to_sentinel():
     uow.commit()
 
     assert any(
-        stmt == _SET_CONFIG_ANON and params == {"user_id": "__anonymous__"}
+        stmt == _SET_CONFIG_SQL and params == {"user_id": "__anonymous__"}
         for stmt, params in session.executed
     ), "Expected __anonymous__ sentinel to be set for anonymous sessions"
 
