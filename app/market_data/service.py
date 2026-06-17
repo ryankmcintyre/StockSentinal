@@ -323,12 +323,23 @@ class MarketDataService:
                 relevant[benchmark.upper()] = bench_bars
         return relevant or None
 
-    def _calculate_verdicts(self, db: Session, positions: list[Position]) -> dict[int, str]:
+    def _calculate_verdicts(
+        self,
+        db: Session,
+        positions: list[Position],
+        enabled_rules_by_user: dict[str, dict[str, list]] | None = None,
+    ) -> dict[int, str]:
         """Return current verdict strings for the supplied positions.
 
         Verdicts are evaluated against the same cached market-data inputs that
         power the portfolio dashboard, including enabled per-user rule
         selections and any required benchmark history.
+
+        When *enabled_rules_by_user* is provided, the per-user rule lookup is
+        skipped — callers that already loaded rule selections (e.g. the
+        single-position refresh path) can pass them through to avoid
+        re-querying ``StrategyRuleConfig`` and re-running
+        ``ensure_strategy_rule_defaults``.
         """
         if not positions:
             return {}
@@ -349,14 +360,15 @@ class MarketDataService:
             daily_bars = self.load_daily_bar_cache_for_tickers(
                 db, all_tickers | benchmark_tickers
             )
-        with time_block("verdicts.get_enabled_rules"):
-            enabled_rules_by_user = {
-                user_id: rule_config.get_enabled_rule_selections_by_investment_type(
-                    as_uow(db, user_id=user_id),
-                    user_id=user_id,
-                )
-                for user_id in {position.user_id for position in positions if position.user_id}
-            }
+        if enabled_rules_by_user is None:
+            with time_block("verdicts.get_enabled_rules"):
+                enabled_rules_by_user = {
+                    user_id: rule_config.get_enabled_rule_selections_by_investment_type(
+                        as_uow(db, user_id=user_id),
+                        user_id=user_id,
+                    )
+                    for user_id in {position.user_id for position in positions if position.user_id}
+                }
 
         verdicts: dict[int, str] = {}
         for position in positions:
@@ -422,6 +434,7 @@ class MarketDataService:
         db: Session,
         positions: list[Position],
         previous_verdicts: dict[int, str],
+        enabled_rules_by_user: dict[str, dict[str, list]] | None = None,
     ) -> None:
         """Persist prior verdicts using ``id(position)`` keys from ``previous_verdicts``.
 
@@ -429,7 +442,9 @@ class MarketDataService:
         set to the prior verdict string. Matching verdicts clear the field so
         the dashboard does not keep showing stale "Previously ..." text.
         """
-        current_verdicts = self._calculate_verdicts(db, positions)
+        current_verdicts = self._calculate_verdicts(
+            db, positions, enabled_rules_by_user=enabled_rules_by_user
+        )
         for position in positions:
             prior_verdict = previous_verdicts.get(id(position))
             current_verdict = current_verdicts.get(id(position))
@@ -890,22 +905,24 @@ class MarketDataService:
         with time_block("rule_config.ensure_defaults"):
             rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
         investment_type = position.investment_type
-        with time_block("rule_config.get_required_indicators"):
-            required = rule_config.get_required_indicators(
+        # Load enabled rule selections once and reuse across the two
+        # verdict-calculation passes below. ensure_defaults already ran.
+        with time_block("rule_config.get_enabled_rules"):
+            enabled_rules_by_user = {}
+            if position.user_id:
+                enabled_rules_by_user[position.user_id] = (
+                    rule_config.get_enabled_rule_selections_by_investment_type(
+                        rule_uow, user_id=position.user_id, _skip_defaults=True
+                    )
+                )
+        with time_block("rule_config.get_rule_requirements"):
+            requirements = rule_config.get_rule_requirements(
                 rule_uow, investment_type, _skip_defaults=True
             )
-        with time_block("rule_config.get_required_atr_indicators"):
-            required_atr = rule_config.get_required_atr_indicators(
-                rule_uow, investment_type, _skip_defaults=True
-            )
-        with time_block("rule_config.get_required_weekly_bar_lookback"):
-            weekly_lookback = rule_config.get_required_weekly_bar_lookback(
-                rule_uow, investment_type, _skip_defaults=True
-            )
-        with time_block("rule_config.get_required_daily_bar_lookback"):
-            daily_lookback = rule_config.get_required_daily_bar_lookback(
-                rule_uow, investment_type, _skip_defaults=True
-            )
+        required = requirements.indicators
+        required_atr = requirements.atr_indicators
+        weekly_lookback = requirements.weekly_bar_lookback
+        daily_lookback = requirements.daily_bar_lookback
         benchmark = getattr(position, "sector_benchmark_ticker", None)
         rule_inputs_may_refresh = bool(
             required
@@ -915,7 +932,9 @@ class MarketDataService:
         )
         with time_block("rule_config.previous_verdicts"):
             previous_verdicts = (
-                self._calculate_verdicts(db, [position])
+                self._calculate_verdicts(
+                    db, [position], enabled_rules_by_user=enabled_rules_by_user
+                )
                 if should_refresh_daily or should_refresh_weekly or rule_inputs_may_refresh
                 else {}
             )
@@ -1026,7 +1045,12 @@ class MarketDataService:
         phase_started_at = time.monotonic()
         if previous_verdicts:
             with time_block("verdicts.update_previous"):
-                self._update_previous_verdicts(db, [position], previous_verdicts)
+                self._update_previous_verdicts(
+                    db,
+                    [position],
+                    previous_verdicts,
+                    enabled_rules_by_user=enabled_rules_by_user,
+                )
         phase_timings["verdicts"] = time.monotonic() - phase_started_at
         phase_started_at = time.monotonic()
         with time_block("commit"):
@@ -1155,18 +1179,24 @@ class MarketDataService:
         required_atr: set[tuple[str, int]] = set()
         weekly_lookback = 0
         daily_lookback = 0
+        # Load enabled rule selections once per user — reuse for the two
+        # _calculate_verdicts passes below to avoid duplicate
+        # ensure_defaults / get_enabled_rules queries.
+        enabled_rules_by_user: dict[str, dict[str, list]] = {}
         for current_user_id in user_ids:
             rule_uow = as_uow(db, user_id=current_user_id)
-            required.update(rule_config.get_required_indicators(rule_uow))
-            required_atr.update(rule_config.get_required_atr_indicators(rule_uow))
-            weekly_lookback = max(
-                weekly_lookback,
-                rule_config.get_required_weekly_bar_lookback(rule_uow),
-            )
-            daily_lookback = max(
-                daily_lookback,
-                rule_config.get_required_daily_bar_lookback(rule_uow),
-            )
+            rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=current_user_id)
+            requirements = rule_config.get_rule_requirements(rule_uow, _skip_defaults=True)
+            required.update(requirements.indicators)
+            required_atr.update(requirements.atr_indicators)
+            weekly_lookback = max(weekly_lookback, requirements.weekly_bar_lookback)
+            daily_lookback = max(daily_lookback, requirements.daily_bar_lookback)
+            if current_user_id:
+                enabled_rules_by_user[current_user_id] = (
+                    rule_config.get_enabled_rule_selections_by_investment_type(
+                        rule_uow, user_id=current_user_id, _skip_defaults=True
+                    )
+                )
 
         refresh_plan = {}
         daily_batch_tickers: set[str] = set()
@@ -1238,7 +1268,9 @@ class MarketDataService:
             or refresh_plan[ticker]["group_needs_weekly"]
             for pos in group
         ]
-        previous_verdicts = self._calculate_verdicts(db, tracked_positions)
+        previous_verdicts = self._calculate_verdicts(
+            db, tracked_positions, enabled_rules_by_user=enabled_rules_by_user
+        )
 
         refreshed = 0
         for ticker, group in ticker_groups.items():
@@ -1344,7 +1376,12 @@ class MarketDataService:
                     logger.warning("Daily bar cache refresh errors: %s", daily_errors)
 
         if previous_verdicts:
-            self._update_previous_verdicts(db, tracked_positions, previous_verdicts)
+            self._update_previous_verdicts(
+                db,
+                tracked_positions,
+                previous_verdicts,
+                enabled_rules_by_user=enabled_rules_by_user,
+            )
             db.commit()
 
         logger.info(

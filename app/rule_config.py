@@ -176,9 +176,12 @@ def ensure_strategy_rule_defaults(uow: UnitOfWork, user_id: str | None = None) -
 def get_enabled_rule_selections_by_investment_type(
     uow: UnitOfWork,
     user_id: str | None = None,
+    *,
+    _skip_defaults: bool = False,
 ) -> dict[str, list[StrategyRuleSelection]]:
     """Return enabled rule selections keyed by investment type value."""
-    ensure_strategy_rule_defaults(uow, user_id=user_id)
+    if not _skip_defaults:
+        ensure_strategy_rule_defaults(uow, user_id=user_id)
 
     selections: dict[str, list[StrategyRuleSelection]] = {}
     for investment_type in _supported_investment_types():
@@ -619,3 +622,113 @@ def get_required_daily_bar_lookback(
             params = parse_params_json(row.params_json)
             max_lookback = max(max_lookback, get_relative_weakness_lookback_days(params))
     return max_lookback
+
+
+class RuleRequirements:
+    """All market-data requirements derived from a user's enabled rules.
+
+    Bundles the four ``get_required_*`` outputs into a single object that
+    can be produced from one ``list_enabled_by_investment_type`` query per
+    investment type, eliminating four redundant per-call queries on the
+    refresh hot path.
+    """
+
+    __slots__ = (
+        "indicators",
+        "atr_indicators",
+        "weekly_bar_lookback",
+        "daily_bar_lookback",
+    )
+
+    def __init__(
+        self,
+        indicators: set[tuple[str, int]],
+        atr_indicators: set[tuple[str, int]],
+        weekly_bar_lookback: int,
+        daily_bar_lookback: int,
+    ):
+        self.indicators = indicators
+        self.atr_indicators = atr_indicators
+        self.weekly_bar_lookback = weekly_bar_lookback
+        self.daily_bar_lookback = daily_bar_lookback
+
+
+_WEEKLY_BAR_RULE_KEYS = frozenset(
+    {
+        RULE_KEY_TRIM_WEEKLY_UPPER_WICK,
+        RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+        RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+        RULE_KEY_TRIM_FIRST_LOWER_HIGH,
+        RULE_KEY_SELL_LOWER_HIGH_LOWER_LOW,
+        RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM,
+    }
+)
+
+
+def get_rule_requirements(
+    uow: UnitOfWork,
+    investment_type: str | None = None,
+    *,
+    _skip_defaults: bool = False,
+) -> RuleRequirements:
+    """Compute all four rule-driven market-data requirements in one fetch.
+
+    Replaces four separate ``list_enabled_by_investment_type*`` queries
+    with a single ``list_enabled_by_investment_type`` fetch per investment
+    type and derives indicators / ATR indicators / weekly + daily lookbacks
+    in Python.
+    """
+    if not _skip_defaults:
+        ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
+
+    indicators: set[tuple[str, int]] = set()
+    atr_indicators: set[tuple[str, int]] = set()
+    weekly_lookback = 0
+    daily_lookback = 0
+
+    for required_type in _required_investment_types(investment_type):
+        rows = uow.rule_configs.list_enabled_by_investment_type(required_type.value)
+        for row in rows:
+            params = parse_params_json(row.params_json)
+            key = row.rule_key
+
+            if key == RULE_KEY_SELL_MA_ALL:
+                if params is not None:
+                    for cond in params.get("conditions", []):
+                        interval = cond.get("interval")
+                        time_period = cond.get("time_period")
+                        if interval and isinstance(time_period, int):
+                            indicators.add((interval, time_period))
+            elif key in (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR):
+                sma_req, atr_req = get_extension_indicator_requirements(params)
+                indicators.add(sma_req)
+                atr_indicators.add(atr_req)
+
+            if key in _WEEKLY_BAR_RULE_KEYS:
+                if key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK:
+                    weekly_lookback = max(weekly_lookback, get_upper_wick_lookback_weeks(params))
+                elif key in (
+                    RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+                    RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+                ):
+                    weekly_lookback = max(
+                        weekly_lookback, get_distribution_cluster_lookback_weeks(params)
+                    )
+                elif key == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM:
+                    weekly_lookback = max(
+                        weekly_lookback, get_failed_breakout_lookback_weeks(params)
+                    )
+                else:
+                    weekly_lookback = max(weekly_lookback, get_lh_ll_lookback_weeks(params))
+
+            if key == RULE_KEY_TRIM_RELATIVE_WEAKNESS:
+                daily_lookback = max(
+                    daily_lookback, get_relative_weakness_lookback_days(params)
+                )
+
+    return RuleRequirements(
+        indicators=indicators,
+        atr_indicators=atr_indicators,
+        weekly_bar_lookback=weekly_lookback,
+        daily_bar_lookback=daily_lookback,
+    )

@@ -4,8 +4,6 @@ from fastapi import HTTPException, Request
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import NullPool
-
 from app.config import get_database_url, is_postgres
 from app.models import Base
 from app.unit_of_work import SqlAlchemyUnitOfWork
@@ -17,13 +15,23 @@ def _create_engine(url: str | None = None) -> Engine:
     """Create a SQLAlchemy engine configured for the given database URL.
 
     - SQLite: uses check_same_thread=False for FastAPI compatibility.
-    - PostgreSQL: uses NullPool so Supabase's Supavisor handles pooling.
+    - PostgreSQL: uses SQLAlchemy's default QueuePool to keep TCP+TLS
+      connections alive between requests. Supabase's Supavisor (port 6543,
+      transaction-mode pooler) sits upstream of this pool. Server-side
+      prepared statements are not used by default with psycopg2, so the
+      transaction-mode pooler is safe with a client-side pool.
     """
     if url is None:
         url = get_database_url()
 
     if is_postgres(url):
-        return create_engine(url, poolclass=NullPool)
+        return create_engine(
+            url,
+            pool_size=5,
+            max_overflow=5,
+            pool_pre_ping=True,
+            pool_recycle=1800,
+        )
 
     # SQLite
     return create_engine(url, connect_args={"check_same_thread": False})
