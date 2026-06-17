@@ -882,20 +882,18 @@ class MarketDataService:
         with time_block("rule_config.ensure_defaults"):
             rule_config.ensure_strategy_rule_defaults(rule_uow, user_id=rule_uow.user_id)
         investment_type = position.investment_type
-        # Load enabled rule selections once and reuse for the post-refresh
-        # verdict calculation. ensure_defaults already ran.
-        with time_block("rule_config.get_enabled_rules"):
-            enabled_rules_by_user = {}
-            if position.user_id:
-                enabled_rules_by_user[position.user_id] = (
-                    rule_config.get_enabled_rule_selections_by_investment_type(
-                        rule_uow, user_id=position.user_id, _skip_defaults=True
-                    )
+        # Fetch all enabled rule rows once and derive both requirements and
+        # selections in Python — avoids two separate DB round-trips.
+        with time_block("rule_config.get_rules_and_requirements"):
+            requirements, enabled_rules = (
+                rule_config.get_rule_requirements_and_selections(
+                    rule_uow,
+                    user_id=position.user_id,
+                    investment_type=investment_type,
+                    _skip_defaults=True,
                 )
-        with time_block("rule_config.get_rule_requirements"):
-            requirements = rule_config.get_rule_requirements(
-                rule_uow, investment_type, _skip_defaults=True
             )
+            enabled_rules_by_user = {position.user_id: enabled_rules} if position.user_id else {}
         required = requirements.indicators
         required_atr = requirements.atr_indicators
         weekly_lookback = requirements.weekly_bar_lookback

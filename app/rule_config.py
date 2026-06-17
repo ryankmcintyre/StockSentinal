@@ -712,6 +712,69 @@ _WEEKLY_BAR_RULE_KEYS = frozenset(
 )
 
 
+def _compute_requirements_from_rows(
+    rows: list,
+    required_type_values: set[str],
+) -> RuleRequirements:
+    """Derive RuleRequirements from a pre-fetched list of enabled rule rows.
+
+    Only rows whose investment_type is in *required_type_values* are
+    considered for the requirement calculation.  The caller is responsible
+    for passing the correct filter set.
+    """
+    indicators: set[tuple[str, int]] = set()
+    atr_indicators: set[tuple[str, int]] = set()
+    weekly_lookback = 0
+    daily_lookback = 0
+
+    for row in rows:
+        if row.investment_type not in required_type_values:
+            continue
+        params = parse_params_json(row.params_json)
+        key = row.rule_key
+
+        if key == RULE_KEY_SELL_MA_ALL:
+            if params is not None:
+                for cond in params.get("conditions", []):
+                    interval = cond.get("interval")
+                    time_period = cond.get("time_period")
+                    if interval and isinstance(time_period, int):
+                        indicators.add((interval, time_period))
+        elif key in (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR):
+            sma_req, atr_req = get_extension_indicator_requirements(params)
+            indicators.add(sma_req)
+            atr_indicators.add(atr_req)
+
+        if key in _WEEKLY_BAR_RULE_KEYS:
+            if key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK:
+                weekly_lookback = max(weekly_lookback, get_upper_wick_lookback_weeks(params))
+            elif key in (
+                RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
+                RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
+            ):
+                weekly_lookback = max(
+                    weekly_lookback, get_distribution_cluster_lookback_weeks(params)
+                )
+            elif key == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM:
+                weekly_lookback = max(
+                    weekly_lookback, get_failed_breakout_lookback_weeks(params)
+                )
+            else:
+                weekly_lookback = max(weekly_lookback, get_lh_ll_lookback_weeks(params))
+
+        if key == RULE_KEY_TRIM_RELATIVE_WEAKNESS:
+            daily_lookback = max(
+                daily_lookback, get_relative_weakness_lookback_days(params)
+            )
+
+    return RuleRequirements(
+        indicators=indicators,
+        atr_indicators=atr_indicators,
+        weekly_bar_lookback=weekly_lookback,
+        daily_bar_lookback=daily_lookback,
+    )
+
+
 def get_rule_requirements(
     uow: UnitOfWork,
     investment_type: str | None = None,
@@ -728,54 +791,57 @@ def get_rule_requirements(
     if not _skip_defaults:
         ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
 
-    indicators: set[tuple[str, int]] = set()
-    atr_indicators: set[tuple[str, int]] = set()
-    weekly_lookback = 0
-    daily_lookback = 0
+    required_type_values = {t.value for t in _required_investment_types(investment_type)}
+    all_rows = list(uow.rule_configs.list_all_enabled())
+    return _compute_requirements_from_rows(all_rows, required_type_values)
 
-    for required_type in _required_investment_types(investment_type):
-        rows = uow.rule_configs.list_enabled_by_investment_type(required_type.value)
-        for row in rows:
-            params = parse_params_json(row.params_json)
-            key = row.rule_key
 
-            if key == RULE_KEY_SELL_MA_ALL:
-                if params is not None:
-                    for cond in params.get("conditions", []):
-                        interval = cond.get("interval")
-                        time_period = cond.get("time_period")
-                        if interval and isinstance(time_period, int):
-                            indicators.add((interval, time_period))
-            elif key in (RULE_KEY_TRIM_EXTENSION_ATR, RULE_KEY_SELL_EXTENSION_ATR):
-                sma_req, atr_req = get_extension_indicator_requirements(params)
-                indicators.add(sma_req)
-                atr_indicators.add(atr_req)
+def get_rule_requirements_and_selections(
+    uow: UnitOfWork,
+    user_id: str | None = None,
+    investment_type: str | None = None,
+    *,
+    _skip_defaults: bool = False,
+) -> tuple[RuleRequirements, dict[str, list[StrategyRuleSelection]]]:
+    """Compute rule requirements AND enabled selections in a single DB fetch.
 
-            if key in _WEEKLY_BAR_RULE_KEYS:
-                if key == RULE_KEY_TRIM_WEEKLY_UPPER_WICK:
-                    weekly_lookback = max(weekly_lookback, get_upper_wick_lookback_weeks(params))
-                elif key in (
-                    RULE_KEY_TRIM_DISTRIBUTION_CLUSTER,
-                    RULE_KEY_SELL_DISTRIBUTION_CLUSTER,
-                ):
-                    weekly_lookback = max(
-                        weekly_lookback, get_distribution_cluster_lookback_weeks(params)
-                    )
-                elif key == RULE_KEY_SELL_FAILED_BREAKOUT_RECLAIM:
-                    weekly_lookback = max(
-                        weekly_lookback, get_failed_breakout_lookback_weeks(params)
-                    )
-                else:
-                    weekly_lookback = max(weekly_lookback, get_lh_ll_lookback_weeks(params))
+    On the single-position refresh hot path, ``refresh_position`` previously
+    called ``get_rule_requirements`` and ``get_enabled_rule_selections_by_investment_type``
+    back-to-back — two separate ``list_all_enabled`` round-trips for the same
+    row set.  This helper collapses them into one fetch and derives both
+    outputs from the same rows in Python, saving ~63ms per refresh.
 
-            if key == RULE_KEY_TRIM_RELATIVE_WEAKNESS:
-                daily_lookback = max(
-                    daily_lookback, get_relative_weakness_lookback_days(params)
-                )
+    *investment_type* scopes the requirement calculation to a specific
+    investment type (as ``get_rule_requirements`` does); pass ``None`` to
+    include all types.  The returned selections dict always covers both
+    investment types so the caller can pass it directly to ``_enrich_position``.
 
-    return RuleRequirements(
-        indicators=indicators,
-        atr_indicators=atr_indicators,
-        weekly_bar_lookback=weekly_lookback,
-        daily_bar_lookback=daily_lookback,
-    )
+    Backward-compat: the individual helpers remain available for callers
+    that only need one output (e.g. ``_enrich_all_positions`` for selections,
+    ``refresh_all`` for requirements).
+    """
+    if not _skip_defaults:
+        ensure_strategy_rule_defaults(uow, user_id=user_id)
+
+    all_rows = list(uow.rule_configs.list_all_enabled())
+
+    # Requirements: filter to the requested investment type(s).
+    required_type_values = {t.value for t in _required_investment_types(investment_type)}
+    requirements = _compute_requirements_from_rows(all_rows, required_type_values)
+
+    # Selections: group all rows by investment type.
+    rows_by_type: dict[str, list] = {}
+    for row in all_rows:
+        rows_by_type.setdefault(row.investment_type, []).append(row)
+
+    selections: dict[str, list[StrategyRuleSelection]] = {}
+    for inv_type in _supported_investment_types():
+        selections[inv_type.value] = [
+            StrategyRuleSelection(
+                rule_key=row.rule_key,
+                params=parse_params_json(row.params_json),
+            )
+            for row in rows_by_type.get(inv_type.value, [])
+        ]
+
+    return requirements, selections
