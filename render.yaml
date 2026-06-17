@@ -11,10 +11,22 @@ services:
         value: "3.13"
       - key: LOG_LEVEL
         value: INFO
+      - key: PG_POOL_MODE
+        value: session
+        # Must be paired with Supavisor session-mode port :5432 in DATABASE_URL.
+        # Enables a per-connection GUC latch so app.current_user_id is only sent
+        # once per physical Postgres connection rather than on every transaction,
+        # cutting per-request DB overhead. Set to session only when DATABASE_URL
+        # uses :5432 (Supavisor session mode). Remove or leave blank when using
+        # :6543 (transaction mode), which multiplexes connections between requests
+        # and would leak the cached GUC across users.
       - key: ALPHA_VANTAGE_API_KEY
         scope: run
       - key: DATABASE_URL
         scope: run
-        # Set this in Render dashboard to your Supabase pooled connection
-        # postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
+        # Set this in Render dashboard to your Supabase pooled connection string.
+        # Use the SESSION-mode port :5432 (not :6543) when PG_POOL_MODE=session:
+        #   postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:5432/postgres
+        # Use :6543 only when PG_POOL_MODE is unset (transaction-mode pooler):
+        #   postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
 

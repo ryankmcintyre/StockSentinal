@@ -38,7 +38,7 @@ def _create_engine(url: str | None = None) -> Engine:
 
 
 engine = _create_engine()
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine, expire_on_commit=False)
 
 
 def _add_missing_columns() -> None:

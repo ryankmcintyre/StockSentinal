@@ -475,6 +475,8 @@ class RuleConfigRepository(Protocol):
 
     def list_by_key(self, rule_key: str) -> Sequence[StrategyRuleConfig]: ...
 
+    def list_all_enabled(self) -> Sequence[StrategyRuleConfig]: ...
+
     def add(self, config: StrategyRuleConfig) -> None: ...
 
     def delete(self, config: StrategyRuleConfig) -> None: ...
@@ -536,6 +538,14 @@ class SqlAlchemyRuleConfigRepository:
         return (
             self._base_query()
             .filter(StrategyRuleConfig.rule_key == rule_key)
+            .all()
+        )
+
+    def list_all_enabled(self) -> Sequence[StrategyRuleConfig]:
+        """Return all enabled rule configs for this user in a single query."""
+        return (
+            self._base_query()
+            .filter(StrategyRuleConfig.enabled.is_(True))
             .all()
         )
 

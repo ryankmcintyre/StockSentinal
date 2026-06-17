@@ -286,12 +286,8 @@ class TestRefreshPosition:
         # Mock rule_config to avoid DB dependency
         mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
         mocker.patch(
-            "app.rule_config.get_rule_requirements",
-            return_value=RuleRequirements(set(), set(), 0, 0),
-        )
-        mocker.patch(
-            "app.rule_config.get_enabled_rule_selections_by_investment_type",
-            return_value={},
+            "app.rule_config.get_rule_requirements_and_selections",
+            return_value=(RuleRequirements(set(), set(), 0, 0), {}),
         )
 
     def test_refreshes_daily_when_daily_is_stale(self, mocker):
@@ -359,15 +355,20 @@ class TestRefreshPosition:
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
         ensure_defaults = mocker.patch("app.rule_config.ensure_strategy_rule_defaults")
-        get_requirements = mocker.patch(
-            "app.rule_config.get_rule_requirements",
-            return_value=RuleRequirements(set(), set(), 0, 0),
+        get_req_sel = mocker.patch(
+            "app.rule_config.get_rule_requirements_and_selections",
+            return_value=(RuleRequirements(set(), set(), 0, 0), {}),
         )
 
         self.service.refresh_position(position, db, force=False)
 
         ensure_defaults.assert_called_once_with(ANY, user_id=position.user_id)
-        get_requirements.assert_called_once_with(ANY, "short-term", _skip_defaults=True)
+        get_req_sel.assert_called_once_with(
+            ANY,
+            user_id=position.user_id,
+            investment_type="short-term",
+            _skip_defaults=True,
+        )
 
     def test_persists_combined_daily_and_weekly_errors(self, mocker):
         position = FakePosition(investment_type="long-term")
@@ -449,8 +450,8 @@ class TestRefreshPosition:
         mocker.patch("app.market_data.service.daily_data_is_stale", return_value=False)
         mocker.patch("app.market_data.service.weekly_data_is_stale", return_value=False)
         mocker.patch(
-            "app.rule_config.get_rule_requirements",
-            return_value=RuleRequirements({("daily", 21)}, set(), 0, 0),
+            "app.rule_config.get_rule_requirements_and_selections",
+            return_value=(RuleRequirements({("daily", 21)}, set(), 0, 0), {}),
         )
         refresh_indicator_cache = mocker.patch.object(
             self.service, "refresh_indicator_cache", return_value=[]
