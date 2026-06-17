@@ -784,9 +784,9 @@ def get_rule_requirements(
     """Compute all four rule-driven market-data requirements in one fetch.
 
     Replaces four separate ``list_enabled_by_investment_type*`` queries
-    with a single ``list_enabled_by_investment_type`` fetch per investment
-    type and derives indicators / ATR indicators / weekly + daily lookbacks
-    in Python.
+    with a single ``list_all_enabled`` fetch across investment types and
+    derives indicators / ATR indicators / weekly + daily lookbacks in
+    Python.
     """
     if not _skip_defaults:
         ensure_strategy_rule_defaults(uow, user_id=uow.user_id)
