@@ -490,32 +490,42 @@ def _format_relative_time(ts: datetime, *, now: datetime | None = None) -> str:
     return f"{days} {unit} ago"
 
 
-def _enrich_position(
+class _PositionPriceProxy:
+    """Delegate to a Position but override current_price for rule evaluation."""
+
+    def __init__(self, original_pos: Position, current_price: float):
+        self._original_pos = original_pos
+        self.current_price = current_price
+
+    def __getattr__(self, name):
+        return getattr(self._original_pos, name)
+
+
+def _compute_verdict_for_position(
     pos: Position,
-    enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
-    indicator_cache: dict[tuple[str, int], tuple[float | None, float | None]] | None = None,
-    atr_cache: dict[tuple[str, int], float | None] | None = None,
-    weekly_bars: list | None = None,
-    daily_bars_by_ticker: dict[str, list] | None = None,
-) -> dict:
-    """Run rule engine on a Position and return a dict with all display fields."""
-    # Build market signals from cached market data
+    enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None,
+    indicator_cache,
+    atr_cache,
+    weekly_bars,
+    daily_bars_by_ticker,
+) -> tuple[Verdict, Verdict, list, bool, float | None]:
+    """Build MarketSignals, run the rule engine, and apply the trim override.
+
+    Returns ``(verdict, computed_verdict, triggered_rules, trim_acknowledged,
+    effective_price)``. Shared by ``_enrich_position`` (full display dict)
+    and ``_summarize_position`` (verdict-only dict) so the signal-construction
+    rules + override logic live in exactly one place.
+    """
     signals = MarketSignals(
         daily_close=pos.daily_close,
         daily_sma_21=pos.daily_sma_21,
         weekly_close=pos.weekly_close,
         weekly_sma_20=pos.weekly_sma_20,
     )
-
-    # Populate flexible ma_signals from indicator cache
     if indicator_cache:
         signals.ma_signals = dict(indicator_cache)
-
-    # Populate atr_signals from ATR cache
     if atr_cache:
         signals.atr_signals = dict(atr_cache)
-
-    # Populate weekly OHLC history from the weekly bar cache
     if weekly_bars:
         signals.weekly_ohlc_history = [
             WeeklyOhlcBar(
@@ -528,8 +538,7 @@ def _enrich_position(
             )
             for bar in weekly_bars
         ]
-
-    # Populate daily close history per ticker (issue #22 — relative weakness)
+    # Daily close history per ticker (issue #22 — relative weakness)
     if daily_bars_by_ticker:
         signals.daily_close_history = {
             ticker.upper(): [
@@ -541,17 +550,6 @@ def _enrich_position(
 
     # Use cached daily close as effective price when available, otherwise manual
     effective_price = pos.daily_close if pos.daily_close is not None else pos.current_price
-
-    class _PositionPriceProxy:
-        """Delegate to a Position but override current_price for rule evaluation."""
-
-        def __init__(self, original_pos: Position, current_price: float):
-            self._original_pos = original_pos
-            self.current_price = current_price
-
-        def __getattr__(self, name):
-            return getattr(self._original_pos, name)
-
     eval_pos = _PositionPriceProxy(pos, effective_price)
 
     configured_rules = None
@@ -562,9 +560,31 @@ def _enrich_position(
     computed_verdict = get_verdict(triggered)
     trim_acknowledged = bool(getattr(pos, "trim_acknowledged", False))
     verdict = computed_verdict
-    displayed_triggered = triggered
     if trim_acknowledged and computed_verdict == Verdict.trim:
         verdict = Verdict.hold
+    return verdict, computed_verdict, triggered, trim_acknowledged, effective_price
+
+
+def _enrich_position(
+    pos: Position,
+    enabled_rules_by_type: dict[str, list[StrategyRuleSelection]] | None = None,
+    indicator_cache: dict[tuple[str, int], tuple[float | None, float | None]] | None = None,
+    atr_cache: dict[tuple[str, int], float | None] | None = None,
+    weekly_bars: list | None = None,
+    daily_bars_by_ticker: dict[str, list] | None = None,
+) -> dict:
+    """Run rule engine on a Position and return a dict with all display fields."""
+    verdict, computed_verdict, triggered, trim_acknowledged, effective_price = (
+        _compute_verdict_for_position(
+            pos,
+            enabled_rules_by_type,
+            indicator_cache,
+            atr_cache,
+            weekly_bars,
+            daily_bars_by_ticker,
+        )
+    )
+    displayed_triggered = triggered
     reason_sort_value = (
         pos.refresh_error
         or (displayed_triggered[0].description if displayed_triggered else "")
@@ -1037,57 +1057,16 @@ def _summarize_position(
     final verdict to update aggregate counts (e.g. an
     ``/api/positions/rows`` response that re-renders just a subset of rows).
     """
-    signals = MarketSignals(
-        daily_close=pos.daily_close,
-        daily_sma_21=pos.daily_sma_21,
-        weekly_close=pos.weekly_close,
-        weekly_sma_20=pos.weekly_sma_20,
+    verdict, _computed_verdict, _triggered, _trim_acknowledged, _effective_price = (
+        _compute_verdict_for_position(
+            pos,
+            enabled_rules_by_type,
+            indicator_cache,
+            atr_cache,
+            weekly_bars,
+            daily_bars_by_ticker,
+        )
     )
-    if indicator_cache:
-        signals.ma_signals = dict(indicator_cache)
-    if atr_cache:
-        signals.atr_signals = dict(atr_cache)
-    if weekly_bars:
-        signals.weekly_ohlc_history = [
-            WeeklyOhlcBar(
-                bar_date=bar.bar_date,
-                open=bar.open,
-                high=bar.high,
-                low=bar.low,
-                close=bar.close,
-                volume=bar.volume,
-            )
-            for bar in weekly_bars
-        ]
-    if daily_bars_by_ticker:
-        signals.daily_close_history = {
-            ticker.upper(): [
-                DailyClosePoint(bar_date=bar.bar_date, close=bar.close)
-                for bar in bars
-            ]
-            for ticker, bars in daily_bars_by_ticker.items()
-        }
-
-    effective_price = pos.daily_close if pos.daily_close is not None else pos.current_price
-
-    class _PositionPriceProxy:
-        def __init__(self, original_pos: Position, current_price: float):
-            self._original_pos = original_pos
-            self.current_price = current_price
-
-        def __getattr__(self, name):
-            return getattr(self._original_pos, name)
-
-    eval_pos = _PositionPriceProxy(pos, effective_price)
-    configured_rules = None
-    if enabled_rules_by_type is not None:
-        configured_rules = enabled_rules_by_type.get(pos.investment_type)
-    triggered = evaluate_position(eval_pos, signals=signals, configured_rules=configured_rules)
-    computed_verdict = get_verdict(triggered)
-    trim_acknowledged = bool(getattr(pos, "trim_acknowledged", False))
-    verdict = computed_verdict
-    if trim_acknowledged and computed_verdict == Verdict.trim:
-        verdict = Verdict.hold
     return {
         "id": pos.id,
         "verdict": verdict,
