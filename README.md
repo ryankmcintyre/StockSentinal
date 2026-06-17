@@ -174,11 +174,7 @@ The SQLAlchemy `QueuePool` is configured with `pool_size=5`, `max_overflow=5`, a
 
 #### `REFRESH_PROFILING_ENABLED`
 
-Set to `1` (or `true`/`yes`/`on`) to enable detailed per-phase timing on each single-position refresh. When enabled, every completed `refresh_position` call emits a structured log line at `INFO` level:
-
-```
-[profile refresh.single] ticker=AAPL phases: rule_config=4ms prewarm=120ms daily_refresh=380ms weekly_refresh=0ms indicator_cache=55ms atr_cache=0ms weekly_bar_cache=0ms daily_bar_cache=0ms verdicts=2ms commit=8ms total=570ms
-```
+Set to `1` (or `true`/`yes`/`on`) to enable detailed per-phase timing on each single-position refresh. When enabled, every completed `refresh_position` call emits structured per-phase timing at `INFO` level.
 
 Each `key=Nms` block is a phase:
 
