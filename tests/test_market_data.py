@@ -49,6 +49,9 @@ class FakePosition:
         sector_benchmark_ticker=None,
         user_id="test-user-id",
         previous_verdict=None,
+        computed_verdict=None,
+        refresh_in_progress=False,
+        refresh_started_at=None,
     ):
         self.ticker = ticker
         self.investment_type = investment_type
@@ -67,6 +70,9 @@ class FakePosition:
         self.sector_benchmark_ticker = sector_benchmark_ticker
         self.user_id = user_id
         self.previous_verdict = previous_verdict
+        self.computed_verdict = computed_verdict
+        self.refresh_in_progress = refresh_in_progress
+        self.refresh_started_at = refresh_started_at
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +389,12 @@ class TestRefreshPosition:
         db.commit.assert_called_once()
 
     def test_stores_previous_verdict_when_refresh_changes_status(self, mocker):
-        position = FakePosition(investment_type="long-term")
+        # Set computed_verdict to the pre-refresh state so refresh_position
+        # can detect the change without a pre-pass _calculate_verdicts call.
+        position = FakePosition(
+            investment_type="long-term",
+            computed_verdict=Verdict.hold.value,
+        )
         db = mocker.Mock()
 
         mocker.patch.object(self.service, "_refresh_daily")
@@ -393,20 +404,19 @@ class TestRefreshPosition:
         calculate_verdicts = mocker.patch.object(
             self.service,
             "_calculate_verdicts",
-            side_effect=[
-                {id(position): Verdict.hold.value},
-                {id(position): Verdict.trim.value},
-            ],
+            return_value={id(position): Verdict.trim.value},
         )
 
         self.service.refresh_position(position, db, force=False)
 
         assert position.previous_verdict == Verdict.hold.value
-        assert calculate_verdicts.call_count == 2
+        assert position.computed_verdict == Verdict.trim.value
+        assert calculate_verdicts.call_count == 1
 
     def test_clears_previous_verdict_when_refresh_keeps_same_status(self, mocker):
         position = FakePosition(
             investment_type="long-term",
+            computed_verdict=Verdict.hold.value,
             previous_verdict=Verdict.sell.value,
         )
         db = mocker.Mock()
@@ -418,10 +428,7 @@ class TestRefreshPosition:
         mocker.patch.object(
             self.service,
             "_calculate_verdicts",
-            side_effect=[
-                {id(position): Verdict.hold.value},
-                {id(position): Verdict.hold.value},
-            ],
+            return_value={id(position): Verdict.hold.value},
         )
 
         self.service.refresh_position(position, db, force=False)
@@ -431,7 +438,10 @@ class TestRefreshPosition:
     def test_stores_previous_verdict_when_rule_cache_refresh_changes_status(
         self, mocker
     ):
-        position = FakePosition(investment_type="long-term")
+        position = FakePosition(
+            investment_type="long-term",
+            computed_verdict=Verdict.hold.value,
+        )
         db = mocker.Mock()
 
         mocker.patch.object(self.service, "_refresh_daily")
@@ -448,17 +458,15 @@ class TestRefreshPosition:
         calculate_verdicts = mocker.patch.object(
             self.service,
             "_calculate_verdicts",
-            side_effect=[
-                {id(position): Verdict.hold.value},
-                {id(position): Verdict.trim.value},
-            ],
+            return_value={id(position): Verdict.trim.value},
         )
 
         self.service.refresh_position(position, db, force=False)
 
         assert position.previous_verdict == Verdict.hold.value
+        assert position.computed_verdict == Verdict.trim.value
         refresh_indicator_cache.assert_called_once()
-        assert calculate_verdicts.call_count == 2
+        assert calculate_verdicts.call_count == 1
 
     def test_refresh_position_logs_phase_breakdown(self, mocker, caplog):
         position = FakePosition(investment_type="long-term")
@@ -639,7 +647,11 @@ class TestRefreshAllPositions:
         assert weekly_refresh.call_count == 1
 
     def test_refresh_all_stores_previous_verdict_when_status_changes(self, mocker):
-        pos = FakePosition(ticker="AAPL", investment_type="short-term")
+        pos = FakePosition(
+            ticker="AAPL",
+            investment_type="short-term",
+            computed_verdict=Verdict.hold.value,
+        )
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos]
 
@@ -647,21 +659,23 @@ class TestRefreshAllPositions:
         mocker.patch.object(
             self.service,
             "_calculate_verdicts",
-            side_effect=[
-                {id(pos): Verdict.hold.value},
-                {id(pos): Verdict.sell.value},
-            ],
+            return_value={id(pos): Verdict.sell.value},
         )
 
         refreshed = self.service.refresh_all_positions(db, force=True)
 
         assert refreshed == 1
         assert pos.previous_verdict == Verdict.hold.value
+        assert pos.computed_verdict == Verdict.sell.value
 
     def test_refresh_all_updates_previous_verdict_after_rule_cache_refreshes(
         self, mocker
     ):
-        pos = FakePosition(ticker="AAPL", investment_type="short-term")
+        pos = FakePosition(
+            ticker="AAPL",
+            investment_type="short-term",
+            computed_verdict=Verdict.hold.value,
+        )
         db = mocker.Mock()
         db.query.return_value.all.return_value = [pos]
 
@@ -676,10 +690,7 @@ class TestRefreshAllPositions:
             mocker.patch.object(
                 self.service,
                 "_calculate_verdicts",
-                side_effect=[
-                    {id(pos): Verdict.hold.value},
-                    {id(pos): Verdict.sell.value},
-                ],
+                return_value={id(pos): Verdict.sell.value},
             ),
             "calculate_verdicts",
         )
@@ -696,8 +707,10 @@ class TestRefreshAllPositions:
 
         assert refreshed == 0
         assert pos.previous_verdict == Verdict.hold.value
+        assert pos.computed_verdict == Verdict.sell.value
+        # The pre-pass is gone — only one calculate_verdicts call, after all
+        # cache refreshes complete.
         assert [call[0] for call in parent.method_calls] == [
-            "calculate_verdicts",
             "refresh_indicator_cache",
             "calculate_verdicts",
         ]
