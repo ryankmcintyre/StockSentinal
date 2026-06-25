@@ -30,3 +30,30 @@ services:
         # Use :6543 only when PG_POOL_MODE is unset (transaction-mode pooler):
         #   postgresql+psycopg2://postgres.PROJECT_ID:PASSWORD@aws-0-REGION.pooler.supabase.com:6543/postgres
 
+  - type: cron
+    name: stocksentinal-nightly-refresh
+    env: python
+    region: oregon
+    plan: free
+    # 21:30 UTC weekdays = ~4:30pm ET, ~30 min after the regular-hours close
+    # so end-of-day data is available from the market data provider. The job
+    # itself re-validates the NYSE trading-day calendar so a holiday-Monday
+    # fire becomes a logged no-op.
+    schedule: "30 21 * * 1-5"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m app.jobs.nightly_refresh
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.13"
+      - key: LOG_LEVEL
+        value: INFO
+      - key: ALPHA_VANTAGE_API_KEY
+        scope: run
+      - key: TWELVE_DATA_API_KEY
+        scope: run
+      - key: MARKET_DATA_PROVIDER
+        scope: run
+      - key: DATABASE_URL
+        scope: run
+        # Same Supabase connection string as the web service.
+

@@ -35,3 +35,4 @@ uvicorn==0.44.0
 python-jose==3.3.0
 cryptography==45.0.0
 itsdangerous==2.2.0
+pandas-market-calendars==4.4.2

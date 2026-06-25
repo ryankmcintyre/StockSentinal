@@ -23,6 +23,7 @@ dependencies = [
     "python-jose[cryptography]>=3.3.0",
     "itsdangerous>=2.1.0",
     "tzdata>=2026.2",
+    "pandas-market-calendars>=4.4.0",
 ]
 
 [dependency-groups]
