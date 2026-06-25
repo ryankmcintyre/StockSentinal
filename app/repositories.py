@@ -414,6 +414,8 @@ class UserRepository(Protocol):
 
     def get_by_id(self, user_id: str) -> Optional[User]: ...
 
+    def list_ids_by_tier(self, tier: str) -> list[str]: ...
+
     def list_with_position_counts(self) -> Sequence[tuple[User, int]]: ...
 
     def count_admins(self, for_update: bool = False) -> int: ...
@@ -429,6 +431,15 @@ class SqlAlchemyUserRepository:
 
     def get_by_id(self, user_id: str) -> Optional[User]:
         return self._session.query(User).filter(User.id == user_id).first()
+
+    def list_ids_by_tier(self, tier: str) -> list[str]:
+        rows = (
+            self._session.query(User.id)
+            .filter(User.tier == tier)
+            .order_by(User.id)
+            .all()
+        )
+        return [row[0] for row in rows]
 
     def list_with_position_counts(self) -> Sequence[tuple[User, int]]:
         return (

@@ -1120,7 +1120,11 @@ class MarketDataService:
         )
 
     def refresh_all_positions(
-        self, db: Session, force: bool = False, user_id: str | None = None,
+        self,
+        db: Session,
+        force: bool = False,
+        user_id: str | None = None,
+        user_ids: set[str] | None = None,
     ) -> int:
         """Refresh cached market data for all positions.
 
@@ -1129,11 +1133,25 @@ class MarketDataService:
 
         Also refreshes indicator / ATR / bar caches for configured rules.
 
+        Pass ``user_id`` to scope the refresh to a single user (the
+        user-facing /refresh route). Pass ``user_ids`` to scope to a set of
+        users (the nightly job uses this to batch all full_access users in
+        one fetch pass so duplicate tickers across users share API calls).
+        ``user_id`` and ``user_ids`` are mutually exclusive.
+
         Returns the number of positions that were actually refreshed.
         """
+        if user_id is not None and user_ids is not None:
+            raise ValueError("Pass either user_id or user_ids, not both")
+
         q = db.query(Position)
         if user_id is not None:
             q = q.filter(Position.user_id == user_id)
+        elif user_ids is not None:
+            if not user_ids:
+                logger.info("Refresh skipped: empty user_ids filter")
+                return 0
+            q = q.filter(Position.user_id.in_(user_ids))
         positions = q.all()
         logger.info(
             "Starting refresh for %d positions (force=%s)",
